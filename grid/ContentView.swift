@@ -18,14 +18,14 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var items: [Item]
     
+    @StateObject private var gridViewModel = GridViewModel(networkService: NetworkService())
+
     // Authentication State
     @State private var showSignInView = true
     @State private var appleUserID: String? = nil
-    @State private var userFullName: PersonNameComponents? = nil
-    @State private var userEmail: String? = nil
 
     // Profile State
-    @State private var userProfile: UserProfile? = nil // Uses UserProfile from Models/
+    @State private var userProfile: UserProfile? = nil
     @State private var showCreateProfileView = false
     @State private var isLoadingProfile = false
 
@@ -34,76 +34,36 @@ struct ContentView: View {
             if showSignInView {
                 SignInView(
                     showSignInView: $showSignInView,
-                    appleUserID: $appleUserID,
-                    userFullName: $userFullName,
-                    userEmail: $userEmail,
-                    onSignInSuccess: { userID in
-                        self.appleUserID = userID
-                        checkUserProfile(userID: userID)
+                    onSignInSuccess: { credential in
+                        self.appleUserID = credential.user
+                        checkUserProfile(userID: credential.user)
                     }
                 )
             } else if isLoadingProfile {
                 ProgressView("Loading Profile...")
             } else if showCreateProfileView {
-                if let userID = appleUserID, !userID.isEmpty {
-                    CreateProfileView(showCreateProfileView: $showCreateProfileView, appleUserID: userID) // Uses CreateProfileView from Views/
+                if let userID = appleUserID {
+                    CreateProfileView(showCreateProfileView: $showCreateProfileView, 
+                                      appleUserID: userID)
                         .onDisappear {
                             if !showCreateProfileView { 
-                                self.isLoadingProfile = false 
-                                // After profile creation, attempt to load it to transition to main view
-                                if let currentUserID = self.appleUserID, !currentUserID.isEmpty {
-                                    checkUserProfile(userID: currentUserID)
-                                }
+                                self.isLoadingProfile = true
+                                checkUserProfile(userID: userID)
                             }
                         }
                 } else {
-                    Text("Error: User ID not available for profile creation.")
+                    Text("Error: User ID missing. Cannot create profile.")
                     Button("Try Sign In Again") { signOut() }
                 }
-            } else if let currentProfile = userProfile {
-                // Main App Content (Grid View will go here)
-                NavigationSplitView {
-                    List {
-                        Text("Welcome, \(currentProfile.username)!")
-                        ForEach(items) { item in
-                            NavigationLink {
-                                Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                            } label: {
-                                Text("Item: \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                            }
-                        }
-                        .onDelete(perform: deleteItems)
-                    }
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Text("Profile: \(currentProfile.username)")
-                        }
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            EditButton()
-                        }
-                        ToolbarItem {
-                            Button(action: addItem) {
-                                Label("Add Item", systemImage: "plus")
-                            }
-                        }
-                        ToolbarItem(placement: .bottomBar) {
-                             Button("Sign Out") {
-                                 signOut()
-                             }
-                         }
-                    }
-                } detail: {
-                    Text("Select an item. Grid View will replace this.")
-                }
+            } else if let currentProfile = userProfile { 
+                GridView(viewModel: gridViewModel)
             } else {
                 ProgressView("Initializing...")
                     .onAppear {
-                        if appleUserID == nil {
-                           showSignInView = true
-                        } else if let userID = appleUserID, !userID.isEmpty {
+                        if let userID = appleUserID {
                             checkUserProfile(userID: userID)
                         } else {
-                            signOut() 
+                            signOut()
                         }
                     }
             }
@@ -112,51 +72,91 @@ struct ContentView: View {
 
     private func checkUserProfile(userID: String) {
         guard !userID.isEmpty else {
-            print("checkUserProfile called with empty userID.")
+            print("ContentView: checkUserProfile called with empty userID.")
             signOut()
             return
         }
+        print("ContentView: Checking profile for userID: \(userID)")
         isLoadingProfile = true
         let privateDB = CKContainer.default().privateCloudDatabase
         let recordID = CKRecord.ID(recordName: userID) 
 
-        privateDB.fetch(withRecordID: recordID) { record, error in
+        // Use CKFetchRecordsOperation to properly download CKAssets
+        let fetchOperation = CKFetchRecordsOperation(recordIDs: [recordID])
+        fetchOperation.desiredKeys = ["profileImage"] // Specify which fields to fetch
+        fetchOperation.fetchRecordsCompletionBlock = { recordsByRecordID, error in
             DispatchQueue.main.async {
-                isLoadingProfile = false
-                if let fetchedRecord = record, error == nil {
-                    self.userProfile = UserProfile(record: fetchedRecord) // Uses UserProfile from Models/
-                    if self.userProfile != nil {
-                        self.showSignInView = false
-                        self.showCreateProfileView = false
-                        print("User profile loaded: \(self.userProfile!.username)")
-                    } else {
-                        print("Error: Could not parse fetched profile record.")
-                        self.showCreateProfileView = true 
-                    }
-                } else {
-                    if let ckError = error as? CKError, ckError.code == .unknownItem {
-                        print("No profile found for user ID: \(userID). Prompting to create one.")
+                self.isLoadingProfile = false
+                if let actualError = error as? CKError {
+                    if actualError.code == .unknownItem {
+                        print("ContentView: No profile record found for userID: \(userID) (CKError.unknownItem). Prompting to create one.")
+                        self.userProfile = nil
+                        self.showSignInView = false 
+                        self.showCreateProfileView = true
+                    } else if actualError.code == .partialFailure {
+                        // This commonly happens when trying to fetch a record that doesn't exist
+                        print("ContentView: CloudKit partial failure for userID: \(userID). Likely no profile exists yet. Prompting to create one.")
+                        self.userProfile = nil
                         self.showSignInView = false 
                         self.showCreateProfileView = true
                     } else {
-                        print("Error fetching profile: \(error?.localizedDescription ?? "Unknown error")")
-                        signOut() 
+                        print("ContentView: CloudKit error fetching profile for userID: \(userID). Error: \(actualError.localizedDescription)")
+                        // For genuine network/server issues, maybe retry instead of signing out
+                        self.signOut() // Simple fallback: sign out
                     }
+                } else if let anError = error { 
+                    // For first-time users, "Failed to fetch some records" is normal when no profile exists
+                    print("ContentView: Non-CloudKit error fetching profile for userID: \(userID). Error: \(anError.localizedDescription)")
+                    if anError.localizedDescription.contains("Failed to fetch some records") {
+                        print("ContentView: Treating 'Failed to fetch some records' as missing profile. Prompting to create one.")
+                        self.userProfile = nil
+                        self.showSignInView = false 
+                        self.showCreateProfileView = true
+                    } else {
+                        self.signOut() // Only sign out for other errors
+                    }
+                } else if let fetchedRecord = recordsByRecordID?[recordID] {
+                    // Record was successfully fetched with assets downloaded
+                    print("ContentView: Successfully fetched CKRecord for userID: \(userID). Attempting to initialize UserProfile.")
+                    if let profile = UserProfile(record: fetchedRecord) {
+                        self.userProfile = profile
+                        self.gridViewModel.setCurrentUserProfile(profile)
+                        self.showSignInView = false
+                        self.showCreateProfileView = false
+                        print("ContentView: UserProfile initialized and set for userID: \(profile.userID). Should navigate to GridView.")
+                    } else {
+                        // Critical error: Record exists but UserProfile.init(record:) failed.
+                        // This should NOT loop back to CreateProfileView if the record is present but malformed or init logic is flawed.
+                        print("ContentView: CRITICAL ERROR - Failed to initialize UserProfile from fetched CKRecord for userID: \(userID). The record data might be incompatible with UserProfile.init(record:). Check model and CloudKit schema.")
+                        // Display a persistent error to the user or sign out to prevent loop.
+                        // For now, signing out.
+                        self.signOut()
+                        // TODO: Consider showing a user-facing alert here.
+                    }
+                } else {
+                    // Should not happen: no error, but also no record.
+                    print("ContentView: Unexpected state - no error and no record fetched for userID: \(userID). Treating as if profile not found.")
+                    self.userProfile = nil
+                    self.showSignInView = false 
+                    self.showCreateProfileView = true // Fallback to create profile
                 }
             }
         }
+        
+        privateDB.add(fetchOperation)
     }
     
     private func signOut() {
         appleUserID = nil
-        userFullName = nil
-        userEmail = nil
         userProfile = nil
+        gridViewModel.currentUserProfile = nil
         showSignInView = true
         showCreateProfileView = false
         isLoadingProfile = false
     }
 
+    // addItem and deleteItems are from the template, may not be needed for the grid app's core logic
+    // depending on what `Item` represents.
     private func addItem() {
         withAnimation {
             let newItem = Item(timestamp: Date())
@@ -171,13 +171,9 @@ struct ContentView: View {
     }
 }
 
-// SignInView struct was previously part of ContentView.swift
 struct SignInView: View {
     @Binding var showSignInView: Bool
-    @Binding var appleUserID: String?
-    @Binding var userFullName: PersonNameComponents?
-    @Binding var userEmail: String?
-    var onSignInSuccess: (String) -> Void
+    var onSignInSuccess: (ASAuthorizationAppleIDCredential) -> Void 
 
     var body: some View {
         VStack {
@@ -188,22 +184,15 @@ struct SignInView: View {
             SignInWithAppleButton(
                 .signIn,
                 onRequest: { request in
-                    request.requestedScopes = [.fullName, .email]
+                    request.requestedScopes = [.fullName, .email] // Still request fullName for potential future use or if Apple requires it
                 },
                 onCompletion: { result in
                     switch result {
                     case .success(let authorization):
                         if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
-                            let userID = appleIDCredential.user
-                            self.appleUserID = userID
-                            self.userFullName = appleIDCredential.fullName
-                            self.userEmail = appleIDCredential.email
-                            
-                            print("User ID: \(userID)")
-                            print("Full Name: \(appleIDCredential.fullName?.givenName ?? "") \(appleIDCredential.fullName?.familyName ?? "")")
-                            print("Email: \(appleIDCredential.email ?? "")")
-                            
-                            onSignInSuccess(userID)
+                            onSignInSuccess(appleIDCredential)
+                        } else {
+                             print("Sign in with Apple: Failed to cast credential.")
                         }
                     case .failure(let error):
                         print("Sign in with Apple failed: \(error.localizedDescription)")

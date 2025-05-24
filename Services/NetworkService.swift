@@ -33,8 +33,8 @@ class NetworkService: NSObject, ObservableObject {
 
 
     override init() {
-        // For now, use device name. Consider letting user set a display name.
-        self.myPeerID = MCPeerID(displayName: UIDevice.current.name)
+        // For now, use host name instead of UIDevice.current.name for macOS compatibility
+        self.myPeerID = MCPeerID(displayName: ProcessInfo.processInfo.hostName)
         self.session = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)
         self.nearbyServiceAdvertiser = MCNearbyServiceAdvertiser(peer: myPeerID, discoveryInfo: nil, serviceType: serviceType)
         self.nearbyServiceBrowser = MCNearbyServiceBrowser(peer: myPeerID, serviceType: serviceType)
@@ -125,7 +125,7 @@ extension NetworkService: MCSessionDelegate {
     }
 
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
-        DispatchQueue.main.async(execute: {
+        DispatchQueue.main.async {
             do {
                 let decoder = JSONDecoder()
                 let message = try decoder.decode(AppMessage.self, from: data)
@@ -134,7 +134,7 @@ extension NetworkService: MCSessionDelegate {
                 case .userProfileUpdate:
                     let userProfile = try decoder.decode(UserProfile.self, from: message.payload)
                     self.onUserProfileReceived?(userProfile)
-                    print("Received profile from \(peerID.displayName): \(userProfile.username)")
+                    print("Received profile from \(peerID.displayName): \(userProfile.userID)")
                 case .gridUpdate:
                     let gridNode = try decoder.decode(GridNode.self, from: message.payload)
                     self.onGridNodeReceived?(gridNode)
@@ -143,7 +143,7 @@ extension NetworkService: MCSessionDelegate {
             } catch {
                 print("Error decoding received data: \(error.localizedDescription)")
             }
-        })
+        }
     }
 
     func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {

@@ -1,6 +1,7 @@
 import Combine
 import SwiftUI // For Color, if you add it to UserProfile
 import MultipeerConnectivity // Import MultipeerConnectivity
+import CloudKit // Added for CKAsset
 
 class GridViewModel: ObservableObject {
     @Published var gridNodes: [[GridNode]] = []
@@ -41,7 +42,7 @@ class GridViewModel: ObservableObject {
             // This is when we receive a profile from another peer
             // We might want to update our grid if this user is on it, or add them if new.
             // For now, let's assume onGridNodeReceived will handle their placement.
-            print("Received profile for \(profile.username) from a peer.")
+            print("Received profile for user ID \(profile.userID) from a peer.")
             // Potentially store this profile in a list of known remote users if needed
         }
 
@@ -77,7 +78,8 @@ class GridViewModel: ObservableObject {
             return
         }
         
-        currentUserProfile?.username = newUsername // Update username
+        // Note: UserProfile uses userID (Apple Sign-In UUID) as identifier, not username
+        // The userID should not be changed after Apple Sign-In
         
         guard let profile = currentUserProfile else { return }
 
@@ -89,7 +91,7 @@ class GridViewModel: ObservableObject {
              networkService.sendGridNodeUpdate(userNode)
         }
         // TODO: Persist currentUserProfile changes to CloudKit via ContentView or a dedicated manager
-        print("Current user's username updated to: \(newUsername). TODO: Sync with CloudKit.")
+        print("Current user profile updated. TODO: Sync with CloudKit.")
     }
     
     // Sets the main user profile for this ViewModel, e.g., after login and CloudKit fetch
@@ -98,7 +100,62 @@ class GridViewModel: ObservableObject {
         placeCurrentUserOnGrid()
         networkService.sendUserProfile(profile) // Announce profile to peers
         sendAllMyGridNodes() // Announce my grid presence
-        print("GridViewModel: Set current user profile to \(profile.username)")
+        print("GridViewModel: Set current user profile for ID \(profile.userID)")
+    }
+
+    // Method to update the current user's profile image
+    func updateCurrentProfileImage(newPhotoData: Data?) {
+        guard currentUserProfile != nil else {
+            print("Cannot update profile image, currentUserProfile is nil.")
+            return
+        }
+
+        guard let photoData = newPhotoData else {
+            // If nil is passed, it means remove the photo
+            currentUserProfile?.profileImage = nil
+            print("Profile image removed.")
+            // Proceed to save/sync this change
+            persistAndUpdateProfileAndGrid()
+            return
+        }
+
+        // Create a temporary file URL for the CKAsset
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+
+        do {
+            try photoData.write(to: tempFileURL)
+            let photoAsset = CKAsset(fileURL: tempFileURL)
+            currentUserProfile?.profileImage = photoAsset
+            print("Profile image updated. TODO: Clean up temp file: \(tempFileURL.path) after CloudKit sync.")
+            
+            // This temp file (tempFileURL) should be cleaned up after the CKRecord containing this CKAsset is successfully saved to CloudKit.
+            // The cleanup logic is usually in the completion handler of the CloudKit save operation.
+            // For now, we just update the local model. The actual CloudKit save should be triggered by ContentView observing currentUserProfile.
+
+            persistAndUpdateProfileAndGrid()
+
+        } catch {
+            print("Error creating CKAsset for profile image: \(error.localizedDescription)")
+            // Optionally, remove the partially written temp file if error occurred during write
+             try? FileManager.default.removeItem(at: tempFileURL)
+        }
+    }
+    
+    private func persistAndUpdateProfileAndGrid() {
+        guard let profile = currentUserProfile else { return }
+
+        // TODO: Trigger CloudKit save for currentUserProfile.
+        // This would typically be done by ContentView observing changes to gridViewModel.currentUserProfile
+        // or by calling a delegate method to inform ContentView that the profile needs saving.
+        print("Profile data changed. Application needs to persist this to CloudKit.")
+
+        placeCurrentUserOnGrid()
+        networkService.sendUserProfile(profile) 
+        
+        if let userNode = findNode(forUser: profile.userID) {
+             networkService.sendGridNodeUpdate(userNode)
+        }
     }
 
     private func placeCurrentUserOnGrid() {
@@ -125,7 +182,7 @@ class GridViewModel: ObservableObject {
             }
         }
         if !placed {
-            print("Grid is full! Cannot place user \(profile.username)")
+            print("Grid is full! Cannot place user with ID \(profile.userID)")
         }
         objectWillChange.send() // Notify observers of grid changes
     }
@@ -147,7 +204,7 @@ class GridViewModel: ObservableObject {
             // GridNode.userProfile expects UserProfile from Models/
             gridNodes[node.x][node.y] = node 
             objectWillChange.send()
-            print("Updated grid with node at (\(node.x), \(node.y)) for user \(node.userProfile?.username ?? "Unknown")")
+            print("Updated grid with node at (\(node.x), \(node.y)) for user ID \(node.userProfile?.userID ?? "Unknown")")
         } else {
             print("Received node with out-of-bounds coordinates: (\(node.x), \(node.y))")
         }
@@ -163,7 +220,7 @@ class GridViewModel: ObservableObject {
                         continue
                     }
                     gridNodes[i][j].userProfile = nil
-                    print("Removed user \(profileInNode.username) from (\(i), \(j))")
+                    print("Removed user ID \(profileInNode.userID) from (\(i), \(j))")
                 }
             }
         }
@@ -172,13 +229,15 @@ class GridViewModel: ObservableObject {
 
     // Renamed for clarity, still relies on MCPeerID.displayName which is not robust
     private func removeUserFromGridByPeerDisplayName(peerID: MCPeerID) {
-        print("Peer \(peerID.displayName) disconnected. Attempting to remove from grid by display name.")
+        print("Peer \(peerID.displayName) disconnected. Attempting to remove from grid by display name (Note: fragile method).")
         var userRemoved = false
+        // This logic is problematic as displayName is not a reliable unique ID tied to UserProfile.userID
+        // We need a mapping from MCPeerID to UserProfile.userID for robust removal.
+        // For now, iterating and trying to match is a placeholder.
         for i in 0..<gridSize {
             for j in 0..<gridSize {
-                // This comparison is fragile. Need a mapping from MCPeerID to UserProfile.userID
-                if let profile = gridNodes[i][j].userProfile, profile.username == peerID.displayName { // Using username as a proxy for display name
-                    print("Removing user \(profile.username) (matching disconnected peer \(peerID.displayName)) from (\(i), \(j))")
+                if let profile = gridNodes[i][j].userProfile, profile.userID == peerID.displayName { // Very unlikely to match correctly
+                    print("Removing user with ID \(profile.userID) (matching disconnected peer \(peerID.displayName)) from (\(i), \(j))")
                     gridNodes[i][j].userProfile = nil
                     userRemoved = true
                 }

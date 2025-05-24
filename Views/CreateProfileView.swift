@@ -1,68 +1,152 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit // For iOS
+#elseif canImport(AppKit)
+import AppKit // For macOS
+#endif
 import CloudKit
+import PhotosUI // Import for PhotosPicker
 
 struct CreateProfileView: View {
-    @State private var username: String = ""
-    @Binding var showCreateProfileView: Bool // To dismiss the view
-    // You'll need to pass the Apple User ID to associate with the profile
+    @Binding var showCreateProfileView: Bool
     let appleUserID: String 
 
-    // Environment object for CloudKit operations (you'll set this up later)
-    // @EnvironmentObject var cloudKitManager: CloudKitManager 
+    @State private var selectedPhotoItem: PhotosPickerItem? = nil
+    @State private var selectedPhotoData: Data? = nil
+    @State private var isSaving = false
+    @State private var errorMessage: String? = nil
 
     var body: some View {
-        VStack {
-            Text("Create Your Profile")
-                .font(.largeTitle)
-                .padding()
+        NavigationView { // Added NavigationView for title and toolbar
+            VStack {
+                Text("Set Your Profile Photo")
+                    .font(.largeTitle)
+                    .padding()
 
-            TextField("Username", text: $username)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .padding()
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
+                if let selectedPhotoData, let uiImage = UIImage(data: selectedPhotoData) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 200, height: 200)
+                        .clipShape(Circle())
+                        .padding()
+                } else {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.3))
+                        .frame(width: 200, height: 200)
+                        .overlay(Image(systemName: "person.fill").resizable().scaledToFit().frame(width: 100).foregroundColor(.gray))
+                        .padding()
+                }
 
-            Button("Save Profile") {
-                saveProfile()
+                PhotosPicker(
+                    selection: $selectedPhotoItem,
+                    matching: .images, // Only pick images
+                    photoLibrary: .shared() // Use the shared photo library
+                ) {
+                    Text(selectedPhotoItem == nil ? "Select Photo" : "Change Photo")
+                }
+                .padding()
+                .onChange(of: selectedPhotoItem) { newItem in
+                    Task {
+                        if let data = try? await newItem?.loadTransferable(type: Data.self) {
+                            selectedPhotoData = data
+                            errorMessage = nil // Clear previous error if new photo is selected
+                        } else {
+                            print("Failed to load photo data.")
+                            errorMessage = "Could not load image. Please try another."
+                        }
+                    }
+                }
+
+                if let errorMessage = errorMessage {
+                    Text(errorMessage)
+                        .foregroundColor(.red)
+                        .padding()
+                }
+
+                Button(action: saveProfile) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Text("Save Profile")
+                    }
+                }
+                .padding()
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedPhotoData == nil || isSaving) // Disable if no photo or already saving
+                
+                Spacer()
             }
-            .padding()
-            .buttonStyle(.borderedProminent)
-            .disabled(username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-            Spacer()
+            .navigationTitle("Create Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        // Only dismiss if not currently saving, or provide a way to cancel saving (more complex)
+                        if !isSaving {
+                            showCreateProfileView = false
+                        }
+                    }
+                }
+            }
         }
-        .padding()
     }
 
     private func saveProfile() {
-        let newProfile = UserProfile(userID: appleUserID, username: username)
-        let profileRecord = newProfile.toCKRecord()
+        guard let photoData = selectedPhotoData else {
+            errorMessage = "No photo selected."
+            return
+        }
+        guard !appleUserID.isEmpty else {
+            errorMessage = "User ID is missing. Cannot save profile."
+            return
+        }
 
-        // Get the private database
-        let privateDB = CKContainer.default().privateCloudDatabase
+        isSaving = true
+        errorMessage = nil
 
-        // Save the record
-        privateDB.save(profileRecord) { record, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    // Handle error (e.g., show an alert to the user)
-                    print("Error saving profile to CloudKit: \(error.localizedDescription)")
-                    // You might want to show an alert here
-                } else if record != nil {
-                    print("Profile saved successfully!")
-                    // Potentially fetch the full profile or use the saved record details
-                    // For now, just dismiss the view
-                    self.showCreateProfileView = false 
-                } else {
-                    print("Unknown error saving profile.")
+        // 1. Create a temporary file URL for the CKAsset
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+
+        do {
+            try photoData.write(to: tempFileURL)
+            let photoAsset = CKAsset(fileURL: tempFileURL)
+            
+            let newProfile = UserProfile(userID: appleUserID, profileImage: photoAsset)
+            let profileRecord = newProfile.toCKRecord()
+            let privateDB = CKContainer.default().privateCloudDatabase
+
+            privateDB.save(profileRecord) { record, error in
+                // Attempt to remove the temporary file whether save succeeds or fails
+                try? FileManager.default.removeItem(at: tempFileURL)
+                
+                DispatchQueue.main.async {
+                    isSaving = false
+                    if let error = error {
+                        print("Error saving profile to CloudKit: \(error.localizedDescription)")
+                        self.errorMessage = "Failed to save profile: \(error.localizedDescription)"
+                    } else if record != nil {
+                        print("Profile saved successfully with photo!")
+                        self.showCreateProfileView = false 
+                    } else {
+                        print("Unknown error saving profile.")
+                        self.errorMessage = "An unknown error occurred while saving."
+                    }
                 }
             }
+        } catch {
+            print("Error writing photo data to temporary file: \(error.localizedDescription)")
+            self.errorMessage = "Could not process photo for saving."
+            isSaving = false
+            // Attempt to remove temp file if write failed partway or if other error before CK save
+            try? FileManager.default.removeItem(at: tempFileURL)
         }
     }
 }
 
 struct CreateProfileView_Previews: PreviewProvider {
     static var previews: some View {
-        CreateProfileView(showCreateProfileView: .constant(true), appleUserID: "previewUserID")
+        CreateProfileView(showCreateProfileView: .constant(true), appleUserID: "previewUserID_123")
     }
 } 

@@ -2,75 +2,63 @@ import Foundation
 import CloudKit
 
 struct UserProfile: Codable {
-    var recordID: CKRecord.ID? // CloudKit record ID
-    var userID: String // From Sign in with Apple
-    var username: String
-    // Add other profile fields as needed, e.g.:
-    // var bio: String?
-    // var profileImage: CKAsset?
+    var recordID: CKRecord.ID?      // CloudKit record ID (derived from userID)
+    var userID: String              // From Sign in with Apple (this is the primary ID and recordName)
+    var profileImage: CKAsset?      // For the profile photo (optional)
 
-    // Coding keys to handle CKRecord.ID manually if needed for Codable
     enum CodingKeys: String, CodingKey {
-        case recordNameForCodable = "recordID" // Use a different name to avoid conflict if direct CKRecord.ID was attempted
         case userID
-        case username
-        // Add other keys
+        // CKAsset (profileImage) is not directly Codable. 
+        // It's handled by CKRecord. If UserProfile were part of another Codable type,
+        // this would need custom handling or that type would store only userID.
     }
 
-    init(userID: String, username: String) {
+    // Initializer for creating a new profile
+    init(userID: String, profileImage: CKAsset? = nil) {
         self.userID = userID
-        self.username = username
-        self.recordID = nil // Or initialize appropriately if needed
+        self.recordID = CKRecord.ID(recordName: userID) 
+        self.profileImage = profileImage
     }
     
     // Custom init for Decodable
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let recordName = try container.decodeIfPresent(String.self, forKey: .recordNameForCodable)
-        if let recordName = recordName {
-            self.recordID = CKRecord.ID(recordName: recordName)
-        } else {
-            self.recordID = nil
-        }
         self.userID = try container.decode(String.self, forKey: .userID)
-        self.username = try container.decode(String.self, forKey: .username)
-        // Decode other properties
+        self.recordID = CKRecord.ID(recordName: self.userID)
+        self.profileImage = nil // CKAsset not decoded via Codable
     }
 
     // Custom encode for Encodable
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(self.recordID?.recordName, forKey: .recordNameForCodable)
         try container.encode(self.userID, forKey: .userID)
-        try container.encode(self.username, forKey: .username)
-        // Encode other properties
+        // profileImage (CKAsset) is not encoded.
     }
 
-    // Initializer from a CKRecord (when fetching from CloudKit)
+    // Initializer from a CKRecord
     init?(record: CKRecord) {
-        guard let userID = record["userID"] as? String,
-              let username = record["username"] as? String else {
+        // userID is the recordName of the CKRecord.ID
+        let recordName = record.recordID.recordName
+        guard !recordName.isEmpty else { // Basic validation for recordName as userID
+            print("UserProfile init from CKRecord failed: recordName (userID) is empty.")
             return nil
         }
+        self.userID = recordName
         self.recordID = record.recordID
-        self.userID = userID
-        self.username = username
+        self.profileImage = record["profileImage"] as? CKAsset
     }
 
-    // Helper to create a CKRecord from this profile (for saving to CloudKit)
+    // Helper to create/update a CKRecord from this profile
     func toCKRecord() -> CKRecord {
-        let record: CKRecord
-        if let existingRecordID = recordID {
-            record = CKRecord(recordType: "UserProfiles", recordID: existingRecordID)
+        let record = CKRecord(recordType: "UserProfiles", recordID: CKRecord.ID(recordName: self.userID))
+        // userID is the recordName, so not explicitly stored as a field again.
+        // record["userID"] = self.userID // Redundant
+        
+        if let imageAsset = self.profileImage {
+            record["profileImage"] = imageAsset
         } else {
-            // If creating a new record, you might want to use the userID from Apple Sign In as the record name
-            // to ensure uniqueness and easy lookup, but be mindful of privacy implications if this ID is guessable.
-            // Alternatively, let CloudKit generate a unique ID.
-            record = CKRecord(recordType: "UserProfiles") 
+            record["profileImage"] = nil // Or record.removeObject(forKey: "profileImage")
         }
-        record["userID"] = userID
-        record["username"] = username
-        // Set other fields for the CKRecord
         return record
     }
 } 
