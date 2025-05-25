@@ -133,6 +133,10 @@ struct GridView: View {
                 Spacer()
             }
             .navigationTitle("The Grid")
+            .onAppear {
+                // Auto-refresh when grid appears
+                viewModel.handleGridAppeared()
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
                     if viewModel.currentUserProfile != nil {

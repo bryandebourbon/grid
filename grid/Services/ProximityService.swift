@@ -1,47 +1,23 @@
-import Foundation
-import CoreLocation
-import CloudKit
 import Combine
+import SwiftUI
+import CloudKit
+import CoreLocation
 
 class ProximityService: ObservableObject {
     private let publicDB = CKContainer.default().publicCloudDatabase
     @Published var activeNearbyProfiles: [UserProfile] = []
     
-    // Configuration
-    private let maxProximityRadius: Double = 8047 // 5 miles in meters (1 mile = 1609.34 meters)
-    private let activeUserTimeLimit: TimeInterval = 300 // 5 minutes to be considered "active"
-    
-    private var activeUsersRefreshTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var lastKnownLocation: CLLocation? // Store last known location
     
     init() {
-        startActiveUsersMonitoring()
+        // No automatic timer - only refresh on demand
     }
     
-    deinit {
-        stopActiveUsersMonitoring()
-    }
-    
-    // Start monitoring for active nearby users
-    private func startActiveUsersMonitoring() {
-        // Refresh active users every 30 seconds
-        activeUsersRefreshTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
-            // Use last known location if available
-            self.fetchActiveNearbyUsers(currentUserLocation: self.lastKnownLocation)
-        }
+    // Fetch ALL users and sort by distance - simple and straightforward
+    func fetchAllUsers(currentUserLocation: CLLocation? = nil) {
+        print("ProximityService: fetchAllUsers called with location: \(currentUserLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0))")
         
-        // Initial fetch
-        fetchActiveNearbyUsers(currentUserLocation: lastKnownLocation)
-    }
-    
-    private func stopActiveUsersMonitoring() {
-        activeUsersRefreshTimer?.invalidate()
-        activeUsersRefreshTimer = nil
-    }
-    
-    // Fetch users who are currently active and nearby
-    func fetchActiveNearbyUsers(currentUserLocation: CLLocation? = nil) {
         // Store the location if provided
         if let location = currentUserLocation {
             lastKnownLocation = location
@@ -50,14 +26,19 @@ class ProximityService: ObservableObject {
         // Use the provided location or the last known location
         let locationToUse = currentUserLocation ?? lastKnownLocation
         
-        // Query for recently active users (within last 5 minutes)
-        let fiveMinutesAgo = Date().addingTimeInterval(-activeUserTimeLimit)
-        let predicate = NSPredicate(format: "lastActiveTimestamp > %@", fiveMinutesAgo as NSDate)
+        // Query for ALL users using a very old timestamp (effectively gets everyone)
+        // Use lastActiveTimestamp which is queryable, with a date from 30 days ago
+        let thirtyDaysAgo = Date().addingTimeInterval(-30 * 24 * 60 * 60) // 30 days ago
+        let predicate = NSPredicate(format: "lastActiveTimestamp > %@", thirtyDaysAgo as NSDate)
         let query = CKQuery(recordType: "UserProfiles", predicate: predicate)
         query.sortDescriptors = [NSSortDescriptor(key: "lastActiveTimestamp", ascending: false)]
         
+        print("ProximityService: Executing CloudKit query for UserProfiles with predicate: \(predicate)")
+        
         publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
             guard let self = self else { return }
+            
+            print("ProximityService: CloudKit query completed. Records count: \(records?.count ?? -1), Error: \(error?.localizedDescription ?? "none")")
             
             DispatchQueue.main.async {
                 if let error = error {
@@ -67,48 +48,44 @@ class ProximityService: ObservableObject {
                         self.activeNearbyProfiles = []
                         return
                     }
-                    print("Error fetching active users: \(error.localizedDescription)")
+                    print("ProximityService: Error fetching users: \(error.localizedDescription)")
                     return
                 }
                 
-                let allActiveProfiles = records?.compactMap { UserProfile(record: $0) } ?? []
-                print("Fetched \(allActiveProfiles.count) recently active users")
+                let allProfiles = records?.compactMap { UserProfile(record: $0) } ?? []
+                print("ProximityService: Successfully parsed \(allProfiles.count) UserProfile objects from \(records?.count ?? 0) CloudKit records")
                 
-                // Filter by proximity if we have current location
+                // Sort by distance if we have current location
                 if let currentLocation = locationToUse {
-                    let nearbyProfiles = allActiveProfiles.filter { profile in
-                        guard let profileLocation = profile.location else { return false }
-                        let distance = currentLocation.distance(from: profileLocation)
-                        return distance <= self.maxProximityRadius
-                    }
-                    
-                    // Sort by distance (closest first)
-                    let sortedProfiles = nearbyProfiles.sorted { profile1, profile2 in
-                        guard let dist1 = profile1.location?.distance(from: currentLocation),
-                              let dist2 = profile2.location?.distance(from: currentLocation) else {
-                            return false
+                    print("ProximityService: Sorting users by distance from current location")
+                    let sortedProfiles = allProfiles.sorted { profile1, profile2 in
+                        guard let location1 = profile1.location,
+                              let location2 = profile2.location else {
+                            // Put profiles without location at the end
+                            return profile1.location != nil && profile2.location == nil
                         }
+                        
+                        let dist1 = currentLocation.distance(from: location1)
+                        let dist2 = currentLocation.distance(from: location2)
                         return dist1 < dist2
                     }
                     
                     self.activeNearbyProfiles = sortedProfiles
-                    print("Found \(sortedProfiles.count) active users within \(self.maxProximityRadius / 1000.0)km")
+                    print("ProximityService: Sorted \(sortedProfiles.count) users by distance")
                 } else {
-                    // No location available, just show all active users
-                    self.activeNearbyProfiles = allActiveProfiles
-                    print("No location available, showing all \(allActiveProfiles.count) active users")
-                    
-                    // Debug: Check if profiles have location data
-                    for profile in allActiveProfiles {
-                        if let location = profile.location {
-                            print("Profile \(profile.deviceName) has location: \(location.coordinate.latitude), \(location.coordinate.longitude)")
-                        } else {
-                            print("Profile \(profile.deviceName) has NO location data")
-                        }
-                    }
+                    // No location available, just show all users
+                    self.activeNearbyProfiles = allProfiles
+                    print("ProximityService: No location available, showing all \(allProfiles.count) users")
                 }
+                
+                print("ProximityService: Final activeNearbyProfiles count: \(self.activeNearbyProfiles.count)")
             }
         }
+    }
+    
+    // Keep for backward compatibility - now just calls fetchAllUsers
+    func fetchActiveNearbyUsers(currentUserLocation: CLLocation? = nil) {
+        fetchAllUsers(currentUserLocation: currentUserLocation)
     }
     
     // Update current user's active status and location in CloudKit
@@ -185,25 +162,10 @@ class ProximityService: ObservableObject {
         }
     }
     
-    // Check if messaging is allowed between two users (based on proximity)
+    // Simplified - allow messaging anyone you can see
     func canMessage(from currentUser: UserProfile, to targetUser: UserProfile) -> (allowed: Bool, reason: String) {
-        // Check if target user is recently active
-        guard targetUser.isRecentlyActive() else {
-            return (false, "User is not currently active")
-        }
-        
-        // Check proximity
-        guard let distance = currentUser.distance(from: targetUser) else {
-            return (false, "Location not available")
-        }
-        
-        if distance <= maxProximityRadius {
-            let distanceKm = distance / 1000.0
-            return (true, "Within range (\(formatDistance(distance)))")
-        } else {
-            let distanceKm = distance / 1000.0
-            return (false, "Too far away (\(formatDistance(distance)))")
-        }
+        // Simple rule: if you can see them, you can message them
+        return (true, "Ready to message")
     }
     
     // Get formatted distance string in kilometers (.01km to 99km)
