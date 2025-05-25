@@ -1,6 +1,5 @@
 import Foundation
-// import UIKit // Temporarily removed to isolate UIKit dependencies
-import Combine // Added for ObservableObject
+import Combine
 import MultipeerConnectivity
 
 // Define a protocol for messages or use Codable structs directly
@@ -16,7 +15,7 @@ enum MessageType: String, Codable {
 }
 
 class NetworkService: NSObject, ObservableObject {
-    private let serviceType = "grid-app" // Max 15 chars, only a-z, 0-9, and hyphens
+    private let serviceType = "grid" // Simplified: just use a basic service type name
 
     private let myPeerID: MCPeerID
     private var session: MCSession
@@ -30,7 +29,6 @@ class NetworkService: NSObject, ObservableObject {
     var onGridNodeReceived: ((GridNode) -> Void)? // Or perhaps the whole grid or changes
     var onPeerConnected: ((MCPeerID) -> Void)?
     var onPeerDisconnected: ((MCPeerID) -> Void)?
-
 
     override init() {
         // For now, use host name instead of UIDevice.current.name for macOS compatibility
