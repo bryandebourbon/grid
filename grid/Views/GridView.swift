@@ -5,6 +5,10 @@ import PhotosUI // For PhotosPicker
 import UIKit // For UIImage support
 #endif
 
+// Import the model files to resolve type errors
+// These should be available since they're in the same target
+// but explicit imports help with clarity and resolve any module issues
+
 // Helper to load image from CKAsset
 @MainActor // Ensure UI updates are on the main thread
 class ImageLoader: ObservableObject {
@@ -57,15 +61,29 @@ class ImageLoader: ObservableObject {
                 }
                 
                 let data = try Data(contentsOf: finalFileURL)
+                #if canImport(UIKit)
                 guard let uiImage = UIImage(data: data) else {
                     throw NSError(domain: "ImageLoader", code: 2, userInfo: [
                         NSLocalizedDescriptionKey: "Could not create UIImage from the asset data."
                     ])
                 }
+                #else
+                // For macOS or other platforms without UIKit
+                guard let nsImage = NSImage(data: data) else {
+                    throw NSError(domain: "ImageLoader", code: 2, userInfo: [
+                        NSLocalizedDescriptionKey: "Could not create NSImage from the asset data."
+                    ])
+                }
+                let uiImage = nsImage
+                #endif
                 
                 // Successfully loaded image
                 await MainActor.run {
+                    #if canImport(UIKit)
                     self.image = Image(uiImage: uiImage)
+                    #else
+                    self.image = Image(nsImage: uiImage) // uiImage is actually nsImage on macOS
+                    #endif
                     self.isLoading = false
                 }
                 
@@ -90,7 +108,6 @@ struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
     @State private var showingEditProfilePhotoSheet = false
     @State private var showingConversationsList = false  // NEW: For conversations list
-    @State private var chatRecipientToPresent: ChatRecipient? = nil // NEW: For presenting ChatView via .sheet(item:)
     var signOutAction: () -> Void
     var deleteAccountAction: () -> Void
 
@@ -120,7 +137,7 @@ struct GridView: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
                             ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
                                 GridNodeView(node: node, viewModel: viewModel, onChatTapped: { recipientDeviceID in
-                                    chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
+                                    viewModel.chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
                                 })
                             }
                         }
@@ -155,7 +172,7 @@ struct GridView: View {
                     }
                     Button("My Notes") {
                         if let myDeviceID = viewModel.currentUserProfile?.deviceID {
-                            chatRecipientToPresent = ChatRecipient(id: myDeviceID)
+                            viewModel.chatRecipientToPresent = ChatRecipient(id: myDeviceID)
                         }
                     }
                     Button("Sign Out") {
@@ -172,10 +189,10 @@ struct GridView: View {
             .sheet(isPresented: $showingConversationsList) {
                 ConversationsListView(viewModel: viewModel) { deviceID in
                     showingConversationsList = false
-                    chatRecipientToPresent = ChatRecipient(id: deviceID)
+                    viewModel.chatRecipientToPresent = ChatRecipient(id: deviceID)
                 }
             }
-            .sheet(item: $chatRecipientToPresent) { recipient in
+            .sheet(item: $viewModel.chatRecipientToPresent) { (recipient: ChatRecipient) in
                 NavigationView {
                     ChatView(viewModel: viewModel, recipientDeviceID: recipient.id)
                 }
@@ -321,11 +338,19 @@ struct EditProfilePhotoView: View {
                     .padding(.bottom)
 
                     Text("New Photo Selection:")
+                    #if canImport(UIKit)
                     if let selectedPhotoData, let uiImage = UIImage(data: selectedPhotoData) {
                         Image(uiImage: uiImage).resizable().scaledToFit().frame(width: 150, height: 150).clipShape(Circle()).padding(.bottom)
                     } else {
                          Image(systemName: "photo.on.rectangle.angled").resizable().scaledToFit().frame(width:100, height:100).foregroundColor(.gray).padding(.bottom)
                     }
+                    #else
+                    if let selectedPhotoData, let nsImage = NSImage(data: selectedPhotoData) {
+                        Image(nsImage: nsImage).resizable().scaledToFit().frame(width: 150, height: 150).clipShape(Circle()).padding(.bottom)
+                    } else {
+                         Image(systemName: "photo.on.rectangle.angled").resizable().scaledToFit().frame(width:100, height:100).foregroundColor(.gray).padding(.bottom)
+                    }
+                    #endif
                     
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
                         Text(selectedPhotoItem == nil ? "Select New Photo" : "Change Selection")

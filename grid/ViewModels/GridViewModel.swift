@@ -28,6 +28,7 @@ class GridViewModel: ObservableObject {
     @Published var messages: [Message] = [] // For displaying messages
     @Published var currentChatRecipientDeviceID: String? // Device ID of who the current chat is with
     @Published var locationPermissionStatus: String = "Location permission not requested"
+    @Published var chatRecipientToPresent: ChatRecipient?
 
     private var messagingService: MessagingService
     private var gridService: GridService // For public grid management (legacy)
@@ -51,6 +52,7 @@ class GridViewModel: ObservableObject {
         setupMessagingHandlers()
         setupLocationHandlers()
         setupProximityHandlers()
+        setupNavigationHandlers()
         
         if let profile = initialProfile {
             updateUserActivityAndLocation(profile)
@@ -121,6 +123,31 @@ class GridViewModel: ObservableObject {
         proximityService.$activeNearbyProfiles
             .sink { [weak self] allProfiles in
                 self?.updateGridWithAllProfiles(allProfiles)
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func setupNavigationHandlers() {
+        NotificationCenter.default.publisher(for: .didTapPushNotificationForChat)
+            .compactMap { notification -> String? in
+                notification.userInfo?["senderDeviceID"] as? String
+            }
+            .receive(on: DispatchQueue.main) // Ensure UI updates on main thread
+            .sink { [weak self] senderDeviceID in
+                print("GridViewModel: Received navigation request for chat with senderDeviceID: \\(senderDeviceID)")
+                // Ensure the user is logged in and profile is available
+                guard self?.currentUserProfile != nil else {
+                    print("GridViewModel: Cannot navigate to chat, current user profile not available.")
+                    // Optionally, store this senderDeviceID and attempt navigation after profile loads.
+                    return
+                }
+                
+                // Check if already chatting with this person to avoid disrupting current view if not necessary
+                // However, if a new push comes for the *same* chat, we might still want to ensure it's visible.
+                // For now, always set the chat recipient to navigate or bring to front.
+                
+                self?.selectChatPartner(partnerDeviceID: senderDeviceID) // Make sure this recipient is selected
+                self?.chatRecipientToPresent = ChatRecipient(id: senderDeviceID) // Trigger sheet presentation
             }
             .store(in: &cancellables)
     }

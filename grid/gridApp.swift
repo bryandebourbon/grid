@@ -13,6 +13,9 @@ import UIKit
 // AppDelegate to handle push notifications and app lifecycle
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     
+    // Add a reference to MessagingService to handle notification taps
+    private let messagingService = MessagingService()
+    
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         
         // Request permission for push notifications
@@ -92,10 +95,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let userInfo = response.notification.request.content.userInfo
         
-        // Extract chat information from notification and route to chat
-        if let senderDeviceID = userInfo["senderDeviceID"] as? String {
-            NotificationCenter.default.post(name: .openChat, object: senderDeviceID)
-        }
+        print("AppDelegate: Notification tap received with userInfo: \(userInfo)")
+        
+        // Use MessagingService to handle the notification tap properly
+        // This will post the correct .didTapPushNotificationForChat notification that GridViewModel is listening for
+        messagingService.handlePushNotificationTap(userInfo: userInfo)
         
         completionHandler()
     }
@@ -104,7 +108,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 // Notification names for communication between AppDelegate and app
 extension Notification.Name {
     static let newCloudKitMessage = Notification.Name("newCloudKitMessage")
-    static let openChat = Notification.Name("openChat")
     static let newGridUpdate = Notification.Name("newGridUpdate")
     static let appDidBecomeActive = Notification.Name("appDidBecomeActive") // NEW
     static let appWillResignActive = Notification.Name("appWillResignActive") // NEW
