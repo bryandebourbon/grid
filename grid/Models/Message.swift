@@ -1,6 +1,13 @@
 import Foundation
 import CloudKit
 
+enum MessageStatus: String, Codable {
+    case sending
+    case sent
+    case failed
+    case received // For incoming messages
+}
+
 struct Message: Identifiable, Codable {
     var id: String // Unique identifier for the message (e.g., UUID().uuidString)
     var recordID: CKRecord.ID? // CloudKit record ID
@@ -9,11 +16,13 @@ struct Message: Identifiable, Codable {
     let senderUserID: String // Apple User ID of the sender (for account-level tracking)
     let recipientUserID: String // Apple User ID of the recipient
     let text: String
-    let timestamp: Date
+    var timestamp: Date // MODIFIED: Changed to var
     var isRead: Bool = false // To track if the message has been read by the recipient
+    var status: MessageStatus // NEW: Added status property
 
     enum CodingKeys: String, CodingKey {
         case id
+        case recordID // ADDED: recordID to CodingKeys if it needs to be persisted locally (optional)
         case senderDeviceID
         case recipientDeviceID
         case senderUserID
@@ -21,19 +30,63 @@ struct Message: Identifiable, Codable {
         case text
         case timestamp
         case isRead
+        case status // ADDED: status to CodingKeys
         // recordID is not directly encoded/decoded as it's managed by CloudKit interactions
+        // This comment seems to contradict adding recordID to CodingKeys.
+        // For optimistic updates, we might not need to encode/decode recordID via Codable
+        // if its persistence is solely handled by direct CloudKit interaction and
+        // local storage is only for optimistic states before CK sync.
+        // Let's remove recordID from coding keys for now, it is CK specific.
+    }
+    
+    // Customizing Codable conformance if recordID is not part of it.
+    // If you only want to encode/decode for local persistence (not for network):
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        // recordID = try container.decodeIfPresent(CKRecord.ID.self, forKey: .recordID) // Example if it were codable
+        senderDeviceID = try container.decode(String.self, forKey: .senderDeviceID)
+        recipientDeviceID = try container.decode(String.self, forKey: .recipientDeviceID)
+        senderUserID = try container.decode(String.self, forKey: .senderUserID)
+        recipientUserID = try container.decode(String.self, forKey: .recipientUserID)
+        text = try container.decode(String.self, forKey: .text)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        isRead = try container.decode(Bool.self, forKey: .isRead)
+        status = try container.decode(MessageStatus.self, forKey: .status)
+        // Note: CKRecord.ID is not inherently Codable. If you need to store it locally
+        // using Codable, you'd typically store its recordName (String) or a custom representation.
+        // For now, assuming recordID is managed outside of Codable persistence for this struct.
+        // If you have a local cache that needs to store the CKRecord.ID as part of the Message
+        // Codable representation, this part needs careful handling.
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        // try container.encodeIfPresent(recordID, forKey: .recordID) // If it were codable
+        try container.encode(senderDeviceID, forKey: .senderDeviceID)
+        try container.encode(recipientDeviceID, forKey: .recipientDeviceID)
+        try container.encode(senderUserID, forKey: .senderUserID)
+        try container.encode(recipientUserID, forKey: .recipientUserID)
+        try container.encode(text, forKey: .text)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(isRead, forKey: .isRead)
+        try container.encode(status, forKey: .status)
     }
 
     // Initializer for creating a new message locally
-    init(id: String = UUID().uuidString, 
-         senderDeviceID: String, 
-         recipientDeviceID: String, 
-         senderUserID: String, 
-         recipientUserID: String, 
-         text: String, 
-         timestamp: Date = Date(), 
-         isRead: Bool = false) {
+    init(id: String = UUID().uuidString,
+         recordID: CKRecord.ID? = nil, // Added to allow setting it if known
+         senderDeviceID: String,
+         recipientDeviceID: String,
+         senderUserID: String,
+         recipientUserID: String,
+         text: String,
+         timestamp: Date = Date(),
+         isRead: Bool = false,
+         status: MessageStatus = .sending) { // Default to .sending for new optimistic messages
         self.id = id
+        self.recordID = recordID
         self.senderDeviceID = senderDeviceID
         self.recipientDeviceID = recipientDeviceID
         self.senderUserID = senderUserID
@@ -41,11 +94,11 @@ struct Message: Identifiable, Codable {
         self.text = text
         self.timestamp = timestamp
         self.isRead = isRead
-        // recordID will be set when saved to or fetched from CloudKit
+        self.status = status
     }
 
     // Initializer from a CKRecord
-    init?(record: CKRecord) {
+    init?(record: CKRecord, currentDeviceID: String?) { // Added currentDeviceID to determine status
         guard let senderDeviceID = record["senderDeviceID"] as? String,
               let recipientDeviceID = record["recipientDeviceID"] as? String,
               let senderUserID = record["senderUserID"] as? String,
@@ -65,6 +118,13 @@ struct Message: Identifiable, Codable {
         self.text = text
         self.timestamp = timestamp
         self.isRead = record["isRead"] as? Bool ?? false
+        
+        // Determine status based on who sent it
+        if let currentDevID = currentDeviceID, senderDeviceID == currentDevID {
+            self.status = .sent // It's our own message, confirmed by server
+        } else {
+            self.status = .received // It's a message from someone else
+        }
     }
 
     // Helper to create/update a CKRecord from this message
@@ -79,6 +139,8 @@ struct Message: Identifiable, Codable {
         record["text"] = self.text
         record["timestamp"] = self.timestamp
         record["isRead"] = self.isRead
+        // We don't typically save the 'status' field to CloudKit as it's a client-side UI concern
+        // or derived from context (e.g., if it's in CloudKit, it's 'sent' or 'received').
         
         return record
     }

@@ -129,21 +129,43 @@ struct MessageRow: View {
                 Spacer() // Push message to the right for sender
             }
             
-            VStack(alignment: isCurrentDeviceSender ? .trailing : .leading) {
+            VStack(alignment: isCurrentDeviceSender ? .trailing : .leading, spacing: 2) { // Added spacing
                 Text(message.text)
                     .padding(10)
                     .background(isCurrentDeviceSender ? Color.blue.opacity(0.7) : Color.gray.opacity(0.3))
                     .foregroundColor(isCurrentDeviceSender ? .white : .primary)
                     .cornerRadius(10)
-                Text(message.timestamp, style: .time)
-                    .font(.caption2)
-                    .foregroundColor(.gray)
+                    .opacity(message.status == .sending ? 0.7 : 1.0) // Dim if sending
+
+                HStack(spacing: 4) { // HStack for timestamp and status indicator
+                    Text(message.timestamp, style: .time)
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                    
+                    // Status Indicator
+                    if isCurrentDeviceSender { // Only show sending/failed status for messages sent by current user
+                        switch message.status {
+                        case .sending:
+                            Text("Sending...")
+                                .font(.caption2)
+                                .foregroundColor(.gray)
+                        case .failed:
+                            Text("Failed")
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                                // TODO: Add tap to retry action here later
+                        case .sent, .received: // .received shouldn't happen for isCurrentDeviceSender true, but good to be exhaustive
+                            EmptyView() // No indicator for sent or received (unless you want a checkmark for sent)
+                        }
+                    }
+                }
             }
             
             if !isCurrentDeviceSender {
                 Spacer() // Push message to the left for receiver
             }
         }
+        .id(message.id) // Ensure the row is uniquely identifiable for list updates
     }
 }
 

@@ -66,18 +66,36 @@ class GridViewModel: ObservableObject {
     
     private func setupMessagingHandlers() {
         messagingService.newMessageReceived
-            .sink { [weak self] newMessage in
+            .sink { [weak self] newMessageFromSubscription in
                 guard let self = self, let currentDeviceID = self.currentUserProfile?.deviceID else { return }
-                
-                // Add to messages list if it's for this device (either sender or recipient)
-                if newMessage.senderDeviceID == currentDeviceID || newMessage.recipientDeviceID == currentDeviceID {
-                    // Avoid duplicates
-                    if !self.messages.contains(where: { $0.id == newMessage.id }) {
-                        self.messages.append(newMessage)
-                        self.messages.sort(by: { $0.timestamp < $1.timestamp })
-                        print("New message integrated into ViewModel: \(newMessage.text)")
-                    }
+
+                // Check if the message is relevant to the current user
+                guard newMessageFromSubscription.senderDeviceID == currentDeviceID || newMessageFromSubscription.recipientDeviceID == currentDeviceID else {
+                    // This message isn't for or from the current user, ignore.
+                    // This check might be redundant if MessagingService already filters, but good for safety.
+                    return
                 }
+                
+                // Determine if this is a confirmation of an optimistically sent message
+                // or a brand new message from the other party.
+                // The newMessageFromSubscription already has its ID set to the CKRecord.ID.recordName.
+                
+                if let index = self.messages.firstIndex(where: { $0.id == newMessageFromSubscription.id }) {
+                    // This is a confirmation of an existing message (likely an optimistic one).
+                    // Update its status and any server-authoritative fields.
+                    // The newMessageFromSubscription is already initialized with status .sent or .received
+                    // based on sender, so we can directly use its values.
+                    self.messages[index] = newMessageFromSubscription 
+                    print("GridViewModel: Updated existing message (ID: \\(newMessageFromSubscription.id)) from subscription with server data. Status: \\(newMessageFromSubscription.status)")
+                } else {
+                    // This is a genuinely new message (e.g., from the other user, or one not optimistically added).
+                    self.messages.append(newMessageFromSubscription)
+                    print("GridViewModel: Added new message (ID: \\(newMessageFromSubscription.id)) from subscription. Status: \\(newMessageFromSubscription.status)")
+                }
+                
+                self.messages.sort(by: { $0.timestamp < $1.timestamp })
+                // Consider calling objectWillChange.send() if direct array manipulation doesn't always trigger UI updates,
+                // though @Published should handle appends and direct element replacements.
             }
             .store(in: &cancellables)
     }
@@ -308,29 +326,30 @@ class GridViewModel: ObservableObject {
     
     // Enhanced: Fetch ALL messages for the current device (for all conversations)
     private func fetchAllMessagesForCurrentDevice(deviceID: String) {
-        print("GridViewModel: Fetching ALL messages for device \(deviceID) to preload chats...")
+        print("GridViewModel: Fetching ALL messages for device \\(deviceID) to preload chats...")
         
         messagingService.fetchMessages(forDeviceID: deviceID) { [weak self] result in
             guard let self = self else { return }
             switch result {
-            case .success(let fetchedMessages):
-                // Store all messages for instant chat access
+            case .success(let fetchedMessages): // MODIFIED: Changed fetchedCKRecords to fetchedMessages, expecting [Message]
+                // Assuming messages from MessagingService are already correctly initialized with status
                 self.messages = fetchedMessages.sorted(by: { $0.timestamp < $1.timestamp })
-                print("GridViewModel: Preloaded \(self.messages.count) messages for instant chat access")
+                
+                print("GridViewModel: Preloaded \\(self.messages.count) messages for instant chat access. Statuses set.")
                 
                 // Group messages by conversation for debugging
                 let conversations = Dictionary(grouping: self.messages) { message in
                     let otherDeviceID = message.senderDeviceID == deviceID ? message.recipientDeviceID : message.senderDeviceID
                     return otherDeviceID
                 }
-                print("GridViewModel: Messages organized into \(conversations.count) conversations:")
+                print("GridViewModel: Messages organized into \\(conversations.count) conversations:")
                 for (otherDeviceID, conversationMessages) in conversations {
-                    let displayName = otherDeviceID == deviceID ? "My Notes" : "Device \(String(otherDeviceID.prefix(8)))"
-                    print("  - \(displayName): \(conversationMessages.count) messages")
+                    let displayName = otherDeviceID == deviceID ? "My Notes" : "Device \\(String(otherDeviceID.prefix(8)))"
+                    print("  - \\(displayName): \\(conversationMessages.count) messages")
                 }
                 
             case .failure(let error):
-                print("GridViewModel: Error preloading messages for device \(deviceID): \(error.localizedDescription)")
+                print("GridViewModel: Error preloading messages for device \\(deviceID): \\(error.localizedDescription)")
                 // Don't fail the login process, just log the error
             }
         }
@@ -360,7 +379,7 @@ class GridViewModel: ObservableObject {
             let lastMessage = sortedMessages.last
             
             // Get display name from grid if available
-            var displayName = "Device \(String(otherDeviceID.prefix(8)))"
+            var displayName = "Device \\(String(otherDeviceID.prefix(8)))"
             if otherDeviceID == currentDeviceID {
                 displayName = "My Notes"
             } else {
@@ -408,10 +427,10 @@ class GridViewModel: ObservableObject {
             try photoData.write(to: tempFileURL)
             let photoAsset = CKAsset(fileURL: tempFileURL)
             currentUserProfile?.profileImage = photoAsset
-            print("Profile image updated. Temp file: \(tempFileURL.path)")
+            print("Profile image updated. Temp file: \\(tempFileURL.path)")
             persistAndUpdateProfileAndGrid()
         } catch {
-            print("Error creating CKAsset for profile image: \(error.localizedDescription)")
+            print("Error creating CKAsset for profile image: \\(error.localizedDescription)")
              try? FileManager.default.removeItem(at: tempFileURL)
         }
     }
@@ -447,7 +466,7 @@ class GridViewModel: ObservableObject {
         
         // Step 1: Update my location if available
         if let currentLocation = locationService.currentLocation {
-            print("Updating my location: \(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)")
+            print("Updating my location: \\(currentLocation.coordinate.latitude), \\(currentLocation.coordinate.longitude)")
             profile.updateLocation(currentLocation)
             self.currentUserProfile = profile
         } else {
@@ -467,7 +486,7 @@ class GridViewModel: ObservableObject {
                 self.proximityService.fetchAllUsers(currentUserLocation: updatedProfile.location)
                 
             case .failure(let error):
-                print("Error uploading my location: \(error.localizedDescription)")
+                print("Error uploading my location: \\(error.localizedDescription)")
                 // Still try to fetch others even if upload failed
                 self.proximityService.fetchAllUsers(currentUserLocation: profile.location)
             }
@@ -507,7 +526,7 @@ class GridViewModel: ObservableObject {
             case .success():
                 print("Successfully marked user as inactive")
             case .failure(let error):
-                print("Error marking user as inactive: \(error.localizedDescription)")
+                print("Error marking user as inactive: \\(error.localizedDescription)")
             }
         }
         
@@ -557,7 +576,7 @@ class GridViewModel: ObservableObject {
 
     func selectChatPartner(partnerDeviceID: String) {
         self.currentChatRecipientDeviceID = partnerDeviceID
-        print("Selected chat partner device: \(partnerDeviceID)")
+        print("Selected chat partner device: \\(partnerDeviceID)")
     }
 
     // Simplified sendMessage - can message anyone you can see
@@ -568,27 +587,74 @@ class GridViewModel: ObservableObject {
         }
         
         // Find the recipient's profile to get their userID
+        // TODO: This should ideally come from a more reliable source than just gridNodes,
+        // perhaps a dedicated user cache if available, or ensure gridNodes is always up-to-date.
         guard let recipientProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
-            print("Error: Could not find recipient profile for device \(recipientDeviceID)")
+            print("Error: Could not find recipient profile for device \\(recipientDeviceID)")
+            // OPTIONAL: Create a temporary message with .failed status or inform user.
             return
         }
         
-        let message = Message(
+        // 1. Create optimistic message
+        // The temporaryID will be used to find and update this message upon server response.
+        let temporaryID = UUID().uuidString
+        var optimisticMessage = Message(
+            id: temporaryID, // Use temporary client-generated ID
             senderDeviceID: senderProfile.deviceID,
             recipientDeviceID: recipientDeviceID,
             senderUserID: senderProfile.userID,
-            recipientUserID: recipientProfile.userID,
-            text: text
+            recipientUserID: recipientProfile.userID, // Make sure recipientProfile.userID is valid
+            text: text,
+            timestamp: Date(), // Client-side timestamp for now
+            status: .sending  // Initial status
         )
         
-        messagingService.sendMessage(message) { [weak self] result in
+        // 2. Add to local messages array immediately
+        // This should trigger UI update due to @Published
+        self.messages.append(optimisticMessage)
+        self.messages.sort(by: { $0.timestamp < $1.timestamp }) // Keep sorted
+        print("GridViewModel: Optimistically added message (TempID: \\(temporaryID)): \\(text)")
+
+        // 3. Send to messaging service
+        // Note: The `message` object sent to `messagingService.sendMessage` might need to be the one
+        // created *without* the temporaryID if the service expects to generate the ID or use CKRecord.ID.
+        // For now, assuming messagingService.sendMessage can handle a Message object that might have a client ID.
+        // Let's re-create it for sending, or ensure `toCKRecord()` uses `id` for `recordName`.
+        // The current `Message.toCKRecord()` uses `self.id` for the recordName, so `optimisticMessage` is fine.
+        
+        messagingService.sendMessage(optimisticMessage) { [weak self] result in
+            guard let self = self else { return }
+            
+            // Find the optimistic message in our array using its temporaryID
+            guard let optimisticMessageIndex = self.messages.firstIndex(where: { $0.id == temporaryID && $0.status == .sending }) else {
+                print("GridViewModel: Could not find optimistic message (TempID: \\(temporaryID)) to update after send attempt. It might have been already updated or removed.")
+                // If the message from subscription arrived faster and replaced it, that's okay.
+                // Or if `savedMessage.id` from success case matches the `temporaryID` initially, that's also okay.
+                // Let's check if a message with the *potential* final ID (if known from savedMessage) exists.
+                if case .success(let savedMessage) = result, self.messages.contains(where: { $0.id == savedMessage.id }) {
+                    print("GridViewModel: Message (ID: \\(savedMessage.id)) seems to be already updated by subscription or direct ID match.")
+                }
+                return
+            }
+            
             switch result {
             case .success(let savedMessage):
-                print("Message sent successfully to public database: \(savedMessage.text)")
+                // Update the optimistic message with server-confirmed data
+                self.messages[optimisticMessageIndex].id = savedMessage.id // This is CKRecord.ID.recordName
+                self.messages[optimisticMessageIndex].recordID = savedMessage.recordID
+                self.messages[optimisticMessageIndex].timestamp = savedMessage.timestamp // Server authoritative timestamp
+                self.messages[optimisticMessageIndex].status = .sent
+                print("GridViewModel: Optimistic message (TempID: \\(temporaryID)) confirmed by server. New ID: \\(savedMessage.id), Status: .sent")
+                
             case .failure(let error):
-                print("Error sending message: \(error.localizedDescription)")
-                // TODO: Show error to user
+                self.messages[optimisticMessageIndex].status = .failed
+                print("GridViewModel: Optimistic message (TempID: \\(temporaryID)) failed to send: \\(error.localizedDescription). Status: .failed")
+                // TODO: Implement retry logic or user notification
             }
+            
+            // Re-sort after update
+            self.messages.sort(by: { $0.timestamp < $1.timestamp })
+            // self.objectWillChange.send() // If needed
         }
     }
 
