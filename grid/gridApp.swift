@@ -8,6 +8,7 @@
 import SwiftUI
 import CloudKit
 import UserNotifications
+import UIKit
 
 // AppDelegate to handle push notifications and app lifecycle
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {

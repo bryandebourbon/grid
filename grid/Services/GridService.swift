@@ -97,20 +97,11 @@ class GridService: ObservableObject {
     // Set up subscription to get notified when new users join the grid
     private func setupPublicProfileSubscription() {
         let subscriptionID = "public-grid-updates"
-        
-        publicDB.fetch(withSubscriptionID: subscriptionID) { [weak self] subscription, error in
-            guard let self = self else { return }
-            
-            if subscription != nil {
-                print("Public grid subscription already exists")
-                return
-            }
-            
-            if let ckError = error as? CKError, ckError.code == .unknownItem {
-                print("Creating public grid subscription...")
-                self.createPublicGridSubscription(subscriptionID: subscriptionID)
-            }
-        }
+        print("Attempting to create or update public-grid-updates subscription to ensure it has no alertBody.")
+        // Directly call createPublicGridSubscription. CKDatabase.save(CKSubscription)
+        // will update the subscription if it already exists with the same ID,
+        // or create it if it doesn't. This ensures the notificationInfo is current (and has no alertBody).
+        self.createPublicGridSubscription(subscriptionID: subscriptionID)
     }
     
     private func createPublicGridSubscription(subscriptionID: String) {
@@ -123,15 +114,14 @@ class GridService: ObservableObject {
         
         let notificationInfo = CKSubscription.NotificationInfo()
         notificationInfo.shouldSendContentAvailable = true // Background updates
-        notificationInfo.alertBody = "Someone new joined the grid!" // Optional user notification
         subscription.notificationInfo = notificationInfo
         
         publicDB.save(subscription) { savedSubscription, error in
             DispatchQueue.main.async {
                 if let error = error {
-                    print("Error creating public grid subscription: \(error.localizedDescription)")
+                    print("Error creating/updating public grid subscription: \(error.localizedDescription)")
                 } else {
-                    print("Successfully created public grid subscription")
+                    print("Successfully created/updated public grid subscription (should be silent).")
                 }
             }
         }
