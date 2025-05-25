@@ -102,11 +102,14 @@ struct ChatView: View {
     // Helper to get a display name for the recipient device
     private func recipientDisplayName() -> String {
         // Find the recipient's profile to get their display name
-        if let recipientProfile = viewModel.findProfileForDevice(deviceID: recipientDeviceID) {
-            return recipientProfile.displayName
-        } else {
-            return "Device \(String(recipientDeviceID.prefix(8)))"
+        for row in viewModel.gridNodes {
+            for node in row {
+                if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
+                    return profile.displayName
+                }
+            }
         }
+        return "Device \(String(recipientDeviceID.prefix(8)))"
     }
 }
 

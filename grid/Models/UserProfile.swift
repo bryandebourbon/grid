@@ -1,5 +1,6 @@
 import Foundation
 import CloudKit
+import CoreLocation
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -10,23 +11,50 @@ struct UserProfile: Codable {
     var deviceID: String            // Unique identifier for each device
     var deviceName: String          // Human-readable device name
     var profileImage: CKAsset?      // For the profile photo (optional)
+    
+    // Location and activity tracking
+    var latitude: Double?           // Current latitude
+    var longitude: Double?          // Current longitude
+    var lastActiveTimestamp: Date   // Last time the user was active (app open)
+    var isCurrentlyActive: Bool     // Whether the user currently has the app open
+    
+    // Computed property for CLLocation
+    var location: CLLocation? {
+        guard let lat = latitude, let lon = longitude else { return nil }
+        return CLLocation(latitude: lat, longitude: lon)
+    }
 
     enum CodingKeys: String, CodingKey {
         case userID
         case deviceID
         case deviceName
+        case latitude
+        case longitude  
+        case lastActiveTimestamp
+        case isCurrentlyActive
         // CKAsset (profileImage) is not directly Codable. 
         // It's handled by CKRecord. If UserProfile were part of another Codable type,
         // this would need custom handling or that type would store only userID.
     }
 
     // Initializer for creating a new profile
-    init(userID: String, deviceID: String = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString, deviceName: String = UIDevice.current.name, profileImage: CKAsset? = nil) {
+    init(userID: String, 
+         deviceID: String = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString, 
+         deviceName: String = UIDevice.current.name, 
+         profileImage: CKAsset? = nil,
+         latitude: Double? = nil,
+         longitude: Double? = nil,
+         lastActiveTimestamp: Date = Date(),
+         isCurrentlyActive: Bool = true) {
         self.userID = userID
         self.deviceID = deviceID
         self.deviceName = deviceName
         self.recordID = CKRecord.ID(recordName: deviceID) // Use deviceID as the unique record identifier
         self.profileImage = profileImage
+        self.latitude = latitude
+        self.longitude = longitude
+        self.lastActiveTimestamp = lastActiveTimestamp
+        self.isCurrentlyActive = isCurrentlyActive
     }
     
     // Custom init for Decodable
@@ -37,6 +65,10 @@ struct UserProfile: Codable {
         self.deviceName = try container.decode(String.self, forKey: .deviceName)
         self.recordID = CKRecord.ID(recordName: self.deviceID)
         self.profileImage = nil // CKAsset not decoded via Codable
+        self.latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
+        self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
+        self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
+        self.isCurrentlyActive = try container.decodeIfPresent(Bool.self, forKey: .isCurrentlyActive) ?? false
     }
 
     // Custom encode for Encodable
@@ -45,6 +77,10 @@ struct UserProfile: Codable {
         try container.encode(self.userID, forKey: .userID)
         try container.encode(self.deviceID, forKey: .deviceID)
         try container.encode(self.deviceName, forKey: .deviceName)
+        try container.encodeIfPresent(self.latitude, forKey: .latitude)
+        try container.encodeIfPresent(self.longitude, forKey: .longitude)
+        try container.encode(self.lastActiveTimestamp, forKey: .lastActiveTimestamp)
+        try container.encode(self.isCurrentlyActive, forKey: .isCurrentlyActive)
         // profileImage (CKAsset) is not encoded.
     }
 
@@ -67,6 +103,10 @@ struct UserProfile: Codable {
         self.userID = userID
         self.deviceName = record["deviceName"] as? String ?? "Unknown Device"
         self.profileImage = record["profileImage"] as? CKAsset
+        self.latitude = record["latitude"] as? Double
+        self.longitude = record["longitude"] as? Double
+        self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
+        self.isCurrentlyActive = record["isCurrentlyActive"] as? Bool ?? false
     }
 
     // Helper to create/update a CKRecord for PUBLIC database (grid visibility)
@@ -76,6 +116,10 @@ struct UserProfile: Codable {
         record["userID"] = self.userID
         record["deviceID"] = self.deviceID
         record["deviceName"] = self.deviceName
+        record["latitude"] = self.latitude
+        record["longitude"] = self.longitude
+        record["lastActiveTimestamp"] = self.lastActiveTimestamp
+        record["isCurrentlyActive"] = self.isCurrentlyActive
         
         if let imageAsset = self.profileImage {
             record["profileImage"] = imageAsset
@@ -102,5 +146,40 @@ struct UserProfile: Codable {
         } else {
             return displayName
         }
+    }
+    
+    // Update location
+    mutating func updateLocation(_ location: CLLocation) {
+        self.latitude = location.coordinate.latitude
+        self.longitude = location.coordinate.longitude
+        self.lastActiveTimestamp = Date()
+        self.isCurrentlyActive = true
+    }
+    
+    // Mark as active (app is open)
+    mutating func markAsActive() {
+        self.lastActiveTimestamp = Date()
+        self.isCurrentlyActive = true
+    }
+    
+    // Mark as inactive (app closed/backgrounded)
+    mutating func markAsInactive() {
+        self.isCurrentlyActive = false
+        // Note: don't update lastActiveTimestamp here, keep the last known active time
+    }
+    
+    // Check if user is considered "recently active" (within last 5 minutes)
+    func isRecentlyActive() -> Bool {
+        let fiveMinutesAgo = Date().addingTimeInterval(-300) // 5 minutes
+        return lastActiveTimestamp > fiveMinutesAgo
+    }
+    
+    // Calculate distance from another user profile
+    func distance(from otherProfile: UserProfile) -> Double? {
+        guard let myLocation = self.location,
+              let otherLocation = otherProfile.location else {
+            return nil
+        }
+        return myLocation.distance(from: otherLocation)
     }
 } 

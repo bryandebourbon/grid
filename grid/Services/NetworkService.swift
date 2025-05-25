@@ -1,3 +1,18 @@
+/*
+ * NetworkService.swift
+ * 
+ * CURRENTLY DISABLED - Using pure CloudKit for location-based messaging like Grindr
+ * 
+ * This MultipeerConnectivity implementation is preserved for potential future features:
+ * - Local chat when no internet
+ * - File sharing between nearby devices
+ * - Gaming features
+ * - Mesh networking
+ * 
+ * To re-enable: Uncomment this file and add back to GridViewModel init
+ */
+
+/*
 import Foundation
 import Combine
 import MultipeerConnectivity
@@ -186,4 +201,5 @@ extension NetworkService: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
         print("Error browsing for peers: \(error.localizedDescription)")
     }
-} 
+}
+*/ 
