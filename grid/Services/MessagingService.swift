@@ -28,11 +28,12 @@ class MessagingService: ObservableObject {
     @objc private func handleCloudKitNotification(_ notification: Notification) {
         guard let recordID = notification.object as? CKRecord.ID else { return }
         print("MessagingService: Handling CloudKit notification for record: \(recordID.recordName)")
-        fetchMessage(withRecordID: recordID)
+        fetchMessage(withRecordID: recordID, currentDeviceID: nil)
     }
 
     func sendMessage(_ message: Message, completion: @escaping (Result<Message, Error>) -> Void) {
         let messageRecord = message.toCKRecord()
+        let senderDeviceIDForContext = message.senderDeviceID // This is the current user sending the message
         
         publicDB.save(messageRecord) { record, error in
             DispatchQueue.main.async {
@@ -41,7 +42,8 @@ class MessagingService: ObservableObject {
                     completion(.failure(error))
                     return
                 }
-                guard let savedRecord = record, let savedMessage = Message(record: savedRecord) else {
+                // Pass senderDeviceIDForContext as currentDeviceID for the Message initializer
+                guard let savedRecord = record, let savedMessage = Message(record: savedRecord, currentDeviceID: senderDeviceIDForContext) else {
                     print("Failed to convert saved CKRecord back to Message")
                     completion(.failure(NSError(domain: "MessagingService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to process saved message record."])))
                     return
@@ -80,7 +82,8 @@ class MessagingService: ObservableObject {
             } else if let error = error {
                 fetchError = error
             } else {
-                let sentMessages = records?.compactMap { Message(record: $0) } ?? []
+                // Pass deviceID as currentDeviceID for the Message initializer
+                let sentMessages = records?.compactMap { Message(record: $0, currentDeviceID: deviceID) } ?? []
                 allMessages.append(contentsOf: sentMessages)
             }
             dispatchGroup.leave()
@@ -95,7 +98,8 @@ class MessagingService: ObservableObject {
             } else if let error = error {
                 fetchError = error
             } else {
-                let receivedMessages = records?.compactMap { Message(record: $0) } ?? []
+                // Pass deviceID as currentDeviceID for the Message initializer
+                let receivedMessages = records?.compactMap { Message(record: $0, currentDeviceID: deviceID) } ?? []
                 allMessages.append(contentsOf: receivedMessages)
             }
             dispatchGroup.leave()
@@ -187,18 +191,20 @@ class MessagingService: ObservableObject {
            let recordID = notification.recordID {
             
             print("Push notification received for a message. RecordID: \(recordID.recordName)")
-            fetchMessage(withRecordID: recordID)
+            // We don't have currentDeviceID here, Message init will handle nil
+            fetchMessage(withRecordID: recordID, currentDeviceID: nil)
         }
     }
     
-    private func fetchMessage(withRecordID recordID: CKRecord.ID) {
+    private func fetchMessage(withRecordID recordID: CKRecord.ID, currentDeviceID: String?) {
         publicDB.fetch(withRecordID: recordID) { record, error in
             DispatchQueue.main.async {
                 if let error = error {
                     print("Error fetching single message by ID \(recordID.recordName): \(error.localizedDescription)")
                     return
                 }
-                guard let fetchedRecord = record, let message = Message(record: fetchedRecord) else {
+                // Pass the provided currentDeviceID to the Message initializer
+                guard let fetchedRecord = record, let message = Message(record: fetchedRecord, currentDeviceID: currentDeviceID) else {
                     print("Failed to fetch or parse message from push notification: \(recordID.recordName)")
                     return
                 }
