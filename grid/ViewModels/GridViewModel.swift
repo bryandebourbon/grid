@@ -258,19 +258,12 @@ class GridViewModel: ObservableObject {
         objectWillChange.send()
     }
     
+    // LEGACY: Keep for backward compatibility but now uses preloaded messages
     func fetchMessagesForCurrentDevice(deviceID: String) {
-        messagingService.fetchMessages(forDeviceID: deviceID) { [weak self] result in
-            guard let self = self else { return }
-            switch result {
-            case .success(let fetchedMessages):
-                // Replace local messages with fetched ones to ensure sync
-                self.messages = fetchedMessages.sorted(by: { $0.timestamp < $1.timestamp })
-                print("Successfully fetched \(self.messages.count) messages from public database for device \(deviceID)")
-            case .failure(let error):
-                print("Error fetching messages for device \(deviceID): \(error.localizedDescription)")
-                // TODO: Handle error (e.g., show alert to user)
-            }
-        }
+        print("GridViewModel: Using preloaded messages (no CloudKit fetch needed)")
+        // Messages are already loaded and kept up-to-date via real-time subscription
+        // This method is kept for compatibility but doesn't need to do anything
+        print("GridViewModel: \(messages.count) messages already available instantly")
     }
 
     func initializeGrid() {
@@ -304,12 +297,93 @@ class GridViewModel: ObservableObject {
         placeCurrentUserOnGrid()
         print("GridViewModel: Set current user profile for device ID \(profile.deviceID) (user: \(profile.userID))")
         
-        // When profile is set (device logs in), fetch their messages and subscribe
-        fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
+        // Preload all messages for instant chat access
+        print("GridViewModel: Preloading all messages for instant chat access...")
+        fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
         messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         
         // Start location updates - grid will auto-refresh when it appears
         locationService.requestLocationPermission()
+    }
+    
+    // Enhanced: Fetch ALL messages for the current device (for all conversations)
+    private func fetchAllMessagesForCurrentDevice(deviceID: String) {
+        print("GridViewModel: Fetching ALL messages for device \(deviceID) to preload chats...")
+        
+        messagingService.fetchMessages(forDeviceID: deviceID) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let fetchedMessages):
+                // Store all messages for instant chat access
+                self.messages = fetchedMessages.sorted(by: { $0.timestamp < $1.timestamp })
+                print("GridViewModel: Preloaded \(self.messages.count) messages for instant chat access")
+                
+                // Group messages by conversation for debugging
+                let conversations = Dictionary(grouping: self.messages) { message in
+                    let otherDeviceID = message.senderDeviceID == deviceID ? message.recipientDeviceID : message.senderDeviceID
+                    return otherDeviceID
+                }
+                print("GridViewModel: Messages organized into \(conversations.count) conversations:")
+                for (otherDeviceID, conversationMessages) in conversations {
+                    let displayName = otherDeviceID == deviceID ? "My Notes" : "Device \(String(otherDeviceID.prefix(8)))"
+                    print("  - \(displayName): \(conversationMessages.count) messages")
+                }
+                
+            case .failure(let error):
+                print("GridViewModel: Error preloading messages for device \(deviceID): \(error.localizedDescription)")
+                // Don't fail the login process, just log the error
+            }
+        }
+    }
+    
+    // NEW: Get messages for a specific conversation (already loaded)
+    func getMessagesForConversation(with deviceID: String) -> [Message] {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return [] }
+        
+        return messages.filter { message in
+            (message.senderDeviceID == currentDeviceID && message.recipientDeviceID == deviceID) ||
+            (message.senderDeviceID == deviceID && message.recipientDeviceID == currentDeviceID)
+        }.sorted(by: { $0.timestamp < $1.timestamp })
+    }
+    
+    // NEW: Get conversation list with last message preview
+    func getConversationList() -> [(deviceID: String, displayName: String, lastMessage: Message?, messageCount: Int)] {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return [] }
+        
+        // Group messages by conversation partner
+        let conversations = Dictionary(grouping: messages) { message in
+            message.senderDeviceID == currentDeviceID ? message.recipientDeviceID : message.senderDeviceID
+        }
+        
+        return conversations.compactMap { (otherDeviceID, conversationMessages) in
+            let sortedMessages = conversationMessages.sorted(by: { $0.timestamp < $1.timestamp })
+            let lastMessage = sortedMessages.last
+            
+            // Get display name from grid if available
+            var displayName = "Device \(String(otherDeviceID.prefix(8)))"
+            if otherDeviceID == currentDeviceID {
+                displayName = "My Notes"
+            } else {
+                // Look for the device in the grid
+                for row in gridNodes {
+                    for node in row {
+                        if let profile = node.userProfile, profile.deviceID == otherDeviceID {
+                            displayName = profile.displayName
+                            break
+                        }
+                    }
+                }
+            }
+            
+            return (deviceID: otherDeviceID, displayName: displayName, lastMessage: lastMessage, messageCount: conversationMessages.count)
+        }.sorted { conversation1, conversation2 in
+            // Sort by last message timestamp, most recent first
+            guard let date1 = conversation1.lastMessage?.timestamp,
+                  let date2 = conversation2.lastMessage?.timestamp else {
+                return conversation1.lastMessage != nil && conversation2.lastMessage == nil
+            }
+            return date1 > date2
+        }
     }
     
     // LEGACY: Keep for backwards compatibility
