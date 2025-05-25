@@ -124,23 +124,12 @@ class MessagingService: ObservableObject {
 
     func subscribeToMessageChanges(forDeviceID deviceID: String) {
         let subscriptionID = "new-messages-for-device-\(deviceID)"
-
-        // Check if subscription already exists
-        publicDB.fetch(withSubscriptionID: subscriptionID) { [weak self] (subscription, error) in 
-            guard let self = self else { return }
-            if subscription != nil {
-                print("Subscription '\(subscriptionID)' already exists.")
-                return
-            }
-            
-            // If error is .unknownItem, it means subscription doesn't exist, so create it.
-            if let ckError = error as? CKError, ckError.code == .unknownItem {
-                print("Subscription '\(subscriptionID)' not found. Creating now...")
-                self.createSubscription(forDeviceID: deviceID, subscriptionID: subscriptionID)
-            } else if let error = error {
-                 print("Error checking for subscription '\(subscriptionID)': \(error.localizedDescription)")
-            }
-        }
+        print("Attempting to create or update subscription: \(subscriptionID) to ensure latest settings are applied.")
+        
+        // Directly call createSubscription. CKDatabase.save(CKSubscription)
+        // will update the subscription if it already exists with the same ID,
+        // or create it if it doesn't. This ensures the notificationInfo is current.
+        self.createSubscription(forDeviceID: deviceID, subscriptionID: subscriptionID)
     }
     
     private func createSubscription(forDeviceID deviceID: String, subscriptionID: String) {
@@ -171,7 +160,8 @@ class MessagingService: ObservableObject {
                 } else if let saveError = saveError {
                     print("Error saving subscription '\(subscriptionID)': \(saveError.localizedDescription)")
                 } else if let sub = savedSubscription {
-                    print("Successfully subscribed to message changes with ID: \(sub.subscriptionID)")
+                    // Updated log message for clarity
+                    print("Successfully saved (created or updated) subscription: \(sub.subscriptionID)")
                 }
             }
         }
