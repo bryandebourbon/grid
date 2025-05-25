@@ -94,11 +94,23 @@ struct GridView: View {
     var body: some View {
         NavigationView {
             VStack {
-                Text(viewModel.connectedPeersText)
-                    .font(.caption)
-                    .padding(.top)
-
-                if viewModel.currentUserProfile != nil {
+                // Location permission status and coordinates
+                Text(viewModel.locationPermissionStatus)
+                    .font(.caption2)
+                    .foregroundColor(viewModel.locationPermissionStatus.contains("granted") ? .green : .orange)
+                    .padding(.horizontal)
+                
+                // DEBUG: Show current location coordinates
+                if let profile = viewModel.currentUserProfile,
+                   let lat = profile.latitude,
+                   let lon = profile.longitude {
+                    Text("My Position: \(String(format: "%.4f", lat)), \(String(format: "%.4f", lon))")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                        .padding(.horizontal)
+                }
+                
+                if let profile = viewModel.currentUserProfile {
                     ScrollView {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
                             ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
@@ -207,21 +219,38 @@ struct GridNodeView: View {
             .background(Color.gray.opacity(0.1)) // Background for empty or loading states
             .clipShape(Rectangle()) // Or Circle(), depending on desired node shape
             
-            // "Me" label overlay for current user
-            if let profile = node.userProfile, 
-               let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
-               profile.deviceID == currentUserDeviceID {
+            // Distance and status overlays
+            if let profile = node.userProfile {
                 VStack {
                     Spacer()
-                    Text("Me")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue)
-                        .cornerRadius(8)
-                        .padding(.bottom, 4)
+                    
+                    // Bottom overlay: Distance only (simplified)
+                    if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
+                       profile.deviceID == currentUserDeviceID {
+                        // "Me" label for current user
+                        Text("Me")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue)
+                            .cornerRadius(8)
+                            .padding(.bottom, 4)
+                    } else {
+                        // Just show distance for other users
+                        if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
+                            Text(distanceString)
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.7))
+                                .cornerRadius(6)
+                                .padding(.bottom, 4)
+                        }
+                    }
                 }
             }
         }
@@ -232,9 +261,16 @@ struct GridNodeView: View {
             imageLoader.loadImage(from: node.userProfile?.profileImage)
         }
         .onTapGesture {
-            // When tapping a grid node with a user, start chatting with their device
+            // When tapping a grid node with a user, check if messaging is allowed
             if let userProfile = node.userProfile {
-                onChatTapped(userProfile.deviceID)
+                let messagingStatus = viewModel.canMessageUser(deviceID: userProfile.deviceID)
+                if messagingStatus.allowed || userProfile.deviceID == viewModel.currentUserProfile?.deviceID {
+                    // Allow chat if messaging is allowed or it's the current user (for notes)
+                    onChatTapped(userProfile.deviceID)
+                } else {
+                    // TODO: Show alert explaining why messaging is not allowed
+                    print("Cannot message user: \(messagingStatus.reason)")
+                }
             }
         }
     }

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SwiftData
 import AuthenticationServices
 import CloudKit
 #if canImport(UIKit)
@@ -28,10 +27,9 @@ import UIKit
 // For now, we'll rely on Swift's module system to find UserProfile.swift
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
     //    @Query private var items: [Item]
     
-    @StateObject private var gridViewModel = GridViewModel(networkService: NetworkService())
+    @StateObject private var gridViewModel = GridViewModel()
 
     // Authentication State
     @State private var showSignInView = true
@@ -101,6 +99,14 @@ struct ContentView: View {
                 self.chatRecipientDeviceID = senderDeviceID
                 self.shouldOpenChat = true
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appDidBecomeActive)) { _ in
+            // Handle app becoming active - mark user as active and restart location updates
+            gridViewModel.handleAppDidBecomeActive()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appWillResignActive)) { _ in
+            // Handle app going to background/inactive - mark user as inactive and stop location updates
+            gridViewModel.handleAppWillResignActive()
         }
     }
 

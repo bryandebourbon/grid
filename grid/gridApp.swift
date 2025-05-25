@@ -6,11 +6,10 @@
 //
 
 import SwiftUI
-import SwiftData
 import CloudKit
 import UserNotifications
 
-// AppDelegate to handle push notifications
+// AppDelegate to handle push notifications and app lifecycle
 class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
@@ -37,6 +36,18 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("Failed to register for remote notifications: \(error.localizedDescription)")
+    }
+    
+    // NEW: Handle app becoming active
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        print("App became active")
+        NotificationCenter.default.post(name: .appDidBecomeActive, object: nil)
+    }
+    
+    // NEW: Handle app going to background/inactive
+    func applicationWillResignActive(_ application: UIApplication) {
+        print("App will resign active")
+        NotificationCenter.default.post(name: .appWillResignActive, object: nil)
     }
     
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
@@ -94,27 +105,18 @@ extension Notification.Name {
     static let newCloudKitMessage = Notification.Name("newCloudKitMessage")
     static let openChat = Notification.Name("openChat")
     static let newGridUpdate = Notification.Name("newGridUpdate")
+    static let appDidBecomeActive = Notification.Name("appDidBecomeActive") // NEW
+    static let appWillResignActive = Notification.Name("appWillResignActive") // NEW
 }
 
 @main
 struct gridApp: App {
     // Add AppDelegate
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
-    let modelContainer: ModelContainer
-
-    init() {
-        do {
-            modelContainer = try ModelContainer(for: Item.self)
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(modelContainer)
     }
 }
