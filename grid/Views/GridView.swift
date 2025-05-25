@@ -81,12 +81,16 @@ class ImageLoader: ObservableObject {
     }
 }
 
+// Define an Identifiable struct for the chat recipient
+struct ChatRecipient: Identifiable {
+    let id: String // Represents the deviceID
+}
+
 struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
     @State private var showingEditProfilePhotoSheet = false
-    @State private var showingChatView = false
     @State private var showingConversationsList = false  // NEW: For conversations list
-    @State private var selectedChatRecipientDeviceID: String? = nil
+    @State private var chatRecipientToPresent: ChatRecipient? = nil // NEW: For presenting ChatView via .sheet(item:)
     var signOutAction: () -> Void
     var deleteAccountAction: () -> Void
 
@@ -116,8 +120,7 @@ struct GridView: View {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
                             ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
                                 GridNodeView(node: node, viewModel: viewModel, onChatTapped: { recipientDeviceID in
-                                    selectedChatRecipientDeviceID = recipientDeviceID
-                                    showingChatView = true
+                                    chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
                                 })
                             }
                         }
@@ -151,8 +154,9 @@ struct GridView: View {
                         showingConversationsList = true
                     }
                     Button("My Notes") {
-                        selectedChatRecipientDeviceID = viewModel.currentUserProfile?.deviceID // Chat with self for notes
-                        showingChatView = true
+                        if let myDeviceID = viewModel.currentUserProfile?.deviceID {
+                            chatRecipientToPresent = ChatRecipient(id: myDeviceID)
+                        }
                     }
                     Button("Sign Out") {
                         signOutAction()
@@ -168,15 +172,12 @@ struct GridView: View {
             .sheet(isPresented: $showingConversationsList) {
                 ConversationsListView(viewModel: viewModel) { deviceID in
                     showingConversationsList = false
-                    selectedChatRecipientDeviceID = deviceID
-                    showingChatView = true
+                    chatRecipientToPresent = ChatRecipient(id: deviceID)
                 }
             }
-            .sheet(isPresented: $showingChatView) {
-                if let recipientDeviceID = selectedChatRecipientDeviceID {
-                    NavigationView {
-                        ChatView(viewModel: viewModel, recipientDeviceID: recipientDeviceID)
-                    }
+            .sheet(item: $chatRecipientToPresent) { recipient in
+                NavigationView {
+                    ChatView(viewModel: viewModel, recipientDeviceID: recipient.id)
                 }
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
