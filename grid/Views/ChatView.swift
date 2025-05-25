@@ -5,19 +5,14 @@ struct ChatView: View {
     let recipientDeviceID: String // The device ID of the device being chatted with (can be self for notes)
     
     @State private var newMessageText: String = ""
-    @State private var isRefreshing = false
     
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
     }
     
-    // Filter messages for the current chat
+    // Use preloaded messages from GridViewModel - instant access!
     private var chatMessages: [Message] {
-        guard let currentDeviceID = currentDeviceID else { return [] }
-        return viewModel.messages.filter {
-            ($0.senderDeviceID == currentDeviceID && $0.recipientDeviceID == recipientDeviceID) || 
-            ($0.senderDeviceID == recipientDeviceID && $0.recipientDeviceID == currentDeviceID)
-        }.sorted(by: { $0.timestamp < $1.timestamp })
+        return viewModel.getMessagesForConversation(with: recipientDeviceID)
     }
     
     var body: some View {
@@ -26,27 +21,33 @@ struct ChatView: View {
             ScrollViewReader { scrollViewProxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(chatMessages) { message in
-                            MessageRow(message: message, isCurrentDeviceSender: message.senderDeviceID == currentDeviceID)
-                                .id(message.id) // For ScrollViewReader
+                        if chatMessages.isEmpty {
+                            VStack {
+                                Image(systemName: "message")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.gray)
+                                Text("No messages yet")
+                                    .foregroundColor(.gray)
+                                Text("Send a message to start the conversation!")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.top, 50)
+                        } else {
+                            ForEach(chatMessages) { message in
+                                MessageRow(message: message, isCurrentDeviceSender: message.senderDeviceID == currentDeviceID)
+                                    .id(message.id) // For ScrollViewReader
+                            }
                         }
                     }
                     .padding()
                 }
-                .refreshable {
-                    await refreshMessages()
-                }
                 .onChange(of: chatMessages.count) { _ in // Auto-scroll to new message
-                    if let lastMessage = chatMessages.last {
-                        withAnimation {
-                            scrollViewProxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
+                    scrollToBottom(scrollViewProxy)
                 }
                 .onAppear {
-                    if let lastMessage = chatMessages.last {
-                        scrollViewProxy.scrollTo(lastMessage.id, anchor: .bottom)
-                    }
+                    scrollToBottom(scrollViewProxy)
                 }
             }
             
@@ -55,31 +56,34 @@ struct ChatView: View {
                 TextField("Enter message...", text: $newMessageText)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .padding(.leading)
+                    .onSubmit {
+                        if !newMessageText.isEmpty {
+                            sendMessage()
+                        }
+                    }
                 
                 Button(action: sendMessage) {
                     Image(systemName: "paperplane.fill")
                         .padding(.trailing)
+                        .foregroundColor(newMessageText.isEmpty ? .gray : .blue)
                 }
                 .disabled(newMessageText.isEmpty || currentDeviceID == nil)
             }
             .padding()
         }
         .navigationTitle(recipientDeviceID == currentDeviceID ? "My Notes" : "Chat with \(recipientDisplayName())")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             // When the view appears, ensure the viewModel knows which device we're chatting with.
             viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
+            print("ChatView: Opened chat with \(recipientDeviceID), \(chatMessages.count) messages ready instantly!")
         }
     }
     
-    @MainActor
-    private func refreshMessages() async {
-        guard let currentDeviceID = currentDeviceID else { return }
-        
-        return await withCheckedContinuation { continuation in
-            viewModel.fetchMessagesForCurrentDevice(deviceID: currentDeviceID)
-            // Give it a moment to complete, then continue
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                continuation.resume()
+    private func scrollToBottom(_ scrollViewProxy: ScrollViewProxy) {
+        if let lastMessage = chatMessages.last {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                scrollViewProxy.scrollTo(lastMessage.id, anchor: .bottom)
             }
         }
     }
@@ -89,18 +93,20 @@ struct ChatView: View {
         let messageText = newMessageText
         newMessageText = "" // Clear input field immediately
         
+        print("ChatView: Sending message instantly (no wait): \(messageText)")
         viewModel.sendMessage(text: messageText, to: recipientDeviceID)
         
-        // Auto-refresh after sending to show the sent message
-        Task {
-            // Give CloudKit a moment to save the message, then refresh
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
-            await refreshMessages()
-        }
+        // Messages are automatically updated via the real-time subscription
+        // No need to manually refresh - the message will appear when CloudKit confirms it
     }
     
     // Helper to get a display name for the recipient device
     private func recipientDisplayName() -> String {
+        // Check if this is a self-chat first
+        if recipientDeviceID == currentDeviceID {
+            return "My Notes"
+        }
+        
         // Find the recipient's profile to get their display name
         for row in viewModel.gridNodes {
             for node in row {
