@@ -1,7 +1,9 @@
 import SwiftUI
 import CloudKit // For CKAsset
 import PhotosUI // For PhotosPicker
+#if canImport(UIKit)
 import UIKit // For UIImage support
+#endif
 
 // Helper to load image from CKAsset
 @MainActor // Ensure UI updates are on the main thread
@@ -82,6 +84,12 @@ class ImageLoader: ObservableObject {
 struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
     @State private var showingEditProfilePhotoSheet = false
+    @State private var showingChatView = false
+    @State private var selectedChatRecipientDeviceID: String? = nil
+    var signOutAction: () -> Void
+    var deleteAccountAction: () -> Void
+
+    @State private var showingDeleteConfirmation = false
 
     var body: some View {
         NavigationView {
@@ -91,14 +99,21 @@ struct GridView: View {
                     .padding(.top)
 
                 if viewModel.currentUserProfile != nil {
-                    // No welcome message with username anymore
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
-                        ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
-                            GridNodeView(node: node)
+                    ScrollView {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
+                            ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
+                                GridNodeView(node: node, viewModel: viewModel, onChatTapped: { recipientDeviceID in
+                                    selectedChatRecipientDeviceID = recipientDeviceID
+                                    showingChatView = true
+                                })
+                            }
                         }
+                        .padding()
+                        .aspectRatio(1, contentMode: .fit)
                     }
-                    .padding()
-                    .aspectRatio(1, contentMode: .fit)
+                    .refreshable {
+                        await refreshGrid()
+                    }
                     .border(Color.gray)
                 } else {
                     Text("Loading profile or no profile set...")
@@ -107,14 +122,56 @@ struct GridView: View {
             }
             .navigationTitle("The Grid")
             .toolbar {
-                 if viewModel.currentUserProfile != nil {
-                     Button("Edit Photo") { // Changed from Edit Username
-                         showingEditProfilePhotoSheet = true
-                     }
-                 }
+                ToolbarItemGroup(placement: .navigationBarLeading) {
+                    if viewModel.currentUserProfile != nil {
+                        Button("Edit Photo") {
+                            showingEditProfilePhotoSheet = true
+                        }
+                    }
+                }
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button("My Notes") {
+                        selectedChatRecipientDeviceID = viewModel.currentUserProfile?.deviceID // Chat with self for notes
+                        showingChatView = true
+                    }
+                    Button("Sign Out") {
+                        signOutAction()
+                    }
+                    Button("Delete Account", role: .destructive) {
+                        showingDeleteConfirmation = true
+                    }
+                }
             }
             .sheet(isPresented: $showingEditProfilePhotoSheet) {
-                EditProfilePhotoView(viewModel: viewModel) // Changed to EditProfilePhotoView
+                EditProfilePhotoView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingChatView) {
+                if let recipientDeviceID = selectedChatRecipientDeviceID {
+                    NavigationView {
+                        ChatView(viewModel: viewModel, recipientDeviceID: recipientDeviceID)
+                    }
+                }
+            }
+            .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
+                Button("Delete", role: .destructive) { deleteAccountAction() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Are you sure you want to delete your account? This action cannot be undone.")
+            }
+        }
+    }
+    
+    @MainActor
+    private func refreshGrid() async {
+        print("GridView: Refreshing grid via pull-to-refresh")
+        
+        // Call the viewModel's refresh method
+        viewModel.refreshPublicGrid()
+        
+        return await withCheckedContinuation { continuation in
+            // Give it a moment to refresh, then complete
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                continuation.resume()
             }
         }
     }
@@ -122,39 +179,68 @@ struct GridView: View {
 
 struct GridNodeView: View {
     let node: GridNode
+    let viewModel: GridViewModel
+    let onChatTapped: (String) -> Void
     @StateObject private var imageLoader = ImageLoader()
 
     var body: some View {
-        Group {
-            if imageLoader.isLoading {
-                ProgressView()
-            } else if let loadedImage = imageLoader.image {
-                loadedImage
-                    .resizable()
-                    .scaledToFill() // Fill the space, might crop
-            } else {
-                // Placeholder if no image or failed to load
-                Image(systemName: "person.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .padding(5) // Add some padding to the system image
-                    .foregroundColor(Color.gray.opacity(0.5))
+        ZStack {
+            // Main profile image
+            Group {
+                if imageLoader.isLoading {
+                    ProgressView()
+                } else if let loadedImage = imageLoader.image {
+                    loadedImage
+                        .resizable()
+                        .scaledToFill() // Fill the space, might crop
+                } else {
+                    // Placeholder if no image or failed to load
+                    Image(systemName: "person.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .padding(5) // Add some padding to the system image
+                        .foregroundColor(Color.gray.opacity(0.5))
+                }
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity) // Ensure it expands
+            .aspectRatio(1, contentMode: .fit)
+            .background(Color.gray.opacity(0.1)) // Background for empty or loading states
+            .clipShape(Rectangle()) // Or Circle(), depending on desired node shape
+            
+            // "Me" label overlay for current user
+            if let profile = node.userProfile, 
+               let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
+               profile.deviceID == currentUserDeviceID {
+                VStack {
+                    Spacer()
+                    Text("Me")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue)
+                        .cornerRadius(8)
+                        .padding(.bottom, 4)
+                }
             }
         }
-        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity) // Ensure it expands
-        .aspectRatio(1, contentMode: .fit)
-        .background(Color.gray.opacity(0.1)) // Background for empty or loading states
-        .clipShape(Rectangle()) // Or Circle(), depending on desired node shape
         .onAppear {
             imageLoader.loadImage(from: node.userProfile?.profileImage)
         }
         .onChange(of: node.userProfile?.profileImage?.fileURL) { _ in // Try to reload if asset URL changes
             imageLoader.loadImage(from: node.userProfile?.profileImage)
         }
+        .onTapGesture {
+            // When tapping a grid node with a user, start chatting with their device
+            if let userProfile = node.userProfile {
+                onChatTapped(userProfile.deviceID)
+            }
+        }
     }
 }
 
-// Renamed from EditUsernameView to EditProfilePhotoView
+// Profile photo editing view
 struct EditProfilePhotoView: View {
     @ObservedObject var viewModel: GridViewModel
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
@@ -193,11 +279,8 @@ struct EditProfilePhotoView: View {
                         Text(selectedPhotoItem == nil ? "Select New Photo" : "Change Selection")
                     }
                     .onChange(of: selectedPhotoItem) { newItem in
-                        // newItem is the selected PhotosPickerItem?
                         Task {
-                            guard let item = newItem else { // Use newItem for the new value
-                                // newItem is nil (e.g. user deselected the photo)
-                                // Clear the selectedPhotoData and any error message.
+                            guard let item = newItem else {
                                 self.selectedPhotoData = nil
                                 self.errorMessage = nil
                                 return
@@ -208,15 +291,13 @@ struct EditProfilePhotoView: View {
                                     self.selectedPhotoData = data
                                     self.errorMessage = nil
                                 } else {
-                                    // This case might occur if loadTransferable returns nil for a non-image,
-                                    // though 'matching: .images' should prevent this.
                                     print("Photo data is nil but no error thrown by loadTransferable.")
-                                    self.selectedPhotoData = nil // Clear potentially stale data
+                                    self.selectedPhotoData = nil
                                     self.errorMessage = "Could not retrieve image data. Please select a valid image."
                                 }
                             } catch {
                                 print("Failed to load photo data: \(error.localizedDescription)")
-                                self.selectedPhotoData = nil // Clear potentially stale data on error
+                                self.selectedPhotoData = nil
                                 self.errorMessage = "Failed to load image: \(error.localizedDescription)"
                             }
                         }
@@ -228,19 +309,10 @@ struct EditProfilePhotoView: View {
                     Text(errorMessage).foregroundColor(.red)
                 }
 
-//                Section {
-                    Button(action: { saveProfilePhoto() }) {
-                        if isSaving { ProgressView() } else { Text("Save New Photo") }
-                    }
-                    .disabled(selectedPhotoData == nil || isSaving)
-
-                    if viewModel.currentUserProfile?.profileImage != nil {
-//                        Button(action: { removeProfilePhoto() }, role: .destructive) {
-//                             if isSaving { ProgressView() } else { Text("Remove Current Photo") }
-//                        }
-//                        .disabled(isSaving)
-                    }
-//                }
+                Button(action: { saveProfilePhoto() }) {
+                    if isSaving { ProgressView() } else { Text("Save New Photo") }
+                }
+                .disabled(selectedPhotoData == nil || isSaving)
             }
             .navigationTitle("Edit Profile Photo")
             .navigationBarTitleDisplayMode(.inline)
@@ -251,7 +323,6 @@ struct EditProfilePhotoView: View {
             }
             .onAppear {
                 currentImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
-                // Clear selection when view appears
                 selectedPhotoItem = nil 
                 selectedPhotoData = nil
             }
@@ -266,28 +337,10 @@ struct EditProfilePhotoView: View {
         isSaving = true
         errorMessage = nil
         viewModel.updateCurrentProfileImage(newPhotoData: photoData) 
-        // The ViewModel's method handles CKAsset creation and local update.
-        // CloudKit persistence should be triggered by ContentView observing viewModel.currentUserProfile.
-        // ViewModel should also manage temporary file cleanup via callbacks or by being responsible for the save.
-        // For now, we assume ViewModel sets the local profileImage and ContentView syncs it.
         
-        // Simulate a delay for saving then dismiss
-        // In a real app, you'd wait for a callback from the ViewModel or CloudKit operation.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { // Short delay to allow UI update
-            isSaving = false
-            // Check if image was set in viewmodel before dismissing. For now, just dismiss.
-            dismiss()
-        }
-    }
-
-    private func removeProfilePhoto() {
-        isSaving = true
-        errorMessage = nil
-        viewModel.updateCurrentProfileImage(newPhotoData: nil) // Pass nil to remove
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             isSaving = false
-            currentImageLoader.loadImage(from: nil) // Clear displayed current image
-            dismiss() // Or stay if you want to allow picking another photo
+            dismiss()
         }
     }
 }
@@ -295,16 +348,13 @@ struct EditProfilePhotoView: View {
 struct GridView_Previews: PreviewProvider {
     static var previews: some View {
         let mockViewModel = GridViewModel()
-        // UserProfile now only takes userID and optional profileImage.
-        // For preview, we can't easily create a CKAsset, so profileImage will be nil.
         let dummyProfile = UserProfile(userID: "previewUser123", profileImage: nil)
         mockViewModel.setCurrentUserProfile(dummyProfile)
         
-        // Example: Add a node with a profile for preview
         if !mockViewModel.gridNodes.isEmpty && !mockViewModel.gridNodes[0].isEmpty {
             mockViewModel.gridNodes[0][0].userProfile = dummyProfile
         }
         
-        return GridView(viewModel: mockViewModel)
+        return GridView(viewModel: mockViewModel, signOutAction: {}, deleteAccountAction: {})
     }
 } 

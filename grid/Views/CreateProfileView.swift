@@ -16,12 +16,21 @@ struct CreateProfileView: View {
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
 
+    // Generate device-specific info
+    private let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+    private let deviceName = UIDevice.current.name
+
     var body: some View {
-        NavigationView { // Added NavigationView for title and toolbar
+        NavigationView {
             VStack {
                 Text("Set Your Profile Photo")
                     .font(.largeTitle)
                     .padding()
+                
+                Text("Device: \(deviceName)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.bottom)
 
                 if let selectedPhotoData, let uiImage = UIImage(data: selectedPhotoData) {
                     Image(uiImage: uiImage)
@@ -113,21 +122,32 @@ struct CreateProfileView: View {
             try photoData.write(to: tempFileURL)
             let photoAsset = CKAsset(fileURL: tempFileURL)
             
-            let newProfile = UserProfile(userID: appleUserID, profileImage: photoAsset)
-            let profileRecord = newProfile.toCKRecord()
-            let privateDB = CKContainer.default().privateCloudDatabase
+            // Create profile with device-specific information
+            let newProfile = UserProfile(
+                userID: appleUserID,
+                deviceID: deviceID,
+                deviceName: deviceName,
+                profileImage: photoAsset
+            )
+            
+            // Save to PUBLIC database so everyone can see this profile on the grid
+            let publicRecord = newProfile.toPublicCKRecord()
+            let publicDB = CKContainer.default().publicCloudDatabase
 
-            privateDB.save(profileRecord) { record, error in
+            // Use modifyRecords to handle both insert and update cases
+            let modifyOperation = CKModifyRecordsOperation(recordsToSave: [publicRecord], recordIDsToDelete: nil)
+            modifyOperation.savePolicy = .changedKeys // Only update changed fields
+            modifyOperation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
                 // Attempt to remove the temporary file whether save succeeds or fails
                 try? FileManager.default.removeItem(at: tempFileURL)
                 
                 DispatchQueue.main.async {
-                    isSaving = false
+                    self.isSaving = false
                     if let error = error {
-                        print("Error saving profile to CloudKit: \(error.localizedDescription)")
+                        print("Error saving/updating profile to public CloudKit: \(error.localizedDescription)")
                         self.errorMessage = "Failed to save profile: \(error.localizedDescription)"
-                    } else if record != nil {
-                        print("Profile saved successfully with photo!")
+                    } else if savedRecords?.first != nil {
+                        print("Profile saved/updated successfully to public database for device \(self.deviceName) (ID: \(self.deviceID))!")
                         self.showCreateProfileView = false 
                     } else {
                         print("Unknown error saving profile.")
@@ -135,6 +155,8 @@ struct CreateProfileView: View {
                     }
                 }
             }
+            
+            publicDB.add(modifyOperation)
         } catch {
             print("Error writing photo data to temporary file: \(error.localizedDescription)")
             self.errorMessage = "Could not process photo for saving."

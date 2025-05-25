@@ -6,16 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		2E7181D72DE25E6300C20924 /* GridViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181D32DE25E6300C20924 /* GridViewModel.swift */; };
-		2E7181D82DE25E6300C20924 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181D12DE25E6300C20924 /* Utilities.swift */; };
-		2E7181D92DE25E6300C20924 /* GridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181D52DE25E6300C20924 /* GridView.swift */; };
-		2E7181DA2DE25E6300C20924 /* UserProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181CD2DE25E6300C20924 /* UserProfile.swift */; };
-		2E7181DB2DE25E6300C20924 /* NetworkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181CF2DE25E6300C20924 /* NetworkService.swift */; };
-		2E7181DC2DE25E6300C20924 /* GridNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181CC2DE25E6300C20924 /* GridNode.swift */; };
-		2E7181DE2DE2632D00C20924 /* CreateProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7181DD2DE2632D00C20924 /* CreateProfileView.swift */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		2E7181AF2DE25E3800C20924 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -37,13 +27,6 @@
 		2E71819D2DE25E3600C20924 /* grid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = grid.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2E7181AE2DE25E3800C20924 /* gridTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = gridTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2E7181B82DE25E3800C20924 /* gridUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = gridUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		2E7181CC2DE25E6300C20924 /* GridNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridNode.swift; sourceTree = "<group>"; };
-		2E7181CD2DE25E6300C20924 /* UserProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserProfile.swift; sourceTree = "<group>"; };
-		2E7181CF2DE25E6300C20924 /* NetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkService.swift; sourceTree = "<group>"; };
-		2E7181D12DE25E6300C20924 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
-		2E7181D32DE25E6300C20924 /* GridViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridViewModel.swift; sourceTree = "<group>"; };
-		2E7181D52DE25E6300C20924 /* GridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridView.swift; sourceTree = "<group>"; };
-		2E7181DD2DE2632D00C20924 /* CreateProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateProfileView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -105,11 +88,6 @@
 		2E7181942DE25E3600C20924 = {
 			isa = PBXGroup;
 			children = (
-				2E7181CE2DE25E6300C20924 /* Models */,
-				2E7181D02DE25E6300C20924 /* Services */,
-				2E7181D22DE25E6300C20924 /* Utilities */,
-				2E7181D42DE25E6300C20924 /* ViewModels */,
-				2E7181D62DE25E6300C20924 /* Views */,
 				2E71819F2DE25E3600C20924 /* grid */,
 				2E7181B12DE25E3800C20924 /* gridTests */,
 				2E7181BB2DE25E3800C20924 /* gridUITests */,
@@ -125,48 +103,6 @@
 				2E7181B82DE25E3800C20924 /* gridUITests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		2E7181CE2DE25E6300C20924 /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				2E7181CC2DE25E6300C20924 /* GridNode.swift */,
-				2E7181CD2DE25E6300C20924 /* UserProfile.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
-		2E7181D02DE25E6300C20924 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				2E7181CF2DE25E6300C20924 /* NetworkService.swift */,
-			);
-			path = Services;
-			sourceTree = "<group>";
-		};
-		2E7181D22DE25E6300C20924 /* Utilities */ = {
-			isa = PBXGroup;
-			children = (
-				2E7181D12DE25E6300C20924 /* Utilities.swift */,
-			);
-			path = Utilities;
-			sourceTree = "<group>";
-		};
-		2E7181D42DE25E6300C20924 /* ViewModels */ = {
-			isa = PBXGroup;
-			children = (
-				2E7181D32DE25E6300C20924 /* GridViewModel.swift */,
-			);
-			path = ViewModels;
-			sourceTree = "<group>";
-		};
-		2E7181D62DE25E6300C20924 /* Views */ = {
-			isa = PBXGroup;
-			children = (
-				2E7181D52DE25E6300C20924 /* GridView.swift */,
-				2E7181DD2DE2632D00C20924 /* CreateProfileView.swift */,
-			);
-			path = Views;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -313,13 +249,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2E7181D72DE25E6300C20924 /* GridViewModel.swift in Sources */,
-				2E7181DE2DE2632D00C20924 /* CreateProfileView.swift in Sources */,
-				2E7181D82DE25E6300C20924 /* Utilities.swift in Sources */,
-				2E7181D92DE25E6300C20924 /* GridView.swift in Sources */,
-				2E7181DA2DE25E6300C20924 /* UserProfile.swift in Sources */,
-				2E7181DB2DE25E6300C20924 /* NetworkService.swift in Sources */,
-				2E7181DC2DE25E6300C20924 /* GridNode.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -365,11 +294,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = grid/Info.plist;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app uses the local network to discover and connect with other devices running this app.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -395,11 +324,11 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = grid/Info.plist;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app uses the local network to discover and connect with other devices running this app.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

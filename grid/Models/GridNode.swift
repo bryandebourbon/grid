@@ -5,5 +5,4 @@ struct GridNode: Identifiable, Codable {
     var x: Int
     var y: Int
     var userProfile: UserProfile? // Can be nil if the node is empty
-    // Placeholder for GridNode properties
 } 
