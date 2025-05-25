@@ -32,8 +32,9 @@ struct ContentView: View {
     @StateObject private var gridViewModel = GridViewModel()
 
     // Authentication State
-    @State private var showSignInView = true
+    @State private var showSignInView = false  // Start as false, check credentials first
     @State private var appleUserID: String? = nil
+    @State private var isCheckingCredentials = true  // NEW: Track initial credential check
 
     // Profile State
     @State private var userProfile: UserProfile? = nil
@@ -47,11 +48,19 @@ struct ContentView: View {
     @ViewBuilder
     var body: some View {
         Group {
-            if showSignInView {
+            if isCheckingCredentials {
+                // NEW: Show loading while checking existing credentials
+                AnyView(ProgressView("Checking credentials...")
+                    .onAppear {
+                        checkExistingCredentials()
+                    })
+            } else if showSignInView {
                 AnyView(SignInView(
                     showSignInView: $showSignInView,
                     onSignInSuccess: { credential in
                         self.appleUserID = credential.user
+                        // Store user ID for future launches
+                        UserDefaults.standard.set(credential.user, forKey: "appleUserID")
                         checkUserProfile(userID: credential.user)
                     }
                 ))
@@ -194,12 +203,16 @@ struct ContentView: View {
     }
     
     private func signOut() {
+        // Clear stored credentials
+        clearStoredCredentials()
+        
         appleUserID = nil
         userProfile = nil
         gridViewModel.currentUserProfile = nil
         showSignInView = true
         showCreateProfileView = false
         isLoadingProfile = false
+        isCheckingCredentials = false
     }
 
     private func deleteAccount() {
@@ -243,6 +256,51 @@ struct ContentView: View {
     //            offsets.map { items[$0] }.forEach(modelContext.delete)
     //        }
     //    }
+
+    // NEW: Check for existing Apple ID credentials on app launch
+    private func checkExistingCredentials() {
+        print("ContentView: Checking existing credentials...")
+        
+        // First, check if we have a stored user ID
+        if let storedUserID = UserDefaults.standard.string(forKey: "appleUserID") {
+            print("ContentView: Found stored Apple ID: \(storedUserID)")
+            
+            // Verify the credential is still valid with Apple
+            let provider = ASAuthorizationAppleIDProvider()
+            provider.getCredentialState(forUserID: storedUserID) { credentialState, error in
+                DispatchQueue.main.async {
+                    self.isCheckingCredentials = false
+                    
+                    switch credentialState {
+                    case .authorized:
+                        print("ContentView: Apple ID credential is still valid")
+                        self.appleUserID = storedUserID
+                        self.checkUserProfile(userID: storedUserID)
+                    case .revoked, .notFound:
+                        print("ContentView: Apple ID credential is no longer valid")
+                        self.clearStoredCredentials()
+                        self.showSignInView = true
+                    default:
+                        print("ContentView: Unknown credential state")
+                        self.clearStoredCredentials()
+                        self.showSignInView = true
+                    }
+                }
+            }
+        } else {
+            print("ContentView: No stored Apple ID found")
+            DispatchQueue.main.async {
+                self.isCheckingCredentials = false
+                self.showSignInView = true
+            }
+        }
+    }
+    
+    // NEW: Clear stored credentials
+    private func clearStoredCredentials() {
+        UserDefaults.standard.removeObject(forKey: "appleUserID")
+        self.appleUserID = nil
+    }
 }
 
 struct SignInView: View {
