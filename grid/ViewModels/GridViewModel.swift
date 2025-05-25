@@ -99,10 +99,10 @@ class GridViewModel: ObservableObject {
     }
     
     private func setupProximityHandlers() {
-        // Listen for active nearby profiles updates
+        // Listen for all users updates (sorted by distance)
         proximityService.$activeNearbyProfiles
-            .sink { [weak self] nearbyProfiles in
-                self?.updateGridWithActiveNearbyProfiles(nearbyProfiles)
+            .sink { [weak self] allProfiles in
+                self?.updateGridWithAllProfiles(allProfiles)
             }
             .store(in: &cancellables)
     }
@@ -119,13 +119,13 @@ class GridViewModel: ObservableObject {
         
         print("DEBUG: Profile after location update - lat: \(profile.latitude ?? 0), lon: \(profile.longitude ?? 0)")
         
-        // Update user activity in CloudKit with new location
+        // IMMEDIATELY share location to iCloud when we get it
         updateUserActivityAndLocation(profile)
         
-        // Fetch nearby active users with current location
-        proximityService.fetchActiveNearbyUsers(currentUserLocation: location)
+        // Auto-refresh to get all users sorted by distance
+        autoRefreshGrid(with: location)
         
-        print("Location updated: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+        print("Location updated and shared to iCloud: \(location.coordinate.latitude), \(location.coordinate.longitude)")
     }
     
     private func handleLocationAuthorizationChange(_ status: CLAuthorizationStatus) {
@@ -143,8 +143,8 @@ class GridViewModel: ObservableObject {
         }
     }
     
-    // NEW: Update grid with only active nearby users (sorted by distance)
-    private func updateGridWithActiveNearbyProfiles(_ profiles: [UserProfile]) {
+    // Show all users on grid (sorted by distance if location available)
+    private func updateGridWithAllProfiles(_ profiles: [UserProfile]) {
         // Clear the grid first
         initializeGrid()
         
@@ -153,7 +153,7 @@ class GridViewModel: ObservableObject {
             for profile in profiles {
                 placeProfileOnGrid(profile)
             }
-            print("Updated grid with \(profiles.count) active nearby profiles")
+            print("Updated grid with \(profiles.count) users")
             objectWillChange.send()
             return
         }
@@ -176,19 +176,19 @@ class GridViewModel: ObservableObject {
             print("Placed current user '\(currentProfile.displayName)' at top-left position (0,0)")
         }
         
-        // Place other profiles in remaining positions (already sorted by distance)
+        // Place other profiles in remaining positions (sorted by distance if location available)
         for profile in otherProfiles {
             placeProfileOnGridSkippingPosition(profile, skipX: 0, skipY: 0)
         }
         
-        print("Updated grid with \(profiles.count) active nearby profiles (current user at top-left)")
+        print("Updated grid with \(profiles.count) total users (current user at top-left)")
         objectWillChange.send()
     }
     
     // LEGACY: Keep for backwards compatibility but prefer proximity-based updates
     private func updateGridWithPublicProfiles(_ profiles: [UserProfile]) {
         // This method is now mainly for fallback when location is not available
-        updateGridWithActiveNearbyProfiles(profiles)
+        updateGridWithAllProfiles(profiles)
     }
     
     private func placeProfileOnGrid(_ profile: UserProfile) {
@@ -307,6 +307,9 @@ class GridViewModel: ObservableObject {
         // When profile is set (device logs in), fetch their messages and subscribe
         fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
         messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
+        
+        // Start location updates - grid will auto-refresh when it appears
+        locationService.requestLocationPermission()
     }
     
     // LEGACY: Keep for backwards compatibility
@@ -359,9 +362,9 @@ class GridViewModel: ObservableObject {
     
     // MARK: - Grid Refresh Methods
     
-    // NEW: Grindr-style refresh - upload my location, download others' locations
+    // Simplified refresh - upload my location, get all users sorted by distance
     func refreshPublicGrid() {
-        print("GridViewModel: Starting Grindr-style refresh - upload my location, get others' locations")
+        print("GridViewModel: Starting simple refresh - upload my location, get all users sorted by distance")
         
         guard var profile = currentUserProfile else {
             print("No current user profile for refresh")
@@ -386,28 +389,39 @@ class GridViewModel: ObservableObject {
                 print("Successfully uploaded my location to CloudKit")
                 self.currentUserProfile = updatedProfile
                 
-                // Step 3: Download nearby users from CloudKit based on my location
-                self.proximityService.fetchActiveNearbyUsers(currentUserLocation: updatedProfile.location)
+                // Step 3: Get all users sorted by distance
+                self.proximityService.fetchAllUsers(currentUserLocation: updatedProfile.location)
                 
             case .failure(let error):
                 print("Error uploading my location: \(error.localizedDescription)")
                 // Still try to fetch others even if upload failed
-                self.proximityService.fetchActiveNearbyUsers(currentUserLocation: profile.location)
+                self.proximityService.fetchAllUsers(currentUserLocation: profile.location)
             }
         }
     }
     
-    // NEW: Handle app lifecycle events
+    // Enhanced: Handle app lifecycle events with auto-refresh
     func handleAppDidBecomeActive() {
         guard var profile = currentUserProfile else { return }
         profile.markAsActive()
         self.currentUserProfile = profile
-        updateUserActivityAndLocation(profile)
+        
+        print("App became active - restarting location and auto-refreshing...")
         
         // Restart location updates
         locationService.requestLocationPermission()
         
-        print("App became active - marked user as active and restarted location updates")
+        // Get current location and immediately share + refresh
+        if let currentLocation = locationService.currentLocation {
+            profile.updateLocation(currentLocation)
+            self.currentUserProfile = profile
+            updateUserActivityAndLocation(profile)
+            autoRefreshGrid(with: currentLocation)
+        } else {
+            // Update activity even without new location
+            updateUserActivityAndLocation(profile)
+            autoRefreshGrid()
+        }
     }
     
     func handleAppWillResignActive() {
@@ -472,24 +486,16 @@ class GridViewModel: ObservableObject {
         print("Selected chat partner device: \(partnerDeviceID)")
     }
 
-    // NEW: Enhanced sendMessage with proximity checking
+    // Simplified sendMessage - can message anyone you can see
     func sendMessage(text: String, to recipientDeviceID: String) {
         guard let senderProfile = currentUserProfile else {
             print("Error: Current user profile not available to send message.")
             return
         }
         
-        // Find the recipient's profile to get their userID and check proximity
+        // Find the recipient's profile to get their userID
         guard let recipientProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
             print("Error: Could not find recipient profile for device \(recipientDeviceID)")
-            return
-        }
-        
-        // NEW: Check if messaging is allowed based on proximity
-        let messagingCheck = proximityService.canMessage(from: senderProfile, to: recipientProfile)
-        if !messagingCheck.allowed {
-            print("Messaging not allowed: \(messagingCheck.reason)")
-            // TODO: Show alert to user explaining why messaging is blocked
             return
         }
         
@@ -508,6 +514,40 @@ class GridViewModel: ObservableObject {
             case .failure(let error):
                 print("Error sending message: \(error.localizedDescription)")
                 // TODO: Show error to user
+            }
+        }
+    }
+
+    // NEW: Auto-refresh when location is obtained or app state changes
+    private func autoRefreshGrid(with location: CLLocation? = nil) {
+        print("Auto-refreshing grid with current location...")
+        let locationToUse = location ?? locationService.currentLocation
+        proximityService.fetchAllUsers(currentUserLocation: locationToUse)
+    }
+
+    // NEW: Call this when grid appears (from GridView)
+    func handleGridAppeared() {
+        print("Grid appeared - getting current location and refreshing...")
+        
+        // Ensure location services are active
+        locationService.requestLocationPermission()
+        
+        // If we already have a profile, immediately update and refresh
+        if let profile = currentUserProfile {
+            // Get current location and update profile
+            if let currentLocation = locationService.currentLocation {
+                var updatedProfile = profile
+                updatedProfile.updateLocation(currentLocation)
+                self.currentUserProfile = updatedProfile
+                
+                // Share to iCloud immediately
+                updateUserActivityAndLocation(updatedProfile)
+                
+                // Refresh grid
+                autoRefreshGrid(with: currentLocation)
+            } else {
+                // No location yet, just refresh with existing data
+                autoRefreshGrid()
             }
         }
     }
