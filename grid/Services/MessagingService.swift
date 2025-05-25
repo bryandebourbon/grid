@@ -3,6 +3,11 @@ import CloudKit
 import Combine
 import UserNotifications
 
+// Define Notification Names if not already globally available
+extension Notification.Name {
+    static let didTapPushNotificationForChat = Notification.Name("didTapPushNotificationForChat")
+}
+
 class MessagingService: ObservableObject {
     private let publicDB = CKContainer.default().publicCloudDatabase
     @Published var receivedMessages: [Message] = []
@@ -184,15 +189,51 @@ class MessagingService: ObservableObject {
         }
     }
     
-    // Call this from your AppDelegate or SceneDelegate when a push notification is received
-    func handlePushNotification(userInfo: [AnyHashable : Any]) {
+    // Call this from your AppDelegate or SceneDelegate when a push notification is received AND TAPPED
+    func handlePushNotificationTap(userInfo: [AnyHashable : Any]) {
         if let notification = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKQueryNotification,
            notification.subscriptionID?.starts(with: "new-messages-for-device-") == true,
            let recordID = notification.recordID {
             
-            print("Push notification received for a message. RecordID: \(recordID.recordName)")
-            // We don't have currentDeviceID here, Message init will handle nil
-            fetchMessage(withRecordID: recordID, currentDeviceID: nil)
+            print("Push notification TAP HANDLER for message. RecordID: \(recordID.recordName)")
+            
+            // Fetch the message. We pass nil for currentDeviceID as this service doesn't own that state.
+            // The Message init will determine status as .received.
+            publicDB.fetch(withRecordID: recordID) { record, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        print("Error fetching message from push tap: \(error.localizedDescription)")
+                        return
+                    }
+                    guard let fetchedRecord = record, 
+                          let senderDeviceID = fetchedRecord["senderDeviceID"] as? String else {
+                        print("Failed to fetch or parse message details (senderDeviceID) from push tap: \(recordID.recordName)")
+                        return
+                    }
+                    
+                    // We have the senderDeviceID, post notification for navigation
+                    print("Posting .didTapPushNotificationForChat with senderDeviceID: \(senderDeviceID)")
+                    NotificationCenter.default.post(name: .didTapPushNotificationForChat, object: nil, userInfo: ["senderDeviceID": senderDeviceID])
+
+                    // Also send to newMessageReceived for GridViewModel to update its main messages list if needed
+                    // This ensures the message is in the list even if the app was closed.
+                    if let message = Message(record: fetchedRecord, currentDeviceID: nil) { // currentDeviceID is nil as context is recipient
+                         self.newMessageReceived.send(message)
+                    }
+                }
+            }
+        }
+    }
+    
+    // Original handler for when a notification simply arrives (e.g., app in foreground, or for background processing)
+    // This one should NOT trigger navigation, only data fetch.
+    func handlePushNotificationPayload(_ userInfo: [AnyHashable : Any]) {
+        if let notification = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKQueryNotification,
+           notification.subscriptionID?.starts(with: "new-messages-for-device-") == true,
+           let recordID = notification.recordID {
+            
+            print("Push notification PAYLOAD HANDLER for message. RecordID: \(recordID.recordName)")
+            fetchMessage(withRecordID: recordID, currentDeviceID: nil) // Fetches and sends to newMessageReceived publisher
         }
     }
     
@@ -210,12 +251,28 @@ class MessagingService: ObservableObject {
                 }
                 
                 print("Successfully fetched message from push: \(message.text)")
-                // Update local store and notify UI
-                if !self.receivedMessages.contains(where: { $0.id == message.id }) {
-                    self.receivedMessages.append(message)
-                    self.receivedMessages.sort(by: { $0.timestamp < $1.timestamp })
-                }
-                self.newMessageReceived.send(message) // Notify subscribers (e.g., ViewModel)
+                
+                // Update local store (receivedMessages is not typically the primary store for GridViewModel)
+                // The primary handling and storage is in GridViewModel.messages
+                // This line might be redundant if GridViewModel is the sole manager of the messages array via newMessageReceived.
+                // if !self.receivedMessages.contains(where: { $0.id == message.id }) {
+                //     self.receivedMessages.append(message)
+                //     self.receivedMessages.sort(by: { $0.timestamp < $1.timestamp })
+                // }
+                
+                // Notify GridViewModel that a new message has arrived (for general UI update)
+                self.newMessageReceived.send(message)
+                
+                // Post a specific notification for navigation if this fetch was triggered by a push tap.
+                // We infer this if currentDeviceID was passed as nil initially from handlePushNotification/handleCloudKitNotification
+                // and now we have a senderDeviceID from the message.
+                // A more robust way would be to pass a flag like `isFromPushTapContext` into fetchMessage.
+                // For now, let's assume any message fetched here due to a notification might be a navigation candidate.
+                // The AppDelegate/SceneDelegate will ultimately decide if it was a tap.
+
+                // The decision to navigate should come from AppDelegate/SceneDelegate after confirming a tap.
+                // So, handlePushNotification should post .didTapPushNotificationForChat if it's a tap.
+                // Let's adjust handlePushNotification to do this.
             }
         }
     }

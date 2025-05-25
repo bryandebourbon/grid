@@ -41,9 +41,7 @@ struct ContentView: View {
     @State private var showCreateProfileView = false
     @State private var isLoadingProfile = false
 
-    // Navigation state for push notifications
-    @State private var shouldOpenChat = false
-    @State private var chatRecipientDeviceID: String? = nil
+    // Navigation is now handled directly by GridViewModel via its chatRecipientToPresent property
 
     @ViewBuilder
     var body: some View {
@@ -83,15 +81,7 @@ struct ContentView: View {
                     })
                 }
             } else if let currentProfile = userProfile {
-                AnyView(GridView(viewModel: gridViewModel, signOutAction: signOut, deleteAccountAction: deleteAccount)
-                    .sheet(isPresented: $shouldOpenChat) {
-                        if let recipientID = chatRecipientDeviceID {
-                            NavigationView {
-                                ChatView(viewModel: gridViewModel, recipientDeviceID: recipientID)
-                            }
-                        }
-                    }
-                )
+                AnyView(GridView(viewModel: gridViewModel, signOutAction: signOut, deleteAccountAction: deleteAccount))
             } else {
                 AnyView(ProgressView("Initializing...")
                     .onAppear {
@@ -101,12 +91,6 @@ struct ContentView: View {
                             signOut()
                         }
                     })
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openChat)) { notification in
-            if let senderDeviceID = notification.object as? String {
-                self.chatRecipientDeviceID = senderDeviceID
-                self.shouldOpenChat = true
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .appDidBecomeActive)) { _ in
