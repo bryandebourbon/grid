@@ -41,7 +41,7 @@ class GridViewModel: ObservableObject {
     private var locationService: LocationService // NEW: Location tracking
     private var proximityService: ProximityService // NEW: Proximity-based user filtering
     private var cancellables = Set<AnyCancellable>()
-    let gridSize = 5
+    let gridSize = 5 // Max grid size for internal node storage
 
     init(messagingService: MessagingService = MessagingService(),
          gridService: GridService = GridService(),

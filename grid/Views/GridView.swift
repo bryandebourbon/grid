@@ -138,33 +138,34 @@ struct GridView: View {
     @State private var selectedUserProfileForCard: ProfileCardUser? = nil // NEW: For profile card
     @State private var showProfileOverlay = false
     @State private var overlayProfile: UserProfile? = nil
+    @State private var showingSettingsMenu = false
+    @State private var gridColumns: Int = 3 // Dynamic column count
+    @State private var baseColumns: Int = 3 // The confirmed column count
+    @State private var currentScale: CGFloat = 1.0
+    @State private var isScaling = false
     var signOutAction: () -> Void
     var deleteAccountAction: () -> Void
 
     @State private var showingDeleteConfirmation = false
+    
+    // Define column count limits
+    private let minColumns = 2
+    private let maxColumns = 5
+    
+    // Calculate preview columns based on scale
+    private func previewColumns(for scale: CGFloat) -> Int {
+        let scaleThreshold: CGFloat = 0.25
+        let columnDelta = Int((1.0 - scale) / scaleThreshold)
+        let previewCols = baseColumns + columnDelta
+        return max(minColumns, min(maxColumns, previewCols))
+    }
 
     var body: some View {
         NavigationView {
-            VStack {
-                // Location permission status and coordinates
-                Text(viewModel.locationPermissionStatus)
-                    .font(.caption2)
-                    .foregroundColor(viewModel.locationPermissionStatus.contains("granted") ? .green : .orange)
-                    .padding(.horizontal)
-                
-                // DEBUG: Show current location coordinates
-                if let profile = viewModel.currentUserProfile,
-                   let lat = profile.latitude,
-                   let lon = profile.longitude {
-                    Text("My Position: \(String(format: "%.4f", lat)), \(String(format: "%.4f", lon))")
-                        .font(.caption2)
-                        .foregroundColor(.blue)
-                        .padding(.horizontal)
-                }
-                
+            VStack(spacing: 0) {
                 if let profile = viewModel.currentUserProfile {
                     ScrollView {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: gridColumns), spacing: 2) {
                             ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
                                 GridNodeView(
                                     node: node,
@@ -182,40 +183,99 @@ struct GridView: View {
                             }
                         }
                         .padding()
-                        .aspectRatio(1, contentMode: .fit)
+                        .onAppear {
+                            let totalNodes = viewModel.gridNodes.flatMap { $0 }.count
+                            let rowCount = Int(ceil(Double(totalNodes) / Double(gridColumns)))
+                            print("GridView Debug: Total nodes: \(totalNodes), Columns: \(gridColumns), Rows: \(rowCount)")
+                            print("GridView Debug: isScaling: \(isScaling)")
+                        }
                     }
+                    .scrollDisabled(isScaling) // Disable scroll during pinch
+                    .simultaneousGesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                if !isScaling {
+                                    isScaling = true
+                                    baseColumns = gridColumns
+                                    
+                                    // Haptic feedback when starting pinch
+                                    #if os(iOS)
+                                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                    impactFeedback.impactOccurred()
+                                    #endif
+                                }
+                                currentScale = value
+                                
+                                // Update columns in real-time based on scale
+                                let newColumns = previewColumns(for: value)
+                                if newColumns != gridColumns {
+                                    // Haptic feedback on column change
+                                    #if os(iOS)
+                                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                    impactFeedback.impactOccurred()
+                                    #endif
+                                    
+                                    withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
+                                        gridColumns = newColumns
+                                    }
+                                }
+                            }
+                            .onEnded { value in
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                                    // Confirm the column count
+                                    baseColumns = gridColumns
+                                    currentScale = 1.0
+                                    isScaling = false
+                                }
+                                
+                                // Final haptic feedback
+                                #if os(iOS)
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                impactFeedback.impactOccurred()
+                                #endif
+                            }
+                    )
                     .refreshable {
                         await refreshGrid()
                     }
-                    .border(Color.gray)
                 } else {
                     Text("Loading profile or no profile set...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                Spacer()
             }
-            .navigationTitle("The Grid")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("")
             .onAppear {
                 // Auto-refresh when grid appears
                 viewModel.handleGridAppeared()
             }
             .toolbar {
-                ToolbarItemGroup(placement: .navigationBarLeading) {
-                    // Removed Edit Photo button - photo editing is now in the profile card
-                }
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button("Conversations") {
-                        showingConversationsList = true
-                    }
-                    Button("My Notes") {
-                        if let myDeviceID = viewModel.currentUserProfile?.deviceID {
-                            viewModel.chatRecipientToPresent = ChatRecipient(id: myDeviceID)
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button(action: { showingConversationsList = true }) {
+                            Label("Conversations", systemImage: "message")
                         }
-                    }
-                    Button("Sign Out") {
-                        signOutAction()
-                    }
-                    Button("Delete Account", role: .destructive) {
-                        showingDeleteConfirmation = true
+                        
+                        Button(action: {
+                            if let myDeviceID = viewModel.currentUserProfile?.deviceID {
+                                viewModel.chatRecipientToPresent = ChatRecipient(id: myDeviceID)
+                            }
+                        }) {
+                            Label("My Notes", systemImage: "note.text")
+                        }
+                        
+                        Divider()
+                        
+                        Button(action: signOutAction) {
+                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
+                        
+                        Button(role: .destructive, action: { showingDeleteConfirmation = true }) {
+                            Label("Delete Account", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                            .font(.body)
                     }
                 }
             }
