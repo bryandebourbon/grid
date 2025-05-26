@@ -206,21 +206,19 @@ struct ContentView: View {
         }
 
         print("ContentView: Attempting to delete account for userID: \(userID)")
-        isLoadingProfile = true // Show loading indicator during deletion
+        isLoadingProfile = true // Show loading indicator
 
-        let privateDB = CKContainer.default().privateCloudDatabase
-        let recordIDToDelete = CKRecord.ID(recordName: userID)
-
-        privateDB.delete(withRecordID: recordIDToDelete) { deletedRecordID, error in
+        gridViewModel.performFullAccountDeletion { error in
             DispatchQueue.main.async {
-                self.isLoadingProfile = false // Hide loading indicator
+                self.isLoadingProfile = false // Use self explicitly or implicitly
                 if let error = error {
-                    print("ContentView: Error deleting record from CloudKit: \(error.localizedDescription)")
-                    // Optionally, show an alert to the user
+                    print("ContentView: Error during account deletion: \(error.localizedDescription)")
+                    // Optionally, show an alert to the user that deletion failed
+                    // For now, we still sign out even if server-side deletion had issues.
                 } else {
-                    print("ContentView: Successfully deleted record from CloudKit for userID: \(userID)")
+                    print("ContentView: Account deletion process completed.")
                 }
-                // Whether deletion succeeds or fails, sign the user out
+                // Whether deletion succeeds or fails on the server, sign the user out locally.
                 self.signOut()
             }
         }

@@ -19,6 +19,7 @@ struct Message: Identifiable, Codable {
     var timestamp: Date // MODIFIED: Changed to var
     var isRead: Bool = false // To track if the message has been read by the recipient
     var status: MessageStatus // NEW: Added status property
+    var imageAsset: CKAsset? // Optional image asset for photo messages
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -32,6 +33,7 @@ struct Message: Identifiable, Codable {
         case isRead
         case status // ADDED: status to CodingKeys
         // recordID is not directly encoded/decoded as it's managed by CloudKit interactions
+        // imageAsset (CKAsset) is also not directly Codable and handled by CKRecord.
         // This comment seems to contradict adding recordID to CodingKeys.
         // For optimistic updates, we might not need to encode/decode recordID via Codable
         // if its persistence is solely handled by direct CloudKit interaction and
@@ -53,6 +55,7 @@ struct Message: Identifiable, Codable {
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         isRead = try container.decode(Bool.self, forKey: .isRead)
         status = try container.decode(MessageStatus.self, forKey: .status)
+        imageAsset = nil // CKAsset not decoded via Codable
         // Note: CKRecord.ID is not inherently Codable. If you need to store it locally
         // using Codable, you'd typically store its recordName (String) or a custom representation.
         // For now, assuming recordID is managed outside of Codable persistence for this struct.
@@ -72,6 +75,7 @@ struct Message: Identifiable, Codable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isRead, forKey: .isRead)
         try container.encode(status, forKey: .status)
+        // imageAsset (CKAsset) is not encoded.
     }
 
     // Initializer for creating a new message locally
@@ -84,7 +88,8 @@ struct Message: Identifiable, Codable {
          text: String,
          timestamp: Date = Date(),
          isRead: Bool = false,
-         status: MessageStatus = .sending) { // Default to .sending for new optimistic messages
+         status: MessageStatus = .sending, // Default to .sending for new optimistic messages
+         imageAsset: CKAsset? = nil) {
         self.id = id
         self.recordID = recordID
         self.senderDeviceID = senderDeviceID
@@ -95,6 +100,7 @@ struct Message: Identifiable, Codable {
         self.timestamp = timestamp
         self.isRead = isRead
         self.status = status
+        self.imageAsset = imageAsset
     }
 
     // Initializer from a CKRecord
@@ -118,6 +124,7 @@ struct Message: Identifiable, Codable {
         self.text = text
         self.timestamp = timestamp
         self.isRead = record["isRead"] as? Bool ?? false
+        self.imageAsset = record["imageAsset"] as? CKAsset // Load image asset
         
         // Determine status based on who sent it
         if let currentDevID = currentDeviceID, senderDeviceID == currentDevID {
@@ -141,6 +148,12 @@ struct Message: Identifiable, Codable {
         record["isRead"] = self.isRead
         // We don't typically save the 'status' field to CloudKit as it's a client-side UI concern
         // or derived from context (e.g., if it's in CloudKit, it's 'sent' or 'received').
+        
+        if let asset = self.imageAsset {
+            record["imageAsset"] = asset
+        } else {
+            record["imageAsset"] = nil // Explicitly set to nil if no image
+        }
         
         return record
     }

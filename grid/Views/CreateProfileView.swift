@@ -11,8 +11,8 @@ struct CreateProfileView: View {
     @Binding var showCreateProfileView: Bool
     let appleUserID: String 
 
-    @State private var selectedPhotoItem: PhotosPickerItem? = nil
-    @State private var selectedPhotoData: Data? = nil
+    @State private var selectedPhotoItems: [PhotosPickerItem] = [] // For multiple photos
+    @State private var selectedPhotoDataArray: [Data] = [] // Store data for multiple photos
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
 
@@ -32,14 +32,25 @@ struct CreateProfileView: View {
                     .foregroundColor(.secondary)
                     .padding(.bottom)
 
-                if let selectedPhotoData, let uiImage = UIImage(data: selectedPhotoData) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 200, height: 200)
-                        .clipShape(Circle())
-                        .padding()
-                } else {
+                // Display selected photos
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(selectedPhotoDataArray, id: \.self) { photoData in
+                            if let uiImage = UIImage(data: photoData) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 100, height: 100)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .padding(.trailing, 5)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 110) // Adjust height as needed
+                .padding(.bottom)
+
+                if selectedPhotoDataArray.isEmpty {
                     Circle()
                         .fill(Color.secondary.opacity(0.3))
                         .frame(width: 200, height: 200)
@@ -48,21 +59,31 @@ struct CreateProfileView: View {
                 }
 
                 PhotosPicker(
-                    selection: $selectedPhotoItem,
-                    matching: .images, // Only pick images
-                    photoLibrary: .shared() // Use the shared photo library
+                    selection: $selectedPhotoItems, // Bind to the array for multiple items
+                    maxSelectionCount: 10, // Allow up to 10 photos
+                    matching: .images, 
+                    photoLibrary: .shared()
                 ) {
-                    Text(selectedPhotoItem == nil ? "Select Photo" : "Change Photo")
+                    Text(selectedPhotoItems.isEmpty ? "Select Photos" : "Change Photos")
                 }
                 .padding()
-                .onChange(of: selectedPhotoItem) { newItem in
+                .onChange(of: selectedPhotoItems) { newItems in
                     Task {
-                        if let data = try? await newItem?.loadTransferable(type: Data.self) {
-                            selectedPhotoData = data
-                            errorMessage = nil // Clear previous error if new photo is selected
-                        } else {
-                            print("Failed to load photo data.")
-                            errorMessage = "Could not load image. Please try another."
+                        selectedPhotoDataArray.removeAll() // Clear previous selections
+                        var loadedDataArray: [Data] = []
+                        for item in newItems {
+                            if let data = try? await item.loadTransferable(type: Data.self) {
+                                loadedDataArray.append(data)
+                            } else {
+                                print("Failed to load photo data for an item.")
+                                // Optionally show an error for the specific item that failed
+                            }
+                        }
+                        selectedPhotoDataArray = loadedDataArray
+                        if !loadedDataArray.isEmpty {
+                            errorMessage = nil // Clear error if photos are loaded
+                        } else if !newItems.isEmpty {
+                             errorMessage = "Could not load any of the selected images. Please try again."
                         }
                     }
                 }
@@ -82,7 +103,7 @@ struct CreateProfileView: View {
                 }
                 .padding()
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedPhotoData == nil || isSaving) // Disable if no photo or already saving
+                .disabled(selectedPhotoDataArray.isEmpty || isSaving) // Disable if no photos or already saving
                 
                 Spacer()
             }
@@ -102,8 +123,8 @@ struct CreateProfileView: View {
     }
 
     private func saveProfile() {
-        guard let photoData = selectedPhotoData else {
-            errorMessage = "No photo selected."
+        guard !selectedPhotoDataArray.isEmpty else {
+            errorMessage = "No photos selected."
             return
         }
         guard !appleUserID.isEmpty else {
@@ -114,56 +135,71 @@ struct CreateProfileView: View {
         isSaving = true
         errorMessage = nil
 
-        // 1. Create a temporary file URL for the CKAsset
-        let tempDir = FileManager.default.temporaryDirectory
-        let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        var photoAssets: [CKAsset] = []
+        var tempFileURLs: [URL] = [] // Keep track of temp files to delete
 
-        do {
-            try photoData.write(to: tempFileURL)
-            let photoAsset = CKAsset(fileURL: tempFileURL)
+        for photoData in selectedPhotoDataArray {
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
             
-            // Create profile with device-specific information
-            let newProfile = UserProfile(
-                userID: appleUserID,
-                deviceID: deviceID,
-                deviceName: deviceName,
-                profileImage: photoAsset
-            )
-            
-            // Save to PUBLIC database so everyone can see this profile on the grid
-            let publicRecord = newProfile.toPublicCKRecord()
-            let publicDB = CKContainer.default().publicCloudDatabase
-
-            // Use modifyRecords to handle both insert and update cases
-            let modifyOperation = CKModifyRecordsOperation(recordsToSave: [publicRecord], recordIDsToDelete: nil)
-            modifyOperation.savePolicy = .changedKeys // Only update changed fields
-            modifyOperation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
-                // Attempt to remove the temporary file whether save succeeds or fails
-                try? FileManager.default.removeItem(at: tempFileURL)
-                
-                DispatchQueue.main.async {
-                    self.isSaving = false
-                    if let error = error {
-                        print("Error saving/updating profile to public CloudKit: \(error.localizedDescription)")
-                        self.errorMessage = "Failed to save profile: \(error.localizedDescription)"
-                    } else if savedRecords?.first != nil {
-                        print("Profile saved/updated successfully to public database for device \(self.deviceName) (ID: \(self.deviceID))!")
-                        self.showCreateProfileView = false 
-                    } else {
-                        print("Unknown error saving profile.")
-                        self.errorMessage = "An unknown error occurred while saving."
-                    }
+            do {
+                try photoData.write(to: tempFileURL)
+                photoAssets.append(CKAsset(fileURL: tempFileURL))
+                tempFileURLs.append(tempFileURL) // Add to list for cleanup
+            } catch {
+                print("Error writing photo data to temporary file: \(error.localizedDescription)")
+                errorMessage = "Could not process one or more photos for saving."
+                // Attempt to clean up any files created so far before bailing
+                for url in tempFileURLs {
+                    try? FileManager.default.removeItem(at: url)
                 }
+                isSaving = false
+                return
+            }
+        }
+
+        // Assuming the first photo is the main profile image, and the rest are additional.
+        // You might want a separate picker or UI to distinguish the main profile image.
+        let mainProfileImage = photoAssets.first 
+        let additionalPhotos = photoAssets.count > 1 ? Array(photoAssets.dropFirst()) : nil
+
+        let newProfile = UserProfile(
+            userID: appleUserID,
+            deviceID: deviceID,
+            deviceName: deviceName,
+            profileImage: mainProfileImage,
+            additionalPhotos: additionalPhotos
+        )
+        
+        // Save to PUBLIC database so everyone can see this profile on the grid
+        let publicRecord = newProfile.toPublicCKRecord()
+        let publicDB = CKContainer.default().publicCloudDatabase
+
+        // Use modifyRecords to handle both insert and update cases
+        let modifyOperation = CKModifyRecordsOperation(recordsToSave: [publicRecord], recordIDsToDelete: nil)
+        modifyOperation.savePolicy = .changedKeys // Only update changed fields
+        modifyOperation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
+            // Attempt to remove ALL temporary files whether save succeeds or fails
+            for url in tempFileURLs {
+                try? FileManager.default.removeItem(at: url)
             }
             
-            publicDB.add(modifyOperation)
-        } catch {
-            print("Error writing photo data to temporary file: \(error.localizedDescription)")
-            self.errorMessage = "Could not process photo for saving."
-            isSaving = false
-            // Attempt to remove temp file if write failed partway or if other error before CK save
-            try? FileManager.default.removeItem(at: tempFileURL)
+            DispatchQueue.main.async {
+                self.isSaving = false
+                if let error = error {
+                    print("Error saving/updating profile to public CloudKit: \(error.localizedDescription)")
+                    self.errorMessage = "Failed to save profile: \(error.localizedDescription)"
+                } else if savedRecords?.first != nil {
+                    print("Profile saved/updated successfully to public database for device \(self.deviceName) (ID: \(self.deviceID))!")
+                    self.showCreateProfileView = false 
+                } else {
+                    print("Unknown error saving profile.")
+                    self.errorMessage = "An unknown error occurred while saving."
+                }
+            }
         }
+        
+        publicDB.add(modifyOperation)
     }
 }
 

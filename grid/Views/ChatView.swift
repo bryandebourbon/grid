@@ -1,10 +1,13 @@
 import SwiftUI
+import PhotosUI // Import for PhotosPickerItem
 
 struct ChatView: View {
     @ObservedObject var viewModel: GridViewModel // Use GridViewModel directly or a dedicated ChatViewModel
     let recipientDeviceID: String // The device ID of the device being chatted with (can be self for notes)
     
     @State private var newMessageText: String = ""
+    @State private var selectedPhotoItem: PhotosPickerItem? = nil // For the new photo picker
+    @State private var showPhotoPicker = false // To present the picker
     
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
@@ -53,6 +56,28 @@ struct ChatView: View {
             
             // Message input area
             HStack {
+                // Button to open PhotosPicker
+                Button(action: { showPhotoPicker = true }) {
+                    Image(systemName: "photo.on.rectangle")
+                        .padding(.leading)
+                }
+                .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+                .onChange(of: selectedPhotoItem) { newItem in
+                    Task {
+                        if let item = newItem {
+                            // Load data and send image message
+                            if let data = try? await item.loadTransferable(type: Data.self) {
+                                viewModel.sendImageMessage(imageData: data, to: recipientDeviceID)
+                                selectedPhotoItem = nil // Reset picker after sending
+                            } else {
+                                print("ChatView: Failed to load image data from PhotosPickerItem")
+                                selectedPhotoItem = nil // Reset picker
+                                // Optionally show an error to the user
+                            }
+                        }
+                    }
+                }
+
                 TextField("Enter message...", text: $newMessageText)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .padding(.leading)
@@ -122,6 +147,7 @@ struct ChatView: View {
 struct MessageRow: View {
     let message: Message
     let isCurrentDeviceSender: Bool
+    @StateObject private var imageLoader = ImageLoader() // For loading CKAsset images
     
     var body: some View {
         HStack {
@@ -130,12 +156,40 @@ struct MessageRow: View {
             }
             
             VStack(alignment: isCurrentDeviceSender ? .trailing : .leading, spacing: 2) { // Added spacing
-                Text(message.text)
-                    .padding(10)
-                    .background(isCurrentDeviceSender ? Color.blue.opacity(0.7) : Color.gray.opacity(0.3))
-                    .foregroundColor(isCurrentDeviceSender ? .white : .primary)
-                    .cornerRadius(10)
-                    .opacity(message.status == .sending ? 0.7 : 1.0) // Dim if sending
+                if let imageAsset = message.imageAsset {
+                    // Display image if present
+                    if imageLoader.isLoading {
+                        ProgressView()
+                            .frame(width: 150, height: 150)
+                    } else if let loadedImage = imageLoader.image {
+                        loadedImage
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 200) // Limit image height
+                            .cornerRadius(10)
+                            .onTapGesture { /* Allow full screen view? */ }
+                    } else {
+                        // Placeholder or error for image
+                        Rectangle()
+                            .fill(Color.gray.opacity(0.2))
+                            .frame(width: 150, height: 100)
+                            .cornerRadius(10)
+                            .overlay(Text("Error loading image").font(.caption))
+                    }
+                } else if !message.text.isEmpty {
+                    // Display text if no image and text is not empty
+                    Text(message.text)
+                        .padding(10)
+                        .background(isCurrentDeviceSender ? Color.blue.opacity(0.7) : Color.gray.opacity(0.3))
+                        .foregroundColor(isCurrentDeviceSender ? .white : .primary)
+                        .cornerRadius(10)
+                        .opacity(message.status == .sending ? 0.7 : 1.0) // Dim if sending
+                } else {
+                    // Fallback for empty message (should ideally not happen if image or text is required)
+                     Text("[Empty Message]")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
 
                 HStack(spacing: 4) { // HStack for timestamp and status indicator
                     Text(message.timestamp, style: .time)
@@ -166,6 +220,16 @@ struct MessageRow: View {
             }
         }
         .id(message.id) // Ensure the row is uniquely identifiable for list updates
+        .onAppear {
+            if let asset = message.imageAsset {
+                imageLoader.loadImage(from: asset)
+            }
+        }
+        .onChange(of: message.imageAsset?.fileURL) { _ in // Reload if asset URL changes
+            if let asset = message.imageAsset {
+                imageLoader.loadImage(from: asset)
+            }
+        }
     }
 }
 
