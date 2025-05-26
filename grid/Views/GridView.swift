@@ -333,6 +333,25 @@ struct GridNodeView: View {
             // Distance and status overlays
             if let profile = node.userProfile {
                 VStack {
+                    // Top right: Unread message badge
+                    HStack {
+                        Spacer()
+                        let unreadCount = viewModel.getUnreadMessageCount(from: profile.deviceID)
+                        if unreadCount > 0 {
+                            Text("\(unreadCount)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .background(Color.red)
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white, lineWidth: 1.5)
+                                )
+                                .padding(4)
+                        }
+                    }
+                    
                     Spacer()
                     
                     // Bottom overlay: Distance only (simplified)

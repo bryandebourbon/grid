@@ -17,7 +17,7 @@ struct Message: Identifiable, Codable {
     let recipientUserID: String // Apple User ID of the recipient
     let text: String
     var timestamp: Date // MODIFIED: Changed to var
-    var isRead: Bool = false // To track if the message has been read by the recipient
+    var isRead: Int = 0 // To track if the message has been read by the recipient (0 = unread, 1 = read)
     var status: MessageStatus // NEW: Added status property
     var imageAsset: CKAsset? // Optional image asset for photo messages
 
@@ -53,7 +53,7 @@ struct Message: Identifiable, Codable {
         recipientUserID = try container.decode(String.self, forKey: .recipientUserID)
         text = try container.decode(String.self, forKey: .text)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
-        isRead = try container.decode(Bool.self, forKey: .isRead)
+        isRead = try container.decode(Int.self, forKey: .isRead)
         status = try container.decode(MessageStatus.self, forKey: .status)
         imageAsset = nil // CKAsset not decoded via Codable
         // Note: CKRecord.ID is not inherently Codable. If you need to store it locally
@@ -87,7 +87,7 @@ struct Message: Identifiable, Codable {
          recipientUserID: String,
          text: String,
          timestamp: Date = Date(),
-         isRead: Bool = false,
+         isRead: Int = 0,
          status: MessageStatus = .sending, // Default to .sending for new optimistic messages
          imageAsset: CKAsset? = nil) {
         self.id = id
@@ -123,14 +123,17 @@ struct Message: Identifiable, Codable {
         self.recipientUserID = recipientUserID
         self.text = text
         self.timestamp = timestamp
-        self.isRead = record["isRead"] as? Bool ?? false
+        self.isRead = record["isRead"] as? Int ?? 0
         self.imageAsset = record["imageAsset"] as? CKAsset // Load image asset
         
-        // Determine status based on who sent it
+        // Determine status based on who sent it and read status
         if let currentDevID = currentDeviceID, senderDeviceID == currentDevID {
             self.status = .sent // It's our own message, confirmed by server
         } else {
-            self.status = .received // It's a message from someone else
+            // It's a message from someone else
+            // If it's been read, show as sent (visual indicator for read)
+            // If not read, show as received (visual indicator for unread)
+            self.status = self.isRead == 1 ? .sent : .received
         }
     }
 

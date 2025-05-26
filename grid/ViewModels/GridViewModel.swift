@@ -32,6 +32,9 @@ class GridViewModel: ObservableObject {
     @Published var locationPermissionStatus: String = "Location permission not requested"
     @Published var chatRecipientToPresent: ChatRecipient?
     @Published var pendingChatNavigationDeviceID: String? = nil // For deferred navigation
+    
+    // Track read receipts
+    private var readReceipts: Set<String> = [] // Set of messageIDs that have been read
 
     private var messagingService: MessagingService
     private var gridService: GridService // For public grid management (legacy)
@@ -60,8 +63,14 @@ class GridViewModel: ObservableObject {
         if let profile = initialProfile {
             updateUserActivityAndLocation(profile)
             placeCurrentUserOnGrid()
-            // Fetch messages for this device and subscribe to new ones
-            fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
+            
+            // Load read receipts first, then messages
+            loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+                // Fetch messages after read receipts are loaded
+                self?.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
+            }
+            
+            // Subscribe to new messages
             messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         }
         
@@ -90,12 +99,28 @@ class GridViewModel: ObservableObject {
                     // Update its status and any server-authoritative fields.
                     // The newMessageFromSubscription is already initialized with status .sent or .received
                     // based on sender, so we can directly use its values.
-                    self.messages[index] = newMessageFromSubscription 
-                    print("GridViewModel: Updated existing message (ID: \(newMessageFromSubscription.id)) from subscription with server data. Status: \(newMessageFromSubscription.status)")
+                    var updatedMessage = newMessageFromSubscription
+                    // Check if we have a read receipt for this message
+                    if self.readReceipts.contains(newMessageFromSubscription.id) {
+                        updatedMessage.status = .sent // Mark as read
+                    }
+                    self.messages[index] = updatedMessage
+                    print("GridViewModel: Updated existing message (ID: \(newMessageFromSubscription.id)) from subscription with server data. Status: \(updatedMessage.status)")
                 } else {
                     // This is a genuinely new message (e.g., from the other user, or one not optimistically added).
-                    self.messages.append(newMessageFromSubscription)
-                    print("GridViewModel: Added new message (ID: \(newMessageFromSubscription.id)) from subscription. Status: \(newMessageFromSubscription.status)")
+                    var newMessage = newMessageFromSubscription
+                    // Check if we have a read receipt for this message
+                    if self.readReceipts.contains(newMessage.id) {
+                        newMessage.status = .sent
+                    }
+                    self.messages.append(newMessage)
+                    print("GridViewModel: Added new message (ID: \(newMessage.id)) from subscription. Status: \(newMessage.status)")
+                    
+                    // Check if this message is from someone not currently in the grid
+                    if newMessage.senderDeviceID != currentDeviceID {
+                        self.checkAndAddNewSenderToGrid(senderDeviceID: newMessage.senderDeviceID,
+                                                         senderUserID: newMessage.senderUserID)
+                    }
                 }
                 
                 self.messages.sort(by: { $0.timestamp < $1.timestamp })
@@ -344,9 +369,17 @@ class GridViewModel: ObservableObject {
         placeCurrentUserOnGrid()
         print("GridViewModel: Set current user profile for device ID \(profile.deviceID) (user: \(profile.userID))")
         
-        // Preload all messages for instant chat access
-        print("GridViewModel: Preloading all messages for instant chat access...")
-        fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+        // Load read receipts FIRST, then load messages
+        print("GridViewModel: Loading read receipts...")
+        loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+            guard let self = self else { return }
+            
+            // After read receipts are loaded, fetch messages
+            print("GridViewModel: Preloading all messages for instant chat access...")
+            self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+        }
+        
+        // Subscribe to message changes immediately
         messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         
         // REMOVED: Don't start location updates automatically
@@ -370,7 +403,15 @@ class GridViewModel: ObservableObject {
             switch result {
             case .success(let fetchedMessages): // MODIFIED: Changed fetchedCKRecords to fetchedMessages, expecting [Message]
                 // Assuming messages from MessagingService are already correctly initialized with status
-                self.messages = fetchedMessages.sorted(by: { $0.timestamp < $1.timestamp })
+                // Apply read receipts to fetched messages
+                var updatedMessages = fetchedMessages
+                for index in updatedMessages.indices {
+                    if self.readReceipts.contains(updatedMessages[index].id) {
+                        updatedMessages[index].status = .sent
+                    }
+                }
+                
+                self.messages = updatedMessages.sorted(by: { $0.timestamp < $1.timestamp })
                 
                 print("GridViewModel: Preloaded \(self.messages.count) messages for instant chat access. Statuses set.")
                 
@@ -637,6 +678,168 @@ class GridViewModel: ObservableObject {
         locationService.stopLocationUpdates()
         
         print("App will resign active - marked user as inactive and stopped location updates")
+    }
+    
+    // NEW: Get unread message count from a specific device
+    func getUnreadMessageCount(from deviceID: String) -> Int {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return 0 }
+        
+        // Count messages that are:
+        // 1. From the specified device TO the current user
+        // 2. Haven't been read yet (not in readReceipts)
+        return messages.filter { message in
+            message.senderDeviceID == deviceID && 
+            message.recipientDeviceID == currentDeviceID && 
+            !readReceipts.contains(message.id)
+        }.count
+    }
+    
+    // NEW: Mark messages as read when opening a chat
+    func markMessagesAsRead(from deviceID: String) {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return }
+        
+        let publicDB = CKContainer.default().publicCloudDatabase
+        var newReadReceipts: [ReadReceipt] = []
+        
+        // Find all unread messages from this device
+        for index in messages.indices {
+            if messages[index].senderDeviceID == deviceID && 
+               messages[index].recipientDeviceID == currentDeviceID && 
+               !readReceipts.contains(messages[index].id) {
+                // Mark as read locally
+                messages[index].status = .sent // Update visual status
+                readReceipts.insert(messages[index].id)
+                
+                // Create a read receipt
+                let receipt = ReadReceipt(deviceID: currentDeviceID, messageID: messages[index].id)
+                newReadReceipts.append(receipt)
+            }
+        }
+        
+        // Trigger UI update immediately
+        objectWillChange.send()
+        
+        // Save read receipts to CloudKit
+        if !newReadReceipts.isEmpty {
+            print("Creating \(newReadReceipts.count) read receipts in CloudKit")
+            
+            let records = newReadReceipts.map { $0.toCKRecord() }
+            let operation = CKModifyRecordsOperation(recordsToSave: records, recordIDsToDelete: nil)
+            
+            operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
+                if let error = error {
+                    print("Error saving read receipts to CloudKit: \(error.localizedDescription)")
+                } else {
+                    print("Successfully saved \(savedRecords?.count ?? 0) read receipts to CloudKit")
+                }
+            }
+            publicDB.add(operation)
+        }
+    }
+    
+    // NEW: Load read receipts from CloudKit
+    private func loadReadReceipts(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
+        let publicDB = CKContainer.default().publicCloudDatabase
+        let predicate = NSPredicate(format: "deviceID == %@", deviceID)
+        let query = CKQuery(recordType: "ReadReceipts", predicate: predicate)
+        
+        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
+            DispatchQueue.main.async {
+                guard let self = self else { 
+                    completion()
+                    return 
+                }
+                
+                if let error = error {
+                    print("Error loading read receipts: \(error.localizedDescription)")
+                    completion()
+                    return
+                }
+                
+                if let records = records {
+                    // Clear existing and load fresh from CloudKit
+                    self.readReceipts.removeAll()
+                    
+                    for record in records {
+                        if let receipt = ReadReceipt(record: record) {
+                            self.readReceipts.insert(receipt.messageID)
+                        }
+                    }
+                    
+                    print("Loaded \(self.readReceipts.count) read receipts from CloudKit")
+                    
+                    // Update message statuses based on read receipts
+                    for index in self.messages.indices {
+                        if self.readReceipts.contains(self.messages[index].id) &&
+                           self.messages[index].recipientDeviceID == deviceID {
+                            self.messages[index].status = .sent
+                        }
+                    }
+                    
+                    // Trigger UI update
+                    self.objectWillChange.send()
+                }
+                
+                completion()
+            }
+        }
+    }
+    
+    // NEW: Check if sender is in grid, if not fetch their profile and add them
+    private func checkAndAddNewSenderToGrid(senderDeviceID: String, senderUserID: String) {
+        // Check if this sender is already in the grid
+        let isInGrid = gridNodes.flatMap { $0 }.contains { node in
+            node.userProfile?.deviceID == senderDeviceID
+        }
+        
+        if !isInGrid {
+            print("GridViewModel: New message from device not in grid: \(senderDeviceID). Fetching their profile...")
+            
+            // Fetch just this one user's profile from CloudKit
+            let recordID = CKRecord.ID(recordName: senderDeviceID)
+            let publicDB = CKContainer.default().publicCloudDatabase
+            
+            publicDB.fetch(withRecordID: recordID) { [weak self] record, error in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    
+                    if let error = error {
+                        print("GridViewModel: Error fetching profile for new sender: \(error.localizedDescription)")
+                        // Create a minimal profile with just the info we have
+                        let minimalProfile = UserProfile(
+                            userID: senderUserID,
+                            deviceID: senderDeviceID,
+                            deviceName: "Unknown User"
+                        )
+                        self.addProfileToGrid(minimalProfile)
+                    } else if let record = record, let profile = UserProfile(record: record) {
+                        print("GridViewModel: Successfully fetched profile for new sender: \(profile.displayName)")
+                        self.addProfileToGrid(profile)
+                    }
+                }
+            }
+        }
+    }
+    
+    // Helper to add a profile to the grid
+    private func addProfileToGrid(_ profile: UserProfile) {
+        // Find the first empty spot in the grid (skip position 0,0 which is for current user)
+        for i in 0..<gridSize {
+            for j in 0..<gridSize {
+                // Skip the top-left position (reserved for current user)
+                if i == 0 && j == 0 {
+                    continue
+                }
+                
+                if gridNodes[i][j].userProfile == nil {
+                    gridNodes[i][j].userProfile = profile
+                    print("GridViewModel: Added new sender to grid at position (\(i), \(j))")
+                    objectWillChange.send() // Trigger UI update
+                    return
+                }
+            }
+        }
+        print("GridViewModel: Grid is full, cannot add new sender")
     }
     
     // NEW: Get distance string for UI display
