@@ -13,6 +13,8 @@ struct CreateProfileView: View {
 
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedPhotoData: Data? = nil
+    @State private var imageToCrop: UIImage? = nil
+    @State private var showingCropper = false
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
 
@@ -57,9 +59,11 @@ struct CreateProfileView: View {
                 .padding()
                 .onChange(of: selectedPhotoItem) { newItem in
                     Task {
-                        if let data = try? await newItem?.loadTransferable(type: Data.self) {
-                            selectedPhotoData = data
-                            errorMessage = nil // Clear previous error if new photo is selected
+                        if let data = try? await newItem?.loadTransferable(type: Data.self),
+                           let uiImage = UIImage(data: data) {
+                            imageToCrop = uiImage
+                            showingCropper = true
+                            errorMessage = nil
                         } else {
                             print("Failed to load photo data.")
                             errorMessage = "Could not load image. Please try another."
@@ -98,6 +102,15 @@ struct CreateProfileView: View {
                     }
                 }
             }
+            #if canImport(UIKit)
+            .sheet(isPresented: $showingCropper) {
+                if let image = imageToCrop {
+                    ImageCropperView(image: image) { cropped in
+                        selectedPhotoData = cropped.jpegData(compressionQuality: 0.8)
+                    }
+                }
+            }
+            #endif
         }
     }
 

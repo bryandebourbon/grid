@@ -314,6 +314,8 @@ struct EditProfilePhotoView: View {
     @ObservedObject var viewModel: GridViewModel
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedPhotoData: Data? = nil
+    @State private var imageToCrop: UIImage? = nil
+    @State private var showingCropper = false
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
     @Environment(\.dismiss) var dismiss
@@ -364,8 +366,10 @@ struct EditProfilePhotoView: View {
                             }
 
                             do {
-                                if let data = try await item.loadTransferable(type: Data.self) {
-                                    self.selectedPhotoData = data
+                                if let data = try await item.loadTransferable(type: Data.self),
+                                   let uiImage = UIImage(data: data) {
+                                    self.imageToCrop = uiImage
+                                    self.showingCropper = true
                                     self.errorMessage = nil
                                 } else {
                                     print("Photo data is nil but no error thrown by loadTransferable.")
@@ -398,9 +402,18 @@ struct EditProfilePhotoView: View {
                     Button("Cancel") { if !isSaving { dismiss() } }
                 }
             }
+            #if canImport(UIKit)
+            .sheet(isPresented: $showingCropper) {
+                if let image = imageToCrop {
+                    ImageCropperView(image: image) { cropped in
+                        selectedPhotoData = cropped.jpegData(compressionQuality: 0.8)
+                    }
+                }
+            }
+            #endif
             .onAppear {
                 currentImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
-                selectedPhotoItem = nil 
+                selectedPhotoItem = nil
                 selectedPhotoData = nil
             }
         }
