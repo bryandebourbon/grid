@@ -123,7 +123,18 @@ struct ContentView: View {
 
         // Use CKFetchRecordsOperation to properly download CKAssets
         let fetchOperation = CKFetchRecordsOperation(recordIDs: [recordID])
-        fetchOperation.desiredKeys = ["profileImage", "userID", "deviceID", "deviceName"] // Specify which fields to fetch
+        fetchOperation.desiredKeys = [
+            "profileImage",
+            "userID",
+            "deviceID",
+            "deviceName",
+            "bio",
+            "additionalPhotos",
+            "latitude",
+            "longitude",
+            "lastActiveTimestamp",
+            "isCurrentlyActive"
+        ]
         fetchOperation.fetchRecordsCompletionBlock = { recordsByRecordID, error in
             DispatchQueue.main.async {
                 self.isLoadingProfile = false

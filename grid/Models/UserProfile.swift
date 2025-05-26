@@ -12,6 +12,7 @@ struct UserProfile: Codable {
     var deviceName: String          // Human-readable device name
     var profileImage: CKAsset?      // For the profile photo (optional)
     var additionalPhotos: [CKAsset]? // Up to 10 additional photos
+    var bio: String? // NEW: User's biography or about me text
     
     // Location and activity tracking
     var latitude: Double?           // Current latitude
@@ -33,9 +34,7 @@ struct UserProfile: Codable {
         case longitude  
         case lastActiveTimestamp
         case isCurrentlyActive
-        // CKAsset (profileImage, additionalPhotos) is not directly Codable. 
-        // It's handled by CKRecord. If UserProfile were part of another Codable type,
-        // this would need custom handling or that type would store only userID.
+        case bio
     }
 
     // Initializer for creating a new profile
@@ -44,6 +43,7 @@ struct UserProfile: Codable {
          deviceName: String, 
          profileImage: CKAsset? = nil,
          additionalPhotos: [CKAsset]? = nil,
+         bio: String? = nil,
          latitude: Double? = nil,
          longitude: Double? = nil,
          lastActiveTimestamp: Date = Date(),
@@ -54,6 +54,7 @@ struct UserProfile: Codable {
         self.recordID = CKRecord.ID(recordName: deviceID) // Use deviceID as the unique record identifier
         self.profileImage = profileImage
         self.additionalPhotos = additionalPhotos
+        self.bio = bio
         self.latitude = latitude
         self.longitude = longitude
         self.lastActiveTimestamp = lastActiveTimestamp
@@ -67,8 +68,10 @@ struct UserProfile: Codable {
         self.deviceID = try container.decode(String.self, forKey: .deviceID)
         self.deviceName = try container.decode(String.self, forKey: .deviceName)
         self.recordID = CKRecord.ID(recordName: self.deviceID)
-        self.profileImage = nil // CKAsset not decoded via Codable
-        self.additionalPhotos = nil // CKAsset not decoded via Codable
+        // CKAssets are not decoded here; they are populated from CKRecord
+        self.profileImage = nil
+        self.additionalPhotos = nil
+        self.bio = try container.decodeIfPresent(String.self, forKey: .bio)
         self.latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
@@ -85,7 +88,7 @@ struct UserProfile: Codable {
         try container.encodeIfPresent(self.longitude, forKey: .longitude)
         try container.encode(self.lastActiveTimestamp, forKey: .lastActiveTimestamp)
         try container.encode(self.isCurrentlyActive, forKey: .isCurrentlyActive)
-        // profileImage (CKAsset) is not encoded.
+        try container.encodeIfPresent(self.bio, forKey: .bio)
     }
 
     // Initializer from a CKRecord
@@ -112,6 +115,7 @@ struct UserProfile: Codable {
         self.longitude = record["longitude"] as? Double
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
         self.isCurrentlyActive = record["isCurrentlyActive"] as? Bool ?? false
+        self.bio = record["bio"] as? String
     }
 
     // Helper to create/update a CKRecord for PUBLIC database (grid visibility)
@@ -125,6 +129,7 @@ struct UserProfile: Codable {
         record["longitude"] = self.longitude
         record["lastActiveTimestamp"] = self.lastActiveTimestamp
         record["isCurrentlyActive"] = self.isCurrentlyActive
+        record["bio"] = self.bio
         
         if let imageAsset = self.profileImage {
             record["profileImage"] = imageAsset

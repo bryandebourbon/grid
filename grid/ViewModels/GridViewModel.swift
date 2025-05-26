@@ -476,23 +476,72 @@ class GridViewModel: ObservableObject {
             completion?(false)
             return 
         }
-        print("Profile data changed. Updating user activity and CloudKit.")
-        
-        // Using proximityService.updateUserActivity which saves the profile to CloudKit
-        proximityService.updateUserActivity(profile) { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let savedProfile):
-                    self.currentUserProfile = savedProfile // Update with the potentially modified profile from server
-                    self.placeCurrentUserOnGrid() // Update local grid display
-                    print("User profile successfully updated in CloudKit and local grid refreshed.")
-                    completion?(true)
-                case .failure(let error):
-                    print("Error updating user profile in CloudKit: \(error.localizedDescription)")
-                    completion?(false)
+        // Only save if location is valid (not 0.0, 0.0)
+        if let lat = profile.latitude, let lon = profile.longitude, lat != 0.0, lon != 0.0 {
+            print("[CloudKit Save] Valid location detected: lat=\(lat), lon=\(lon). Proceeding with save.")
+            print("Profile data changed. Updating user activity and CloudKit.")
+            
+            // Using proximityService.updateUserActivity which saves the profile to CloudKit
+            proximityService.updateUserActivity(profile) { [weak self] result in
+                guard let self = self else { return }
+                
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let savedProfile):
+                        self.currentUserProfile = savedProfile // Update with the potentially modified profile from server
+                        self.placeCurrentUserOnGrid() // Update local grid display
+                        print("User profile successfully updated in CloudKit and local grid refreshed.")
+                        completion?(true)
+                    case .failure(let error):
+                        print("Error updating user profile in CloudKit: \(error.localizedDescription)")
+                        
+                        // Check if this is a CloudKit daemon connection error
+                        if self.isCloudKitDaemonConnectionError(error) {
+                            print("⚠️ CloudKit daemon connection error detected. This is common on new devices or when iCloud is syncing.")
+                            
+                            // Check CloudKit availability before retrying
+                            self.checkCloudKitAvailability { isAvailable, errorMessage in
+                                if isAvailable {
+                                    // If CloudKit is available, retry the operation after a short delay
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                        print("🔄 Retrying profile update after CloudKit daemon connection error...")
+                                        self.persistAndUpdateProfileAndGrid(completion: completion)
+                                    }
+                                } else {
+                                    print("❌ CloudKit is not available: \(errorMessage ?? "Unknown error")")
+                                    completion?(false)
+                                }
+                            }
+                        } else {
+                            completion?(false)
+                        }
+                    }
                 }
             }
+        } else {
+            print("[CloudKit Save] Location not available or invalid (lat=\(profile.latitude ?? -1), lon=\(profile.longitude ?? -1)). Skipping CloudKit save. Will retry when location is updated.")
+            completion?(false)
         }
+    }
+    
+    // NEW: Helper function to detect CloudKit daemon connection errors
+    private func isCloudKitDaemonConnectionError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        
+        // Check for the specific CloudKit daemon connection error
+        if nsError.domain == "NSCocoaErrorDomain" && nsError.code == 4099 {
+            return true
+        }
+        
+        // Check error description for daemon-related issues
+        let errorDescription = error.localizedDescription.lowercased()
+        if errorDescription.contains("cloudd") || 
+           errorDescription.contains("daemon") ||
+           errorDescription.contains("connection") && errorDescription.contains("cloudkit") {
+            return true
+        }
+        
+        return false
     }
 
     private func findNode(forDeviceID deviceID: String) -> GridNode? {
@@ -925,6 +974,11 @@ class GridViewModel: ObservableObject {
         persistAndUpdateProfileAndGrid() { success in
             if !success {
                 print("Failed to persist profile updates to CloudKit.")
+                
+                // Check if this was a CloudKit daemon connection error
+                // The actual error handling is done in persistAndUpdateProfileAndGrid
+                // but we can provide additional context here
+                
                 // If saving to CloudKit failed, new temp files might need cleanup.
                 // The main tempMainPhotoURL is particularly important here.
                 if let url = tempMainPhotoURL {
@@ -932,8 +986,8 @@ class GridViewModel: ObservableObject {
                     print("Cleaned up temporary main photo file after failed save: \(url.path)")
                 }
                 // Note: additionalPhotoAssets passed to this function are either existing (no new temp file) 
-                // or new (temp files created in EditProfilePhotoView). 
-                // EditProfilePhotoView is responsible for cleaning up its *newly created* temp files on failure from this callback.
+                // or new (temp files created in ProfileCardView). 
+                // ProfileCardView is responsible for cleaning up its *newly created* temp files on failure from this callback.
             }
             completion(success)
         }
@@ -1166,5 +1220,59 @@ class GridViewModel: ObservableObject {
             }
         }
         database.add(operation)
+    }
+
+    func updateUserProfileBio(bio: String, completion: @escaping (Bool) -> Void) {
+        guard var userProfile = self.currentUserProfile else {
+            print("No current user profile to update bio for.")
+            completion(false)
+            return
+        }
+
+        userProfile.bio = bio
+
+        // Optimistically update local profile
+        self.currentUserProfile?.bio = bio
+        
+        // Save to CloudKit using proximityService
+        proximityService.updateUserActivity(userProfile) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let savedProfile):
+                    // Update local profile with the one returned from save (might have updated recordID etc.)
+                    self?.currentUserProfile = savedProfile
+                    self?.objectWillChange.send() // Notify views
+                    print("User bio updated and saved successfully.")
+                    completion(true)
+                case .failure(let error):
+                    print("Error saving user profile bio to CloudKit: \\(error.localizedDescription)")
+                    // Revert optimistic update on failure
+                    self?.currentUserProfile?.bio = userProfile.bio // Restore previous value
+                    completion(false)
+                }
+            }
+        }
+    }
+
+    // NEW: Check CloudKit availability before attempting operations
+    func checkCloudKitAvailability(completion: @escaping (Bool, String?) -> Void) {
+        CKContainer.default().accountStatus { status, error in
+            DispatchQueue.main.async {
+                switch status {
+                case .available:
+                    completion(true, nil)
+                case .noAccount:
+                    completion(false, "No iCloud account found. Please sign in to iCloud in Settings.")
+                case .restricted:
+                    completion(false, "iCloud access is restricted on this device.")
+                case .couldNotDetermine:
+                    completion(false, "Could not determine iCloud status. Please try again.")
+                case .temporarilyUnavailable:
+                    completion(false, "iCloud is temporarily unavailable. Please try again later.")
+                @unknown default:
+                    completion(false, "Unknown iCloud status.")
+                }
+            }
+        }
     }
 }
