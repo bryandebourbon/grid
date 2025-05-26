@@ -15,11 +15,17 @@ struct Message: Identifiable, Codable {
     let recipientDeviceID: String // Device ID of the recipient (can be the same as senderDeviceID for self-messaging)
     let senderUserID: String // Apple User ID of the sender (for account-level tracking)
     let recipientUserID: String // Apple User ID of the recipient
-    let text: String
+    var text: String // MODIFIED: Changed to var for encryption placeholder
     var timestamp: Date // MODIFIED: Changed to var
     var isRead: Int = 0 // To track if the message has been read by the recipient (0 = unread, 1 = read)
     var status: MessageStatus // NEW: Added status property
     var imageAsset: CKAsset? // Optional image asset for photo messages
+    
+    // NEW: Encryption fields
+    var isEncrypted: Bool = false // Whether this message is encrypted
+    var encryptedContent: String? // Base64 encoded encrypted message content (when isEncrypted = true)
+    var encryptedImageData: String? // Base64 encoded encrypted image data (when isEncrypted = true)
+    var encryptionKeyID: String? // ID of the encryption key used
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -32,6 +38,10 @@ struct Message: Identifiable, Codable {
         case timestamp
         case isRead
         case status // ADDED: status to CodingKeys
+        case isEncrypted
+        case encryptedContent
+        case encryptedImageData
+        case encryptionKeyID
         // recordID is not directly encoded/decoded as it's managed by CloudKit interactions
         // imageAsset (CKAsset) is also not directly Codable and handled by CKRecord.
         // This comment seems to contradict adding recordID to CodingKeys.
@@ -56,6 +66,10 @@ struct Message: Identifiable, Codable {
         isRead = try container.decode(Int.self, forKey: .isRead)
         status = try container.decode(MessageStatus.self, forKey: .status)
         imageAsset = nil // CKAsset not decoded via Codable
+        isEncrypted = try container.decodeIfPresent(Bool.self, forKey: .isEncrypted) ?? false
+        encryptedContent = try container.decodeIfPresent(String.self, forKey: .encryptedContent)
+        encryptedImageData = try container.decodeIfPresent(String.self, forKey: .encryptedImageData)
+        encryptionKeyID = try container.decodeIfPresent(String.self, forKey: .encryptionKeyID)
         // Note: CKRecord.ID is not inherently Codable. If you need to store it locally
         // using Codable, you'd typically store its recordName (String) or a custom representation.
         // For now, assuming recordID is managed outside of Codable persistence for this struct.
@@ -75,6 +89,10 @@ struct Message: Identifiable, Codable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isRead, forKey: .isRead)
         try container.encode(status, forKey: .status)
+        try container.encode(isEncrypted, forKey: .isEncrypted)
+        try container.encodeIfPresent(encryptedContent, forKey: .encryptedContent)
+        try container.encodeIfPresent(encryptedImageData, forKey: .encryptedImageData)
+        try container.encodeIfPresent(encryptionKeyID, forKey: .encryptionKeyID)
         // imageAsset (CKAsset) is not encoded.
     }
 
@@ -101,6 +119,10 @@ struct Message: Identifiable, Codable {
         self.isRead = isRead
         self.status = status
         self.imageAsset = imageAsset
+        self.isEncrypted = false
+        self.encryptedContent = nil
+        self.encryptedImageData = nil
+        self.encryptionKeyID = nil
     }
 
     // Initializer from a CKRecord
@@ -135,6 +157,12 @@ struct Message: Identifiable, Codable {
             // If not read, show as received (visual indicator for unread)
             self.status = self.isRead == 1 ? .sent : .received
         }
+        
+        // Load encryption fields
+        self.isEncrypted = (record["isEncrypted"] as? Int64 ?? 0) == 1
+        self.encryptedContent = record["encryptedContent"] as? String
+        self.encryptedImageData = record["encryptedImageData"] as? String
+        self.encryptionKeyID = record["encryptionKeyID"] as? String
     }
 
     // Helper to create/update a CKRecord from this message
@@ -156,6 +184,26 @@ struct Message: Identifiable, Codable {
             record["imageAsset"] = asset
         } else {
             record["imageAsset"] = nil // Explicitly set to nil if no image
+        }
+        
+        // Save encryption fields - only if not using default values
+        // DEBUG: Log what we're trying to save
+        if self.isEncrypted {
+            print("DEBUG: Attempting to save encrypted message with fields:")
+            print("  - isEncrypted: 1")
+            print("  - encryptedContent: \(self.encryptedContent?.prefix(20) ?? "nil")...")
+            print("  - encryptionKeyID: \(self.encryptionKeyID ?? "nil")")
+            
+            record["isEncrypted"] = Int64(1)
+            if let encryptedContent = self.encryptedContent {
+                record["encryptedContent"] = encryptedContent
+            }
+            if let encryptedImageData = self.encryptedImageData {
+                record["encryptedImageData"] = encryptedImageData
+            }
+            if let encryptionKeyID = self.encryptionKeyID {
+                record["encryptionKeyID"] = encryptionKeyID
+            }
         }
         
         return record

@@ -40,6 +40,19 @@ class GridViewModel: ObservableObject {
         }
     }
     
+    // NEW: Encryption mode properties
+    @Published var isEncryptionMode: Bool = false {
+        didSet {
+            if isEncryptionMode {
+                enableEncryptionMode()
+            } else {
+                disableEncryptionMode()
+            }
+        }
+    }
+    @Published var encryptionProfiles: [String: EncryptionProfile] = [:] // deviceID -> EncryptionProfile
+    @Published var hasEncryptionKeys: Bool = false
+    
     // Track read receipts
     private var readReceipts: Set<String> = [] // Set of messageIDs that have been read
     
@@ -132,6 +145,11 @@ class GridViewModel: ObservableObject {
                         self.checkAndAddNewSenderToGrid(senderDeviceID: newMessage.senderDeviceID,
                                                          senderUserID: newMessage.senderUserID)
                     }
+                    
+                    // Trigger UI update if this is an encrypted message
+                    if newMessage.isEncrypted && !self.isEncryptionMode {
+                        self.objectWillChange.send()
+                    }
                 }
                 
                 self.messages.sort(by: { $0.timestamp < $1.timestamp })
@@ -162,7 +180,13 @@ class GridViewModel: ObservableObject {
         // Listen for all users updates (sorted by distance)
         proximityService.$activeNearbyProfiles
             .sink { [weak self] allProfiles in
-                self?.updateGridWithAllProfiles(allProfiles)
+                guard let self = self else { return }
+                // If in encryption mode, filter the profiles before updating grid
+                if self.isEncryptionMode {
+                    self.refreshGridForEncryptionMode()
+                } else {
+                    self.updateGridWithAllProfiles(allProfiles)
+                }
             }
             .store(in: &cancellables)
     }
@@ -1072,6 +1096,9 @@ class GridViewModel: ObservableObject {
             return
         }
         
+        // Check if encryption should be used
+        let shouldEncrypt = isEncryptionMode && encryptionProfiles[recipientDeviceID] != nil
+        
         let recipientProfile: UserProfile
         if recipientDeviceID == senderProfile.deviceID {
             recipientProfile = senderProfile
@@ -1099,6 +1126,22 @@ class GridViewModel: ObservableObject {
             timestamp: Date(), // Client-side timestamp for now
             status: .sending  // Initial status
         )
+        
+        // Handle encryption if needed
+        if shouldEncrypt {
+            guard let recipientEncryptionProfile = encryptionProfiles[recipientDeviceID],
+                  let encryptedData = CryptoService.shared.encrypt(text: text, withPublicKey: recipientEncryptionProfile.publicKey) else {
+                print("Failed to encrypt message")
+                return
+            }
+            
+            optimisticMessage.isEncrypted = true
+            optimisticMessage.encryptedContent = encryptedData.base64EncodedString()  // Convert to base64 string
+            optimisticMessage.encryptionKeyID = recipientEncryptionProfile.id
+            optimisticMessage.text = "[Encrypted Message]" // Placeholder for CloudKit
+        } else {
+            optimisticMessage.isEncrypted = false
+        }
         
         // 2. Add to local messages array immediately
         // This should trigger UI update due to @Published
@@ -1655,6 +1698,160 @@ class GridViewModel: ObservableObject {
                     completion(false, "Unknown iCloud status.")
                 }
             }
+        }
+    }
+
+    // MARK: - Encryption Mode Support
+    
+    private func enableEncryptionMode() {
+        print("GridViewModel: Enabling encryption mode...")
+        
+        // Check if keys exist
+        hasEncryptionKeys = CryptoService.shared.hasEncryptionKeys()
+        
+        if !hasEncryptionKeys {
+            // Generate new keys
+            if let (publicKey, _) = CryptoService.shared.generateKeyPair() {
+                hasEncryptionKeys = true
+                
+                // Create and save encryption profile
+                guard let deviceID = currentUserProfile?.deviceID else { return }
+                let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey)
+                
+                // Add to local cache immediately
+                encryptionProfiles[deviceID] = encryptionProfile
+                
+                saveEncryptionProfile(encryptionProfile)
+            }
+        } else {
+            // Keys exist, ensure our profile is published
+            guard let deviceID = currentUserProfile?.deviceID,
+                  let publicKey = CryptoService.shared.getPublicKey() else { return }
+            let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey)
+            
+            // Add to local cache immediately
+            encryptionProfiles[deviceID] = encryptionProfile
+            
+            saveEncryptionProfile(encryptionProfile)
+        }
+        
+        // Load encryption profiles of other devices
+        loadEncryptionProfiles()
+        
+        // Filter grid to show only encryption-enabled devices
+        refreshGridForEncryptionMode()
+    }
+    
+    private func disableEncryptionMode() {
+        print("GridViewModel: Disabling encryption mode...")
+        
+        // Update our encryption profile to show disabled
+        guard let deviceID = currentUserProfile?.deviceID,
+              let publicKey = CryptoService.shared.getPublicKey() else { return }
+        let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey, isEncryptionEnabled: false)
+        saveEncryptionProfile(encryptionProfile)
+        
+        // Refresh grid to show all devices again
+        autoRefreshGrid()
+    }
+    
+    private func saveEncryptionProfile(_ profile: EncryptionProfile) {
+        let publicDB = CKContainer.default().publicCloudDatabase
+        let record = profile.toCKRecord()
+        
+        // Use CKModifyRecordsOperation to handle both create and update
+        let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
+        operation.savePolicy = .changedKeys // This allows updating existing records
+        
+        operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("Error saving encryption profile: \(error.localizedDescription)")
+                } else {
+                    print("Successfully saved/updated encryption profile for device: \(profile.id)")
+                }
+            }
+        }
+        
+        publicDB.add(operation)
+    }
+    
+    private func loadEncryptionProfiles() {
+        let publicDB = CKContainer.default().publicCloudDatabase
+        let predicate = NSPredicate(format: "isEncryptionEnabled == 1")  // Use Int64 value
+        let query = CKQuery(recordType: "EncryptionProfiles", predicate: predicate)
+        
+        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                
+                if let error = error {
+                    print("Error loading encryption profiles: \(error.localizedDescription)")
+                    return
+                }
+                
+                self.encryptionProfiles.removeAll()
+                records?.forEach { record in
+                    if let profile = EncryptionProfile(record: record) {
+                        self.encryptionProfiles[profile.id] = profile
+                    }
+                }
+                
+                print("Loaded \(self.encryptionProfiles.count) encryption profiles")
+                self.refreshGridForEncryptionMode()
+            }
+        }
+    }
+    
+    private func refreshGridForEncryptionMode() {
+        if isEncryptionMode {
+            // Filter profiles to show only those with encryption enabled
+            let encryptedDeviceIDs = Set(encryptionProfiles.keys)
+            // Always include current user in encryption mode
+            let currentDeviceID = currentUserProfile?.deviceID
+            let filteredProfiles = proximityService.activeNearbyProfiles.filter { profile in
+                profile.deviceID == currentDeviceID || encryptedDeviceIDs.contains(profile.deviceID)
+            }
+            updateGridWithAllProfiles(filteredProfiles)
+        } else {
+            // Show all profiles
+            updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+        }
+    }
+    
+    // Get encryption profile for a device
+    func getEncryptionProfile(for deviceID: String) -> EncryptionProfile? {
+        return encryptionProfiles[deviceID]
+    }
+    
+    // Check if there are unread encrypted messages
+    func hasUnreadEncryptedMessages() -> Bool {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
+        
+        // Check for unread encrypted messages sent to current device
+        return messages.contains { message in
+            message.isEncrypted &&
+            message.recipientDeviceID == currentDeviceID &&
+            message.senderDeviceID != currentDeviceID &&
+            !readReceipts.contains(message.id)
+        }
+    }
+    
+
+    
+    // Decrypt message for display
+    func decryptMessage(_ message: Message) -> String {
+        guard message.isEncrypted,
+              let encryptedContentString = message.encryptedContent,
+              let encryptedContent = Data(base64Encoded: encryptedContentString),  // Convert from base64 string
+              let privateKey = CryptoService.shared.getPrivateKey() else {
+            return message.text
+        }
+        
+        if let decryptedText = CryptoService.shared.decrypt(data: encryptedContent, withPrivateKey: privateKey) {
+            return decryptedText
+        } else {
+            return "[Failed to decrypt message]"
         }
     }
 }
