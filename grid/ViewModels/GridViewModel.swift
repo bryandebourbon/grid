@@ -338,6 +338,30 @@ class GridViewModel: ObservableObject {
              try? FileManager.default.removeItem(at: tempFileURL)
         }
     }
+
+    func updateCurrentGalleryPhotos(newPhotoDataArray: [Data]) {
+        guard var profile = currentUserProfile else {
+            print("Cannot update gallery photos, currentUserProfile is nil.")
+            return
+        }
+
+        var newAssets: [CKAsset] = profile.galleryPhotoAssets ?? []
+        for data in newPhotoDataArray {
+            if newAssets.count >= 5 { break }
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try data.write(to: tempFileURL)
+                let asset = CKAsset(fileURL: tempFileURL)
+                newAssets.append(asset)
+            } catch {
+                print("Error writing gallery photo data: \(error.localizedDescription)")
+            }
+        }
+        profile.galleryPhotoAssets = newAssets
+        currentUserProfile = profile
+        persistAndUpdateProfileAndGrid()
+    }
     
     private func persistAndUpdateProfileAndGrid() {
         guard let profile = currentUserProfile else { return }

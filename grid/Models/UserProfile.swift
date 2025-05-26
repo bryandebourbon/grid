@@ -11,6 +11,7 @@ struct UserProfile: Codable {
     var deviceID: String            // Unique identifier for each device
     var deviceName: String          // Human-readable device name
     var profileImage: CKAsset?      // For the profile photo (optional)
+    var galleryPhotoAssets: [CKAsset]? // Up to 5 additional photos
     
     // Location and activity tracking
     var latitude: Double?           // Current latitude
@@ -38,10 +39,11 @@ struct UserProfile: Codable {
     }
 
     // Initializer for creating a new profile
-    init(userID: String, 
-         deviceID: String = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString, 
-         deviceName: String = UIDevice.current.name, 
+    init(userID: String,
+         deviceID: String = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString,
+         deviceName: String = UIDevice.current.name,
          profileImage: CKAsset? = nil,
+         galleryPhotoAssets: [CKAsset]? = nil,
          latitude: Double? = nil,
          longitude: Double? = nil,
          lastActiveTimestamp: Date = Date(),
@@ -51,6 +53,7 @@ struct UserProfile: Codable {
         self.deviceName = deviceName
         self.recordID = CKRecord.ID(recordName: deviceID) // Use deviceID as the unique record identifier
         self.profileImage = profileImage
+        self.galleryPhotoAssets = galleryPhotoAssets
         self.latitude = latitude
         self.longitude = longitude
         self.lastActiveTimestamp = lastActiveTimestamp
@@ -65,6 +68,7 @@ struct UserProfile: Codable {
         self.deviceName = try container.decode(String.self, forKey: .deviceName)
         self.recordID = CKRecord.ID(recordName: self.deviceID)
         self.profileImage = nil // CKAsset not decoded via Codable
+        self.galleryPhotoAssets = nil
         self.latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
@@ -103,6 +107,7 @@ struct UserProfile: Codable {
         self.userID = userID
         self.deviceName = record["deviceName"] as? String ?? "Unknown Device"
         self.profileImage = record["profileImage"] as? CKAsset
+        self.galleryPhotoAssets = record["galleryPhotoAssets"] as? [CKAsset]
         self.latitude = record["latitude"] as? Double
         self.longitude = record["longitude"] as? Double
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
@@ -125,6 +130,11 @@ struct UserProfile: Codable {
             record["profileImage"] = imageAsset
         } else {
             record["profileImage"] = nil
+        }
+        if let galleryAssets = self.galleryPhotoAssets {
+            record["galleryPhotoAssets"] = galleryAssets as CKRecordValue?
+        } else {
+            record["galleryPhotoAssets"] = nil
         }
         return record
     }
