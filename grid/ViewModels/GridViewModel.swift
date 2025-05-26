@@ -21,14 +21,17 @@ import Combine
 import SwiftUI
 import CloudKit
 import CoreLocation
+import PhotosUI
 
 class GridViewModel: ObservableObject {
     @Published var gridNodes: [[GridNode]] = []
     @Published var currentUserProfile: UserProfile?
     @Published var messages: [Message] = [] // For displaying messages
     @Published var currentChatRecipientDeviceID: String? // Device ID of who the current chat is with
+    @Published var selfChatNewMessageText: String = "" // For SelfChatView input
     @Published var locationPermissionStatus: String = "Location permission not requested"
     @Published var chatRecipientToPresent: ChatRecipient?
+    @Published var pendingChatNavigationDeviceID: String? = nil // For deferred navigation
 
     private var messagingService: MessagingService
     private var gridService: GridService // For public grid management (legacy)
@@ -134,20 +137,18 @@ class GridViewModel: ObservableObject {
             }
             .receive(on: DispatchQueue.main) // Ensure UI updates on main thread
             .sink { [weak self] senderDeviceID in
-                print("GridViewModel: Received navigation request for chat with senderDeviceID: \\(senderDeviceID)")
-                // Ensure the user is logged in and profile is available
-                guard self?.currentUserProfile != nil else {
-                    print("GridViewModel: Cannot navigate to chat, current user profile not available.")
-                    // Optionally, store this senderDeviceID and attempt navigation after profile loads.
-                    return
+                print("GridViewModel: Received navigation request for chat with senderDeviceID: \(senderDeviceID)")
+                guard let self = self else { return }
+                
+                if self.currentUserProfile != nil {
+                    // Profile is available, proceed with navigation
+                    self.selectChatPartner(partnerDeviceID: senderDeviceID) 
+                    self.chatRecipientToPresent = ChatRecipient(id: senderDeviceID) 
+                } else {
+                    // Profile not yet available, store for deferred navigation
+                    print("GridViewModel: Current user profile not available. Deferring navigation for senderDeviceID: \(senderDeviceID)")
+                    self.pendingChatNavigationDeviceID = senderDeviceID
                 }
-                
-                // Check if already chatting with this person to avoid disrupting current view if not necessary
-                // However, if a new push comes for the *same* chat, we might still want to ensure it's visible.
-                // For now, always set the chat recipient to navigate or bring to front.
-                
-                self?.selectChatPartner(partnerDeviceID: senderDeviceID) // Make sure this recipient is selected
-                self?.chatRecipientToPresent = ChatRecipient(id: senderDeviceID) // Trigger sheet presentation
             }
             .store(in: &cancellables)
     }
@@ -349,6 +350,14 @@ class GridViewModel: ObservableObject {
         
         // Start location updates - grid will auto-refresh when it appears
         locationService.requestLocationPermission()
+
+        // Check for deferred navigation
+        if let pendingDeviceID = pendingChatNavigationDeviceID {
+            print("GridViewModel: Handling deferred navigation to chat with deviceID: \(pendingDeviceID)")
+            selectChatPartner(partnerDeviceID: pendingDeviceID)
+            chatRecipientToPresent = ChatRecipient(id: pendingDeviceID)
+            pendingChatNavigationDeviceID = nil // Clear after handling
+        }
     }
     
     // Enhanced: Fetch ALL messages for the current device (for all conversations)
@@ -462,11 +471,28 @@ class GridViewModel: ObservableObject {
         }
     }
     
-    private func persistAndUpdateProfileAndGrid() {
-        guard let profile = currentUserProfile else { return }
-        print("Profile data changed. Updating user activity.")
-        updateUserActivityAndLocation(profile) // NEW: Use activity-based saving
-        placeCurrentUserOnGrid()
+    private func persistAndUpdateProfileAndGrid(completion: ((Bool) -> Void)? = nil) {
+        guard let profile = currentUserProfile else { 
+            completion?(false)
+            return 
+        }
+        print("Profile data changed. Updating user activity and CloudKit.")
+        
+        // Using proximityService.updateUserActivity which saves the profile to CloudKit
+        proximityService.updateUserActivity(profile) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let savedProfile):
+                    self.currentUserProfile = savedProfile // Update with the potentially modified profile from server
+                    self.placeCurrentUserOnGrid() // Update local grid display
+                    print("User profile successfully updated in CloudKit and local grid refreshed.")
+                    completion?(true)
+                case .failure(let error):
+                    print("Error updating user profile in CloudKit: \(error.localizedDescription)")
+                    completion?(false)
+                }
+            }
+        }
     }
 
     private func findNode(forDeviceID deviceID: String) -> GridNode? {
@@ -613,13 +639,18 @@ class GridViewModel: ObservableObject {
             return
         }
         
-        // Find the recipient's profile to get their userID
-        // TODO: This should ideally come from a more reliable source than just gridNodes,
-        // perhaps a dedicated user cache if available, or ensure gridNodes is always up-to-date.
-        guard let recipientProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
-            print("Error: Could not find recipient profile for device \\(recipientDeviceID)")
-            // OPTIONAL: Create a temporary message with .failed status or inform user.
-            return
+        let recipientProfile: UserProfile
+        if recipientDeviceID == senderProfile.deviceID {
+            recipientProfile = senderProfile
+        } else {
+            // TODO: This should ideally come from a more reliable source than just gridNodes,
+            // perhaps a dedicated user cache if available, or ensure gridNodes is always up-to-date.
+            guard let foundProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
+                print("Error: Could not find recipient profile for device \(recipientDeviceID)")
+                // OPTIONAL: Create a temporary message with .failed status or inform user.
+                return
+            }
+            recipientProfile = foundProfile
         }
         
         // 1. Create optimistic message
@@ -717,5 +748,423 @@ class GridViewModel: ObservableObject {
                 autoRefreshGrid()
             }
         }
+    }
+
+    // Function to process PhotosPickerItems for additional photos
+    func processSelectedPhotoItems(_ items: [PhotosPickerItem]) {
+        guard let currentUserProfile = self.currentUserProfile else {
+            print("GridViewModel: Cannot process photos, no current user profile.")
+            return
+        }
+        
+        var loadedImageDatas: [Data] = []
+        let group = DispatchGroup()
+        
+        print("GridViewModel: Processing \\(items.count) selected photo items...")
+        
+        for item in items {
+            group.enter()
+            item.loadTransferable(type: Data.self) { result in
+                defer { group.leave() }
+                switch result {
+                case .success(let data?):
+                    loadedImageDatas.append(data)
+                    print("GridViewModel: Successfully loaded image data (\u{2022}\\(data.count) bytes).")
+                case .success(nil):
+                    print("GridViewModel: Warning - loaded image data is nil.")
+                case .failure(let error):
+                    print("GridViewModel: Error loading image data: \\(error.localizedDescription)")
+                }
+            }
+        }
+        
+        group.notify(queue: .main) {
+            print("GridViewModel: All selected photos processed. Total loaded: \(loadedImageDatas.count)")
+            
+            // Store the actual image data as CloudKit assets
+            var updatedPhotoAssets = self.currentUserProfile?.additionalPhotos ?? []
+            
+            // Create CKAsset objects from image data
+            for (index, imageData) in loadedImageDatas.enumerated() {
+                // Use Documents directory for temporary storage before CloudKit upload
+                guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    print("GridViewModel: Could not access Documents directory")
+                    continue
+                }
+                
+                let fileName = "temp_photo_\(UUID().uuidString).jpg"
+                let tempFileURL = documentsDir.appendingPathComponent(fileName)
+                
+                do {
+                    try imageData.write(to: tempFileURL)
+                    // Create CKAsset from the temporary file
+                    let photoAsset = CKAsset(fileURL: tempFileURL)
+                    updatedPhotoAssets.append(photoAsset)
+                    print("GridViewModel: Created CKAsset for photo \(index + 1): \(tempFileURL.lastPathComponent)")
+                } catch {
+                    print("GridViewModel: Error creating CKAsset for photo \(index + 1): \(error.localizedDescription)")
+                }
+            }
+            
+            self.currentUserProfile?.additionalPhotos = updatedPhotoAssets
+            print("GridViewModel: Updated additionalPhotos count: \(updatedPhotoAssets.count)")
+            
+            // Save the profile if it was modified
+            if var profileToSave = self.currentUserProfile {
+                // Save to CloudKit immediately to ensure persistence
+                self.proximityService.updateUserActivity(profileToSave) { [weak self] result in
+                    switch result {
+                    case .success(let savedProfile):
+                        print("GridViewModel: Successfully saved profile with photo assets to CloudKit")
+                        // Update with the saved profile to ensure consistency
+                        self?.currentUserProfile = savedProfile
+                    case .failure(let error):
+                        print("GridViewModel: Error saving profile with photo assets to CloudKit: \(error.localizedDescription)")
+                        print("GridViewModel: Photos will remain local until next successful save")
+                        // Don't overwrite the local profile - keep the photos locally until we can save to CloudKit
+                        // The photos will be retried on the next profile update
+                    }
+                }
+                print("GridViewModel: Initiated save of profile with new photo assets to CloudKit")
+            } else {
+                print("GridViewModel: currentUserProfile is nil, cannot save additional photos.")
+            }
+        }
+    }
+    
+    // Method to retry saving photos to CloudKit
+    func retrySavePhotosToCloudKit() {
+        guard let profile = currentUserProfile,
+              let photos = profile.additionalPhotos,
+              !photos.isEmpty else {
+            print("GridViewModel: No photos to retry saving")
+            return
+        }
+        
+        print("GridViewModel: Retrying save of \(photos.count) photos to CloudKit")
+        
+        proximityService.updateUserActivity(profile) { [weak self] result in
+            switch result {
+            case .success(let savedProfile):
+                print("GridViewModel: Successfully retried save of profile with photo assets to CloudKit")
+                self?.currentUserProfile = savedProfile
+            case .failure(let error):
+                print("GridViewModel: Retry failed - Error saving profile with photo assets to CloudKit: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    // Method to clean up duplicate userID records
+    // REMOVING THIS METHOD as ProximityService.cleanupDuplicateUserIDs was removed
+    /*
+    func cleanupDuplicateUserIDs() {
+        print("GridViewModel: Initiating cleanup of duplicate userID records...")
+        
+        proximityService.cleanupDuplicateUserIDs { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success():
+                    print("GridViewModel: Successfully completed duplicate userID cleanup")
+                    // After cleanup, refresh the grid to get clean data
+                    self?.refreshPublicGrid()
+                case .failure(let error):
+                    print("GridViewModel: Duplicate cleanup failed: \(error.localizedDescription)")
+                    // Continue anyway - the app should still work
+                    self?.refreshPublicGrid()
+                }
+            }
+        }
+    }
+    */
+    
+    // Enhanced app startup with cleanup
+    func handleAppStartupWithCleanup() {
+        print("GridViewModel: Starting app with duplicate cleanup...")
+        
+        // First, clean up any duplicate records
+        // cleanupDuplicateUserIDs()
+    }
+
+    func updateProfilePhotos(mainPhotoData: Data?, additionalPhotoAssets: [CKAsset], completion: @escaping (Bool) -> Void) {
+        guard currentUserProfile != nil else {
+            print("Cannot update photos, currentUserProfile is nil.")
+            completion(false)
+            return
+        }
+
+        var mainPhotoAsset: CKAsset? = currentUserProfile?.profileImage // Keep existing if no new main photo data
+        var tempMainPhotoURL: URL? // For cleanup if new main photo is processed
+
+        if let data = mainPhotoData {
+            // New main photo provided, process it
+            let tempDir = FileManager.default.temporaryDirectory
+            let fileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try data.write(to: fileURL)
+                mainPhotoAsset = CKAsset(fileURL: fileURL)
+                tempMainPhotoURL = fileURL // Keep track for cleanup
+                print("New main profile image processed. Temp file: \(fileURL.path)")
+            } catch {
+                print("Error creating CKAsset for new main profile image: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
+        } else if currentUserProfile?.profileImage != nil && mainPhotoData == nil {
+            // This condition implies the user might want to remove the main photo without setting a new one.
+            // If your UI allows this, set mainPhotoAsset to nil.
+            // For now, we assume if mainPhotoData is nil, we keep the existing or it was never set.
+            // If you add a "remove main photo" button, this logic would change:
+            // mainPhotoAsset = nil 
+        }
+
+        currentUserProfile?.profileImage = mainPhotoAsset
+        currentUserProfile?.additionalPhotos = additionalPhotoAssets
+
+        print("Profile photos updated locally. Persisting to CloudKit...")
+        
+        persistAndUpdateProfileAndGrid() { success in
+            if !success {
+                print("Failed to persist profile updates to CloudKit.")
+                // If saving to CloudKit failed, new temp files might need cleanup.
+                // The main tempMainPhotoURL is particularly important here.
+                if let url = tempMainPhotoURL {
+                    try? FileManager.default.removeItem(at: url)
+                    print("Cleaned up temporary main photo file after failed save: \(url.path)")
+                }
+                // Note: additionalPhotoAssets passed to this function are either existing (no new temp file) 
+                // or new (temp files created in EditProfilePhotoView). 
+                // EditProfilePhotoView is responsible for cleaning up its *newly created* temp files on failure from this callback.
+            }
+            completion(success)
+        }
+    }
+
+    func sendImageMessage(imageData: Data, to recipientDeviceID: String) {
+        guard let senderProfile = currentUserProfile else {
+            print("Error: Current user profile not available to send image message.")
+            return
+        }
+
+        let recipientProfile: UserProfile
+        if recipientDeviceID == senderProfile.deviceID {
+            recipientProfile = senderProfile
+        } else {
+            guard let foundProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
+                print("Error: Could not find recipient profile for device \(recipientDeviceID) to send image.")
+                return
+            }
+            recipientProfile = foundProfile
+        }
+
+        // 1. Create CKAsset from imageData
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+        var imageAsset: CKAsset?
+        do {
+            try imageData.write(to: tempFileURL)
+            imageAsset = CKAsset(fileURL: tempFileURL)
+        } catch {
+            print("Error creating CKAsset for image message: \(error.localizedDescription)")
+            // Optionally, inform the user that the image couldn't be prepared.
+            return
+        }
+
+        guard let finalImageAsset = imageAsset else {
+            print("Failed to create image asset, cannot send message.")
+            // Cleanup temp file if asset creation failed mid-way, though CKAsset init might not fail if URL is valid
+            try? FileManager.default.removeItem(at: tempFileURL)
+            return
+        }
+
+        // 2. Create optimistic message (text is empty for now)
+        let temporaryID = UUID().uuidString
+        let optimisticMessage = Message(
+            id: temporaryID,
+            senderDeviceID: senderProfile.deviceID,
+            recipientDeviceID: recipientDeviceID,
+            senderUserID: senderProfile.userID,
+            recipientUserID: recipientProfile.userID,
+            text: "", // Empty text for image messages, or you can add a placeholder like "[Image]"
+            timestamp: Date(),
+            status: .sending,
+            imageAsset: finalImageAsset // The optimistic asset (local temp file URL)
+        )
+
+        // 3. Add to local messages array immediately
+        self.messages.append(optimisticMessage)
+        self.messages.sort(by: { $0.timestamp < $1.timestamp })
+        print("GridViewModel: Optimistically added image message (TempID: \(temporaryID))")
+
+        // 4. Send to messaging service
+        messagingService.sendMessage(optimisticMessage) { [weak self] result in
+            guard let self = self else { 
+                // If self is nil, attempt to clean up the temp file if it still exists
+                try? FileManager.default.removeItem(at: tempFileURL)
+                return
+            }
+
+            guard let optimisticMessageIndex = self.messages.firstIndex(where: { $0.id == temporaryID && $0.status == .sending }) else {
+                print("GridViewModel: Could not find optimistic image message (TempID: \(temporaryID)) to update after send attempt.")
+                // If message not found, the temp file might be orphaned. Clean it up.
+                try? FileManager.default.removeItem(at: tempFileURL) 
+                return
+            }
+            
+            switch result {
+            case .success(let savedMessage):
+                // Server confirmed, update local message.
+                // The CKAsset in savedMessage now points to the CloudKit stored asset.
+                // The local temporary file should be cleaned up.
+                self.messages[optimisticMessageIndex].id = savedMessage.id
+                self.messages[optimisticMessageIndex].recordID = savedMessage.recordID
+                self.messages[optimisticMessageIndex].timestamp = savedMessage.timestamp
+                self.messages[optimisticMessageIndex].status = .sent
+                self.messages[optimisticMessageIndex].imageAsset = savedMessage.imageAsset // Update with server asset
+                print("GridViewModel: Optimistic image message (TempID: \(temporaryID)) confirmed. New ID: \(savedMessage.id)")
+                try? FileManager.default.removeItem(at: tempFileURL) // Cleanup successful upload
+                
+            case .failure(let error):
+                self.messages[optimisticMessageIndex].status = .failed
+                print("GridViewModel: Optimistic image message (TempID: \(temporaryID)) failed to send: \(error.localizedDescription)")
+                // Temp file cleanup for failed uploads might depend on retry strategy.
+                // For now, let's remove it. If retries are implemented, manage temp file lifecycle carefully.
+                try? FileManager.default.removeItem(at: tempFileURL)
+            }
+            self.messages.sort(by: { $0.timestamp < $1.timestamp })
+        }
+    }
+
+    func performFullAccountDeletion(completion: @escaping (Error?) -> Void) {
+        guard let userIDToDelete = currentUserProfile?.userID else {
+            print("GridViewModel: UserID not found, cannot perform account deletion.")
+            completion(NSError(domain: "AppError", code: -1, userInfo: [NSLocalizedDescriptionKey: "User ID not found."]))
+            return
+        }
+
+        print("GridViewModel: Starting full account deletion for userID: \(userIDToDelete)")
+        let publicDB = CKContainer.default().publicCloudDatabase
+        let dispatchGroup = DispatchGroup()
+        var encounteredError: Error? = nil
+
+        // 1. Delete UserProfile records
+        dispatchGroup.enter()
+        let userProfilePredicate = NSPredicate(format: "userID == %@", userIDToDelete)
+        let userProfileQuery = CKQuery(recordType: "UserProfiles", predicate: userProfilePredicate)
+        
+        fetchAndDeleteRecords(database: publicDB, query: userProfileQuery, recordTypeForLog: "UserProfiles") { error in
+            if let error = error {
+                print("GridViewModel: Error deleting UserProfile records: \(error.localizedDescription)")
+                encounteredError = encounteredError ?? error // Keep the first error
+            }
+            dispatchGroup.leave()
+        }
+
+        // 2. Delete sent Messages
+        dispatchGroup.enter()
+        let sentMessagesPredicate = NSPredicate(format: "senderUserID == %@", userIDToDelete)
+        let sentMessagesQuery = CKQuery(recordType: "Messages", predicate: sentMessagesPredicate)
+        
+        fetchAndDeleteRecords(database: publicDB, query: sentMessagesQuery, recordTypeForLog: "Sent Messages") { error in
+            if let error = error {
+                print("GridViewModel: Error deleting sent Message records: \(error.localizedDescription)")
+                encounteredError = encounteredError ?? error
+            }
+            dispatchGroup.leave()
+        }
+
+        // 3. Delete received Messages (where this user was the recipient)
+        dispatchGroup.enter()
+        let receivedMessagesPredicate = NSPredicate(format: "recipientUserID == %@", userIDToDelete)
+        let receivedMessagesQuery = CKQuery(recordType: "Messages", predicate: receivedMessagesPredicate)
+        
+        fetchAndDeleteRecords(database: publicDB, query: receivedMessagesQuery, recordTypeForLog: "Received Messages") { error in
+            if let error = error {
+                print("GridViewModel: Error deleting received Message records: \(error.localizedDescription)")
+                encounteredError = encounteredError ?? error
+            }
+            dispatchGroup.leave()
+        }
+
+        // Notify when all deletion tasks are complete
+        dispatchGroup.notify(queue: .main) {
+            if encounteredError == nil {
+                print("GridViewModel: Successfully deleted all records associated with userID: \(userIDToDelete)")
+            }
+            completion(encounteredError)
+        }
+    }
+
+    private func fetchAndDeleteRecords(database: CKDatabase, query: CKQuery, recordTypeForLog: String, completion: @escaping (Error?) -> Void) {
+        var recordIDsToDelete: [CKRecord.ID] = []
+        var cursor: CKQueryOperation.Cursor? = nil // Initialize cursor to nil
+
+        func fetchNextBatch() {
+            let operation: CKQueryOperation
+            if let currentCursor = cursor {
+                operation = CKQueryOperation(cursor: currentCursor)
+            } else {
+                operation = CKQueryOperation(query: query)
+            }
+            operation.resultsLimit = CKQueryOperation.maximumResults // Fetch max allowed
+
+            operation.recordFetchedBlock = { record in
+                recordIDsToDelete.append(record.recordID)
+            }
+
+            operation.queryCompletionBlock = { [weak self] opCursor, error in
+                if let error = error {
+                    print("GridViewModel: Error fetching \(recordTypeForLog) for deletion: \(error.localizedDescription)")
+                    completion(error)
+                    return
+                }
+                cursor = opCursor
+                if opCursor != nil {
+                    // More records to fetch
+                    fetchNextBatch()
+                } else {
+                    // All records fetched, proceed to delete
+                    self?.deleteRecords(database: database, recordIDs: recordIDsToDelete, recordTypeForLog: recordTypeForLog, completion: completion)
+                }
+            }
+            database.add(operation)
+        }
+        fetchNextBatch() // Start fetching the first batch
+    }
+
+    private func deleteRecords(database: CKDatabase, recordIDs: [CKRecord.ID], recordTypeForLog: String, completion: @escaping (Error?) -> Void) {
+        if recordIDs.isEmpty {
+            print("GridViewModel: No \(recordTypeForLog) records found to delete.")
+            completion(nil)
+            return
+        }
+
+        print("GridViewModel: Attempting to delete \(recordIDs.count) \(recordTypeForLog) records.")
+        let operation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: recordIDs)
+        operation.isAtomic = false // Try to delete as many as possible, even if some fail
+
+        operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
+            if let error = error {
+                print("GridViewModel: Error during batch deletion of \(recordTypeForLog): \(error.localizedDescription)")
+                // Check for partial failures
+                if let ckError = error as? CKError, ckError.code == .partialFailure {
+                    if let partialErrors = ckError.partialErrorsByItemID {
+                        for (key, partialError) in partialErrors {
+                            if let recordID = key as? CKRecord.ID {
+                                print("GridViewModel: Error deleting record \(recordID.recordName): \(partialError.localizedDescription)")
+                            } else {
+                                print("GridViewModel: Error deleting a record (ID not CKRecord.ID): \(partialError.localizedDescription)")
+                            }
+                        }
+                    }
+                    // Even with partial failure, we might consider the overall operation as 'handled'
+                    // depending on how critical individual deletions are. For now, pass the main error.
+                }
+                completion(error)
+            } else {
+                print("GridViewModel: Successfully deleted \(deletedRecordIDs?.count ?? 0) \(recordTypeForLog) records.")
+                completion(nil)
+            }
+        }
+        database.add(operation)
     }
 }

@@ -17,6 +17,7 @@ class ImageLoader: ObservableObject {
     @Published var errorMessage: String? = nil
 
     private var currentAsset: CKAsset?
+    private var imageLoadingTask: Task<Void, Never>? // Store the task to allow cancellation
 
     func loadImage(from asset: CKAsset?) {
         guard let asset = asset else {
@@ -31,7 +32,10 @@ class ImageLoader: ObservableObject {
         self.currentAsset = asset
         self.errorMessage = nil
 
-        Task {
+        // Cancel any existing task before starting a new one
+        imageLoadingTask?.cancel()
+
+        imageLoadingTask = Task {
             do {
                 var validFileURL: URL?
                 
@@ -96,6 +100,13 @@ class ImageLoader: ObservableObject {
                 }
             }
         }
+    }
+
+    func cancel() {
+        imageLoadingTask?.cancel()
+        isLoading = false // Optionally reset loading state
+        // currentAsset = nil // Optionally clear current asset
+        print("ImageLoader: Cancelled image loading task.")
     }
 }
 
@@ -318,66 +329,122 @@ struct EditProfilePhotoView: View {
     @State private var errorMessage: String? = nil
     @Environment(\.dismiss) var dismiss
 
-    // To display the current image
     @StateObject private var currentImageLoader = ImageLoader()
+    @State private var additionalImageLoaders: [ImageLoader] = [] // Changed from @StateObject
+    @State private var existingAdditionalPhotoAssets: [CKAsset] = []
+
+    // For new photo selections
+    @State private var newSelectedPhotoItems: [PhotosPickerItem] = []
+    @State private var newSelectedPhotoDataArray: [Data] = []
 
     var body: some View {
         NavigationView {
             Form {
-                VStack(alignment: .center) {
-                    Text("Current Photo:")
+                VStack(spacing: 20) {
+                    Text("Main Profile Photo").font(.headline)
+                    // Current main profile photo display
                     Group {
                         if currentImageLoader.isLoading {
                             ProgressView().frame(width: 150, height: 150)
-                        } else if let currentImage = currentImageLoader.image {
-                            currentImage.resizable().scaledToFit().frame(width: 150, height: 150).clipShape(Circle())
+                        } else if let loadedImage = currentImageLoader.image {
+                            loadedImage
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 150, height: 150)
+                                .clipShape(Circle())
                         } else {
-                            Image(systemName: "person.circle.fill").resizable().scaledToFit().frame(width: 150, height: 150).foregroundColor(.gray)
+                            Circle().fill(Color.secondary.opacity(0.3)).frame(width: 150, height: 150)
+                                .overlay(Image(systemName: "person.fill").resizable().scaledToFit().frame(width: 75).foregroundColor(.gray))
                         }
                     }
-                    .padding(.bottom)
 
-                    Text("New Photo Selection:")
-                    #if canImport(UIKit)
-                    if let selectedPhotoData, let uiImage = UIImage(data: selectedPhotoData) {
-                        Image(uiImage: uiImage).resizable().scaledToFit().frame(width: 150, height: 150).clipShape(Circle()).padding(.bottom)
-                    } else {
-                         Image(systemName: "photo.on.rectangle.angled").resizable().scaledToFit().frame(width:100, height:100).foregroundColor(.gray).padding(.bottom)
-                    }
-                    #else
-                    if let selectedPhotoData, let nsImage = NSImage(data: selectedPhotoData) {
-                        Image(nsImage: nsImage).resizable().scaledToFit().frame(width: 150, height: 150).clipShape(Circle()).padding(.bottom)
-                    } else {
-                         Image(systemName: "photo.on.rectangle.angled").resizable().scaledToFit().frame(width:100, height:100).foregroundColor(.gray).padding(.bottom)
-                    }
-                    #endif
-                    
+                    // Picker for new MAIN photo (singular)
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
-                        Text(selectedPhotoItem == nil ? "Select New Photo" : "Change Selection")
+                        Text(selectedPhotoData != nil ? "Change Main Photo" : "Select Main Photo")
                     }
                     .onChange(of: selectedPhotoItem) { newItem in
                         Task {
-                            guard let item = newItem else {
-                                self.selectedPhotoData = nil
+                            if let item = newItem, let data = try? await item.loadTransferable(type: Data.self) {
+                                self.selectedPhotoData = data // This is for the main profile image
                                 self.errorMessage = nil
-                                return
-                            }
-
-                            do {
-                                if let data = try await item.loadTransferable(type: Data.self) {
-                                    self.selectedPhotoData = data
-                                    self.errorMessage = nil
-                                } else {
-                                    print("Photo data is nil but no error thrown by loadTransferable.")
-                                    self.selectedPhotoData = nil
-                                    self.errorMessage = "Could not retrieve image data. Please select a valid image."
-                                }
-                            } catch {
-                                print("Failed to load photo data: \(error.localizedDescription)")
+                            } else {
                                 self.selectedPhotoData = nil
-                                self.errorMessage = "Failed to load image: \(error.localizedDescription)"
+                                // Optionally show an error if loading the main photo fails
                             }
                         }
+                    }
+                    
+                    Divider()
+                    
+                    Text("Additional Photos (up to 9)").font(.headline)
+                    
+                    // Display existing additional photos
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack {
+                            ForEach(Array(zip(additionalImageLoaders.indices, additionalImageLoaders)), id: \.0) { index, loader in
+                                ZStack(alignment: .topTrailing) {
+                                    if loader.isLoading { ProgressView().frame(width: 100, height: 100) }
+                                    else if let img = loader.image {
+                                        img.resizable().scaledToFill().frame(width: 100, height: 100).clipShape(RoundedRectangle(cornerRadius: 8))
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.2)).frame(width: 100, height: 100)
+                                            .overlay(Image(systemName: "photo").foregroundColor(.gray))
+                                    }
+                                    Button(action: { removeAdditionalPhoto(at: index) }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.red)
+                                            .background(Circle().fill(Color.white))
+                                    }
+                                    .padding(4)
+                                }
+                                .padding(.trailing, 5)
+                            }
+                        }
+                    }
+                    .frame(height: 110)
+
+                    // Picker for ADDING NEW additional photos
+                    if (existingAdditionalPhotoAssets.count + newSelectedPhotoDataArray.count) < 9 {
+                        PhotosPicker(
+                            selection: $newSelectedPhotoItems,
+                            maxSelectionCount: 9 - (existingAdditionalPhotoAssets.count + newSelectedPhotoDataArray.count), // Limit to remaining slots
+                            matching: .images,
+                            photoLibrary: .shared()
+                        ) {
+                            Text("Add More Photos")
+                        }
+                        .onChange(of: newSelectedPhotoItems) { items in
+                            Task {
+                                // Append new data, don't replace existing newSelectedPhotoDataArray entirely unless intended
+                                for item in items {
+                                    if let data = try? await item.loadTransferable(type: Data.self) {
+                                        if !newSelectedPhotoDataArray.contains(data) { // Avoid duplicates if re-picking
+                                           newSelectedPhotoDataArray.append(data)
+                                        }
+                                    } else {
+                                        print("Failed to load data for an additional photo item.")
+                                    }
+                                }
+                                // Clear the picker selection to allow picking more or the same items again if needed
+                                newSelectedPhotoItems = [] 
+                            }
+                        }
+                    }
+                    
+                    // Display newly selected additional photos (not yet saved)
+                    if !newSelectedPhotoDataArray.isEmpty {
+                        Text("New photos to add:").font(.caption)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack {
+                                ForEach(newSelectedPhotoDataArray, id: \.self) { data in
+                                    if let uiImage = UIImage(data: data) {
+                                        Image(uiImage: uiImage).resizable().scaledToFill().frame(width: 70, height: 70).clipShape(RoundedRectangle(cornerRadius: 8))
+                                            .padding(.trailing, 5)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: 80)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -402,22 +469,81 @@ struct EditProfilePhotoView: View {
                 currentImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
                 selectedPhotoItem = nil 
                 selectedPhotoData = nil
+                
+                // Load existing additional photos
+                existingAdditionalPhotoAssets = viewModel.currentUserProfile?.additionalPhotos ?? [] // Renamed field
+                additionalImageLoaders.forEach { $0.cancel() } // Cancel any ongoing loads
+                additionalImageLoaders = existingAdditionalPhotoAssets.map { asset in
+                    let loader = ImageLoader()
+                    loader.loadImage(from: asset)
+                    return loader
+                }
+                newSelectedPhotoItems = []
+                newSelectedPhotoDataArray = []
             }
         }
     }
 
+    private func removeAdditionalPhoto(at index: Int) {
+        guard index < existingAdditionalPhotoAssets.count else { return }
+        existingAdditionalPhotoAssets.remove(at: index)
+        // also remove the corresponding loader
+        additionalImageLoaders.remove(at: index)
+        // The UI will update automatically. The actual deletion from CloudKit will happen on save.
+    }
+
     private func saveProfilePhoto() {
-        guard let photoData = selectedPhotoData else {
-            errorMessage = "No new photo selected."
-            return
-        }
+        // This function now needs to handle:
+        // 1. A potentially new main profile image (selectedPhotoData).
+        // 2. An updated list of additional photos (from existingAdditionalPhotoAssets and newSelectedPhotoDataArray).
         isSaving = true
         errorMessage = nil
-        viewModel.updateCurrentProfileImage(newPhotoData: photoData) 
+
+        var finalAdditionalPhotoAssets: [CKAsset] = existingAdditionalPhotoAssets
+        var tempNewAssetFileURLs: [URL] = []
+
+        // Convert new additional photo data to CKAssets
+        for photoData in newSelectedPhotoDataArray {
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try photoData.write(to: tempFileURL)
+                finalAdditionalPhotoAssets.append(CKAsset(fileURL: tempFileURL))
+                tempNewAssetFileURLs.append(tempFileURL)
+            } catch {
+                print("Error writing new additional photo data to temp file: \(error.localizedDescription)")
+                errorMessage = "Could not process one of the new additional photos."
+                isSaving = false
+                // Clean up any temp files created in this loop so far
+                for url in tempNewAssetFileURLs {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                return
+            }
+        }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            isSaving = false
-            dismiss()
+        // Limit to 9 additional photos (as per earlier logic, could be 10 based on total)
+        if finalAdditionalPhotoAssets.count > 9 {
+            // This case should ideally be prevented by the UI, but as a safeguard:
+            finalAdditionalPhotoAssets = Array(finalAdditionalPhotoAssets.prefix(9))
+            // Note: Temp files for truncated assets won't be cleaned up here unless managed carefully.
+            // Best to ensure UI prevents >9 additional photos from being staged.
+        }
+
+        viewModel.updateProfilePhotos(mainPhotoData: selectedPhotoData, additionalPhotoAssets: finalAdditionalPhotoAssets) { success in
+            DispatchQueue.main.async {
+                isSaving = false
+                if success {
+                    dismiss()
+                } else {
+                    errorMessage = "Failed to save photos. Please try again."
+                    // viewModel should handle cleanup of its own temp files on failure.
+                    // Cleanup temp files created in *this* view for *new* assets if viewModel doesn't take ownership or on failure
+                    for url in tempNewAssetFileURLs {
+                         try? FileManager.default.removeItem(at: url)
+                    }
+                }
+            }
         }
     }
 }
@@ -425,7 +551,10 @@ struct EditProfilePhotoView: View {
 struct GridView_Previews: PreviewProvider {
     static var previews: some View {
         let mockViewModel = GridViewModel()
-        let dummyProfile = UserProfile(userID: "previewUser123", profileImage: nil)
+        let dummyProfile = UserProfile(userID: "previewUser123", 
+                                       deviceID: "previewDeviceID_789", 
+                                       deviceName: "Preview Device", 
+                                       profileImage: nil)
         mockViewModel.setCurrentUserProfile(dummyProfile)
         
         if !mockViewModel.gridNodes.isEmpty && !mockViewModel.gridNodes[0].isEmpty {
