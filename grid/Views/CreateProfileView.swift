@@ -120,6 +120,7 @@ struct CreateProfileView: View {
                 }
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 
     private func saveProfile() {

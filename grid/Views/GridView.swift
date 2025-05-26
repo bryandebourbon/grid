@@ -307,6 +307,7 @@ struct GridView: View {
                 NavigationView {
                     ChatView(viewModel: viewModel, recipientDeviceID: recipient.id)
                 }
+                .navigationViewStyle(StackNavigationViewStyle())
             }
             .sheet(item: $selectedUserProfileForCard) { profileUser in // NEW: Sheet for Profile Card
                 // Placeholder for ProfileCardView - will be created next
@@ -320,6 +321,7 @@ struct GridView: View {
                 Text("Are you sure you want to delete your account? This action cannot be undone.")
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle()) // Force single column navigation on iPad
         .overlay(
             // Profile overlay that appears on long press
             Group {
@@ -583,6 +585,7 @@ struct ConversationsListView: View {
                 }
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 
@@ -974,6 +977,7 @@ struct ProfileCardView: View {
                 bioText = isCurrentUserProfile ? (viewModel.currentUserProfile?.bio ?? "") : (userProfile.bio ?? "")
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
     
     // MARK: - Photo Management Functions
