@@ -180,6 +180,11 @@ struct GridView: View {
                                         viewModel.chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
                                     }
                                 )
+                                .transition(.asymmetric(
+                                    insertion: .scale.combined(with: .opacity),
+                                    removal: .scale.combined(with: .opacity)
+                                ))
+                                .animation(.easeInOut(duration: 0.3), value: viewModel.showingStarredOnly)
                             }
                         }
                         .padding()
@@ -250,6 +255,19 @@ struct GridView: View {
                 viewModel.handleGridAppeared()
             }
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    // Star filter button
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            viewModel.showingStarredOnly.toggle()
+                        }
+                    }) {
+                        Image(systemName: viewModel.showingStarredOnly ? "star.fill" : "star")
+                            .font(.body)
+                            .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button(action: { showingConversationsList = true }) {
@@ -393,9 +411,20 @@ struct GridNodeView: View {
             // Distance and status overlays
             if let profile = node.userProfile {
                 VStack {
-                    // Top right: Unread message badge
+                    // Top: Badges (star and unread messages)
                     HStack {
+                        // Star indicator on top left
+                        if viewModel.isStarred(profile.deviceID) {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.yellow)
+                                .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 20, height: 20))
+                                .padding(4)
+                        }
+                        
                         Spacer()
+                        
+                        // Unread message badge on top right
                         let unreadCount = viewModel.getUnreadMessageCount(from: profile.deviceID)
                         if unreadCount > 0 {
                             Text("\(unreadCount)")
@@ -414,24 +443,33 @@ struct GridNodeView: View {
                     
                     Spacer()
                     
-                    // Bottom overlay: Distance only (simplified)
-                    if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
-                       profile.deviceID == currentUserDeviceID {
-                        // "Me" label for current user
-                        Text("Me")
-                            .font(.system(size: 8))
-                            .foregroundColor(.white)
-                    } else {
-                        // Just show distance for other users
-                        if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
-                            Text(distanceString)
+                    // Bottom overlay: Distance and status indicators
+                    HStack {
+                        // Block indicator on bottom left
+                        if viewModel.isBlocked(profile.deviceID) {
+                            Image(systemName: "nosign")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.red)
+                                .background(Circle().fill(Color.white).frame(width: 16, height: 16))
+                                .padding(4)
+                        }
+                        
+                        Spacer()
+                        
+                        // Distance on bottom right
+                        if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
+                           profile.deviceID == currentUserDeviceID {
+                            // "Me" label for current user
+                            Text("Me")
                                 .font(.system(size: 8))
                                 .foregroundColor(.white)
-                                // .padding(.horizontal, 8)
-                                // .padding(.vertical, 4)
-                                // .background(Color.black.opacity(0.7))
-                                // .cornerRadius(6)
-                                // .padding(.bottom, 4)
+                        } else {
+                            // Just show distance for other users
+                            if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
+                                Text(distanceString)
+                                    .font(.system(size: 8))
+                                    .foregroundColor(.white)
+                            }
                         }
                     }
                 }
@@ -458,12 +496,23 @@ struct GridNodeView: View {
         // Single tap gesture for chat
         .onTapGesture {
             if let userProfile = node.userProfile {
-                let messagingStatus = viewModel.canMessageUser(deviceID: userProfile.deviceID)
-                if messagingStatus.allowed || userProfile.deviceID == viewModel.currentUserProfile?.deviceID {
-                    onChatTapped(userProfile.deviceID)
+                // If blocked, show profile instead of trying to chat
+                if viewModel.isBlocked(userProfile.deviceID) {
+                    // Haptic feedback
+                    #if os(iOS)
+                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                    impactFeedback.impactOccurred()
+                    #endif
+                    
+                    onProfileTapped(userProfile)
                 } else {
-                    print("Cannot message user: \(messagingStatus.reason)")
-                    // Optionally show an alert here
+                    let messagingStatus = viewModel.canMessageUser(deviceID: userProfile.deviceID)
+                    if messagingStatus.allowed || userProfile.deviceID == viewModel.currentUserProfile?.deviceID {
+                        onChatTapped(userProfile.deviceID)
+                    } else {
+                        print("Cannot message user: \(messagingStatus.reason)")
+                        // Optionally show an alert here
+                    }
                 }
             }
         }
@@ -679,18 +728,60 @@ struct ProfileOverlayView: View {
                 }
                 .padding(.horizontal)
                 
-                // Chat button
-                Button(action: onChat) {
-                    HStack {
-                        Image(systemName: "message.fill")
-                        Text(isCurrentUser ? "My Notes" : "Chat")
+                // Action buttons
+                HStack(spacing: 16) {
+                    // Star button
+                    if !isCurrentUser {
+                        Button(action: {
+                            viewModel.toggleStar(for: userProfile.deviceID)
+                        }) {
+                            VStack {
+                                Image(systemName: viewModel.isStarred(userProfile.deviceID) ? "star.fill" : "star")
+                                    .font(.title2)
+                                    .foregroundColor(viewModel.isStarred(userProfile.deviceID) ? .yellow : .gray)
+                                Text(viewModel.isStarred(userProfile.deviceID) ? "Starred" : "Star")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                            }
+                            .frame(width: 60, height: 60)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(10)
+                        }
                     }
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: 200)
-                    .padding()
-                    .background(Color.blue)
-                    .cornerRadius(10)
+                    
+                    // Chat button
+                    Button(action: onChat) {
+                        VStack {
+                            Image(systemName: "message.fill")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                            Text(isCurrentUser ? "Notes" : "Chat")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                        }
+                        .frame(width: 60, height: 60)
+                        .background(Color.blue)
+                        .cornerRadius(10)
+                    }
+                    
+                    // Block button
+                    if !isCurrentUser {
+                        Button(action: {
+                            viewModel.toggleBlock(for: userProfile.deviceID)
+                        }) {
+                            VStack {
+                                Image(systemName: viewModel.isBlocked(userProfile.deviceID) ? "nosign" : "hand.raised")
+                                    .font(.title2)
+                                    .foregroundColor(viewModel.isBlocked(userProfile.deviceID) ? .red : .gray)
+                                Text(viewModel.isBlocked(userProfile.deviceID) ? "Blocked" : "Block")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                            }
+                            .frame(width: 60, height: 60)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(10)
+                        }
+                    }
                 }
                 .padding(.top)
             }
@@ -840,6 +931,16 @@ struct ProfileCardView: View {
                     Button("Close") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    // Star button
+                    if !isCurrentUserProfile {
+                        Button(action: {
+                            viewModel.toggleStar(for: userProfile.deviceID)
+                        }) {
+                            Image(systemName: viewModel.isStarred(userProfile.deviceID) ? "star.fill" : "star")
+                                .foregroundColor(viewModel.isStarred(userProfile.deviceID) ? .yellow : .primary)
+                        }
+                    }
+                    
                     // Chat Button
                     if !isCurrentUserProfile {
                         Button("Chat") {
@@ -850,6 +951,20 @@ struct ProfileCardView: View {
                         Button("My Notes") {
                             dismiss()
                             viewModel.chatRecipientToPresent = ChatRecipient(id: userProfile.deviceID)
+                        }
+                    }
+                    
+                    // Block button
+                    if !isCurrentUserProfile {
+                        Menu {
+                            Button(action: {
+                                viewModel.toggleBlock(for: userProfile.deviceID)
+                            }) {
+                                Label(viewModel.isBlocked(userProfile.deviceID) ? "Unblock" : "Block", 
+                                      systemImage: viewModel.isBlocked(userProfile.deviceID) ? "nosign" : "hand.raised")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
                         }
                     }
                 }

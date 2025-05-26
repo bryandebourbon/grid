@@ -32,9 +32,20 @@ class GridViewModel: ObservableObject {
     @Published var locationPermissionStatus: String = "Location permission not requested"
     @Published var chatRecipientToPresent: ChatRecipient?
     @Published var pendingChatNavigationDeviceID: String? = nil // For deferred navigation
+    @Published var showingStarredOnly: Bool = false { // Toggle for showing only starred users
+        didSet {
+            // Refresh the grid when filter changes
+            let profiles = proximityService.activeNearbyProfiles
+            updateGridWithAllProfiles(profiles)
+        }
+    }
     
     // Track read receipts
     private var readReceipts: Set<String> = [] // Set of messageIDs that have been read
+    
+    // Track star and block relationships
+    private var starredUsers: Set<String> = [] // Set of userIDs that are starred
+    private var blockedUsers: Set<String> = [] // Set of userIDs that are blocked
 
     private var messagingService: MessagingService
     private var gridService: GridService // For public grid management (legacy)
@@ -242,6 +253,13 @@ class GridViewModel: ObservableObject {
             }
         }
         
+        // Filter profiles if showing starred only
+        if showingStarredOnly {
+            otherProfiles = otherProfiles.filter { profile in
+                starredUsers.contains(profile.userID)
+            }
+        }
+        
         // Place current user first at position (0, 0)
         if let currentProfile = currentUserProfile {
             gridNodes[0][0].userProfile = currentProfile
@@ -253,7 +271,8 @@ class GridViewModel: ObservableObject {
             placeProfileOnGridSkippingPosition(profile, skipX: 0, skipY: 0)
         }
         
-        print("Updated grid with \(profiles.count) total users (current user at top-left)")
+        let filterStatus = showingStarredOnly ? " (starred only)" : ""
+        print("Updated grid with \(otherProfiles.count + 1) total users\(filterStatus) (current user at top-left)")
         objectWillChange.send()
     }
     
@@ -369,14 +388,20 @@ class GridViewModel: ObservableObject {
         placeCurrentUserOnGrid()
         print("GridViewModel: Set current user profile for device ID \(profile.deviceID) (user: \(profile.userID))")
         
-        // Load read receipts FIRST, then load messages
-        print("GridViewModel: Loading read receipts...")
-        loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+        // Load star/block relationships first
+        print("GridViewModel: Loading star/block relationships...")
+        loadStarBlockRelationships(forUserID: profile.userID) { [weak self] in
             guard let self = self else { return }
             
-            // After read receipts are loaded, fetch messages
-            print("GridViewModel: Preloading all messages for instant chat access...")
-            self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+            // Load read receipts after star/block
+            print("GridViewModel: Loading read receipts...")
+            self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+                guard let self = self else { return }
+                
+                // After read receipts are loaded, fetch messages
+                print("GridViewModel: Preloading all messages for instant chat access...")
+                self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+            }
         }
         
         // Subscribe to message changes immediately
@@ -737,6 +762,52 @@ class GridViewModel: ObservableObject {
         }
     }
     
+    // NEW: Load star/block relationships from CloudKit
+    private func loadStarBlockRelationships(forUserID userID: String, completion: @escaping () -> Void = {}) {
+        let publicDB = CKContainer.default().publicCloudDatabase
+        let predicate = NSPredicate(format: "userID == %@", userID)
+        let query = CKQuery(recordType: "UserRelationships", predicate: predicate)
+        
+        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
+            DispatchQueue.main.async {
+                guard let self = self else {
+                    completion()
+                    return
+                }
+                
+                if let error = error {
+                    print("Error loading star/block relationships: \(error.localizedDescription)")
+                    completion()
+                    return
+                }
+                
+                if let records = records {
+                    // Clear existing and load fresh from CloudKit
+                    self.starredUsers.removeAll()
+                    self.blockedUsers.removeAll()
+                    
+                    for record in records {
+                        if let relationship = UserRelationship(record: record) {
+                            switch relationship.actionType {
+                            case .star:
+                                self.starredUsers.insert(relationship.targetUserID)
+                            case .block:
+                                self.blockedUsers.insert(relationship.targetUserID)
+                            }
+                        }
+                    }
+                    
+                    print("Loaded \(self.starredUsers.count) starred users and \(self.blockedUsers.count) blocked users from CloudKit")
+                    
+                    // Trigger UI update
+                    self.objectWillChange.send()
+                }
+                
+                completion()
+            }
+        }
+    }
+    
     // NEW: Load read receipts from CloudKit
     private func loadReadReceipts(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
         let publicDB = CKContainer.default().publicCloudDatabase
@@ -783,6 +854,108 @@ class GridViewModel: ObservableObject {
                 completion()
             }
         }
+    }
+    
+    // NEW: Star/unstar a user
+    func toggleStar(for deviceID: String) {
+        guard let currentUserID = currentUserProfile?.userID,
+              let targetUserID = getUserID(forDeviceID: deviceID) else { return }
+        
+        if starredUsers.contains(targetUserID) {
+            // Unstar
+            starredUsers.remove(targetUserID)
+            deleteStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
+        } else {
+            // Star
+            starredUsers.insert(targetUserID)
+            saveStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
+        }
+        
+        // Refresh the grid if we're in starred-only mode
+        if showingStarredOnly {
+            let profiles = proximityService.activeNearbyProfiles
+            updateGridWithAllProfiles(profiles)
+        }
+        
+        objectWillChange.send()
+    }
+    
+    // NEW: Block/unblock a user
+    func toggleBlock(for deviceID: String) {
+        guard let currentUserID = currentUserProfile?.userID,
+              let targetUserID = getUserID(forDeviceID: deviceID) else { return }
+        
+        if blockedUsers.contains(targetUserID) {
+            // Unblock
+            blockedUsers.remove(targetUserID)
+            deleteStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .block)
+        } else {
+            // Block
+            blockedUsers.insert(targetUserID)
+            saveStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .block)
+        }
+        
+        objectWillChange.send()
+    }
+    
+    // Helper to save star/block record to CloudKit
+    private func saveStarBlockRecord(userID: String, targetUserID: String, actionType: UserRelationship.ActionType) {
+        let relationship = UserRelationship(userID: userID, targetUserID: targetUserID, actionType: actionType)
+        let record = relationship.toCKRecord()
+        
+        let publicDB = CKContainer.default().publicCloudDatabase
+        publicDB.save(record) { savedRecord, error in
+            if let error = error {
+                print("Error saving \(actionType.rawValue) relationship: \(error.localizedDescription)")
+            } else {
+                print("Successfully saved \(actionType.rawValue) relationship for user: \(targetUserID)")
+            }
+        }
+    }
+    
+    // Helper to delete star/block record from CloudKit
+    private func deleteStarBlockRecord(userID: String, targetUserID: String, actionType: UserRelationship.ActionType) {
+        let recordID = CKRecord.ID(recordName: "\(userID)_\(targetUserID)_\(actionType.rawValue)")
+        
+        let publicDB = CKContainer.default().publicCloudDatabase
+        publicDB.delete(withRecordID: recordID) { deletedRecordID, error in
+            if let error = error {
+                print("Error deleting \(actionType.rawValue) relationship: \(error.localizedDescription)")
+            } else {
+                print("Successfully deleted \(actionType.rawValue) relationship for user: \(targetUserID)")
+            }
+        }
+    }
+    
+    // Helper to get userID from deviceID
+    private func getUserID(forDeviceID deviceID: String) -> String? {
+        // Check current user first
+        if let currentProfile = currentUserProfile, currentProfile.deviceID == deviceID {
+            return currentProfile.userID
+        }
+        
+        // Check grid nodes
+        for row in gridNodes {
+            for node in row {
+                if let profile = node.userProfile, profile.deviceID == deviceID {
+                    return profile.userID
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    // Check if a user is starred (by deviceID)
+    func isStarred(_ deviceID: String) -> Bool {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return false }
+        return starredUsers.contains(userID)
+    }
+    
+    // Check if a user is blocked (by deviceID)
+    func isBlocked(_ deviceID: String) -> Bool {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return false }
+        return blockedUsers.contains(userID)
     }
     
     // NEW: Check if sender is in grid, if not fetch their profile and add them
@@ -875,6 +1048,13 @@ class GridViewModel: ObservableObject {
               let targetProfile = findNode(forDeviceID: deviceID)?.userProfile else {
             return (false, "Profile not found")
         }
+        
+        // Check if the user is blocked (checks by userID)
+        if isBlocked(deviceID) {
+            return (false, "You have blocked this user")
+        }
+        
+        // Check proximity-based messaging rules
         return proximityService.canMessage(from: currentProfile, to: targetProfile)
     }
 
