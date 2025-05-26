@@ -41,6 +41,7 @@ struct ChatView: View {
                             ForEach(chatMessages) { message in
                                 MessageRow(message: message, isCurrentDeviceSender: message.senderDeviceID == currentDeviceID)
                                     .id(message.id) // For ScrollViewReader
+                                    .environmentObject(viewModel)
                             }
                         }
                     }
@@ -151,6 +152,16 @@ struct MessageRow: View {
     let message: Message
     let isCurrentDeviceSender: Bool
     @StateObject private var imageLoader = ImageLoader() // For loading CKAsset images
+    @EnvironmentObject var viewModel: GridViewModel // To access decryption
+    
+    // Decrypt message text if needed
+    private var displayText: String {
+        if message.isEncrypted {
+            return viewModel.decryptMessage(message)
+        } else {
+            return message.text
+        }
+    }
     
     var body: some View {
         HStack {
@@ -159,6 +170,18 @@ struct MessageRow: View {
             }
             
             VStack(alignment: isCurrentDeviceSender ? .trailing : .leading, spacing: 2) { // Added spacing
+                // Encryption indicator
+                if message.isEncrypted {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        Text("Encrypted")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                    }
+                }
+                
                 if let imageAsset = message.imageAsset {
                     // Display image if present
                     if imageLoader.isLoading {
@@ -179,9 +202,9 @@ struct MessageRow: View {
                             .cornerRadius(10)
                             .overlay(Text("Error loading image").font(.caption))
                     }
-                } else if !message.text.isEmpty {
+                } else if !displayText.isEmpty {
                     // Display text if no image and text is not empty
-                    Text(message.text)
+                    Text(displayText)
                         .padding(10)
                         .background(isCurrentDeviceSender ? Color.blue.opacity(0.7) : Color.gray.opacity(0.3))
                         .foregroundColor(isCurrentDeviceSender ? .white : .primary)

@@ -163,6 +163,24 @@ struct GridView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                // Encryption mode indicator
+                if viewModel.isEncryptionMode {
+                    HStack {
+                        Image(systemName: "lock.fill")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                        Text("Secure Mode - Only showing encrypted devices")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 12)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+                }
+                
                 if let profile = viewModel.currentUserProfile {
                     ScrollView {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: gridColumns), spacing: 2) {
@@ -256,15 +274,38 @@ struct GridView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    // Star filter button
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            viewModel.showingStarredOnly.toggle()
+                    HStack(spacing: 16) {
+                        // Star filter button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                viewModel.showingStarredOnly.toggle()
+                            }
+                        }) {
+                            Image(systemName: viewModel.showingStarredOnly ? "star.fill" : "star")
+                                .font(.body)
+                                .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
                         }
-                    }) {
-                        Image(systemName: viewModel.showingStarredOnly ? "star.fill" : "star")
-                            .font(.body)
-                            .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
+                        
+                        // Encryption mode button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                viewModel.isEncryptionMode.toggle()
+                            }
+                        }) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: viewModel.isEncryptionMode ? "lock.fill" : "lock.open")
+                                    .font(.body)
+                                    .foregroundColor(viewModel.isEncryptionMode ? .green : .primary)
+                                
+                                // Red dot for unread encrypted messages
+                                if !viewModel.isEncryptionMode && viewModel.hasUnreadEncryptedMessages() {
+                                    Circle()
+                                        .fill(Color.red)
+                                        .frame(width: 8, height: 8)
+                                        .offset(x: 4, y: -4)
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -425,6 +466,15 @@ struct GridNodeView: View {
                         }
                         
                         Spacer()
+                        
+                        // Encryption indicator
+                        if viewModel.getEncryptionProfile(for: profile.deviceID) != nil {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.green)
+                                .background(Circle().fill(Color.white).frame(width: 18, height: 18))
+                                .padding(4)
+                        }
                         
                         // Unread message badge on top right
                         let unreadCount = viewModel.getUnreadMessageCount(from: profile.deviceID)
