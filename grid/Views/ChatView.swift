@@ -102,6 +102,9 @@ struct ChatView: View {
             // When the view appears, ensure the viewModel knows which device we're chatting with.
             viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
             print("ChatView: Opened chat with \(recipientDeviceID), \(chatMessages.count) messages ready instantly!")
+            
+            // Mark all messages from this device as read
+            viewModel.markMessagesAsRead(from: recipientDeviceID)
         }
     }
     
