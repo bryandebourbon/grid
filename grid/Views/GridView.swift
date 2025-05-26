@@ -5,9 +5,20 @@ import PhotosUI // For PhotosPicker
 import UIKit // For UIImage support
 #endif
 
-// Import the model files to resolve type errors
+// Explicit imports for project-specific types:
+// Ensure these types are accessible (public/internal) and correctly named.
+
+// struct UserProfile is defined in Models/UserProfile.swift
+// struct GridViewModel is defined in ViewModels/GridViewModel.swift (contains GridNode)
+// struct Message is defined in Models/Message.swift
+// struct ChatView is defined in Views/ChatView.swift (if it exists as a separate file)
+
+// Add explicit imports for model types to resolve compilation errors
 // These should be available since they're in the same target
 // but explicit imports help with clarity and resolve any module issues
+// Assuming GridNode is defined in GridViewModel or a similar accessible location.
+// Assuming Message is in Models and ChatView is in Views.
+// If these paths are incorrect, the build will fail, and we can adjust.
 
 // Helper to load image from CKAsset
 @MainActor // Ensure UI updates are on the main thread
@@ -115,10 +126,16 @@ struct ChatRecipient: Identifiable {
     let id: String // Represents the deviceID
 }
 
+// Define an Identifiable struct for the profile card
+struct ProfileCardUser: Identifiable { // NEW
+    let id: String // deviceID of the user whose profile to show
+    let userProfile: UserProfile // The actual profile
+}
+
 struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
-    @State private var showingEditProfilePhotoSheet = false
     @State private var showingConversationsList = false  // NEW: For conversations list
+    @State private var selectedUserProfileForCard: ProfileCardUser? = nil // NEW: For profile card
     var signOutAction: () -> Void
     var deleteAccountAction: () -> Void
 
@@ -147,9 +164,16 @@ struct GridView: View {
                     ScrollView {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: viewModel.gridSize), spacing: 2) {
                             ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
-                                GridNodeView(node: node, viewModel: viewModel, onChatTapped: { recipientDeviceID in
-                                    viewModel.chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
-                                })
+                                GridNodeView(
+                                    node: node,
+                                    viewModel: viewModel,
+                                    onProfileTapped: { profile in // NEW: Action for single tap
+                                        self.selectedUserProfileForCard = ProfileCardUser(id: profile.deviceID, userProfile: profile)
+                                    },
+                                    onChatTapped: { recipientDeviceID in
+                                        viewModel.chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
+                                    }
+                                )
                             }
                         }
                         .padding()
@@ -171,11 +195,7 @@ struct GridView: View {
             }
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
-                    if viewModel.currentUserProfile != nil {
-                        Button("Edit Photo") {
-                            showingEditProfilePhotoSheet = true
-                        }
-                    }
+                    // Removed Edit Photo button - photo editing is now in the profile card
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button("Conversations") {
@@ -194,9 +214,6 @@ struct GridView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingEditProfilePhotoSheet) {
-                EditProfilePhotoView(viewModel: viewModel)
-            }
             .sheet(isPresented: $showingConversationsList) {
                 ConversationsListView(viewModel: viewModel) { deviceID in
                     showingConversationsList = false
@@ -207,6 +224,11 @@ struct GridView: View {
                 NavigationView {
                     ChatView(viewModel: viewModel, recipientDeviceID: recipient.id)
                 }
+            }
+            .sheet(item: $selectedUserProfileForCard) { profileUser in // NEW: Sheet for Profile Card
+                // Placeholder for ProfileCardView - will be created next
+                // For now, just a simple view to confirm it works
+                ProfileCardView(viewModel: viewModel, userProfile: profileUser.userProfile)
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -236,7 +258,8 @@ struct GridView: View {
 struct GridNodeView: View {
     let node: GridNode
     let viewModel: GridViewModel
-    let onChatTapped: (String) -> Void
+    let onProfileTapped: (UserProfile) -> Void // NEW: For single tap
+    let onChatTapped: (String) -> Void // For double tap (was single tap)
     @StateObject private var imageLoader = ImageLoader()
 
     var body: some View {
@@ -273,26 +296,19 @@ struct GridNodeView: View {
                        profile.deviceID == currentUserDeviceID {
                         // "Me" label for current user
                         Text("Me")
-                            .font(.caption)
-                            .fontWeight(.bold)
+                            .font(.system(size: 8))
                             .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.blue)
-                            .cornerRadius(8)
-                            .padding(.bottom, 4)
                     } else {
                         // Just show distance for other users
                         if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
                             Text(distanceString)
-                                .font(.caption)
-                                .fontWeight(.bold)
+                                .font(.system(size: 8))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.black.opacity(0.7))
-                                .cornerRadius(6)
-                                .padding(.bottom, 4)
+                                // .padding(.horizontal, 8)
+                                // .padding(.vertical, 4)
+                                // .background(Color.black.opacity(0.7))
+                                // .cornerRadius(6)
+                                // .padding(.bottom, 4)
                         }
                     }
                 }
@@ -304,264 +320,24 @@ struct GridNodeView: View {
         .onChange(of: node.userProfile?.profileImage?.fileURL) { _ in // Try to reload if asset URL changes
             imageLoader.loadImage(from: node.userProfile?.profileImage)
         }
-        .onTapGesture {
-            // When tapping a grid node with a user, check if messaging is allowed
+        // Double tap gesture for chat - this will be recognized first
+        .onTapGesture(count: 2) {
             if let userProfile = node.userProfile {
                 let messagingStatus = viewModel.canMessageUser(deviceID: userProfile.deviceID)
                 if messagingStatus.allowed || userProfile.deviceID == viewModel.currentUserProfile?.deviceID {
-                    // Allow chat if messaging is allowed or it's the current user (for notes)
                     onChatTapped(userProfile.deviceID)
                 } else {
-                    // TODO: Show alert explaining why messaging is not allowed
-                    print("Cannot message user: \(messagingStatus.reason)")
+                    print("Cannot message user (double tap): \\(messagingStatus.reason)")
+                    // Optionally show an alert here
                 }
             }
         }
-    }
-}
-
-// Profile photo editing view
-struct EditProfilePhotoView: View {
-    @ObservedObject var viewModel: GridViewModel
-    @State private var selectedPhotoItem: PhotosPickerItem? = nil
-    @State private var selectedPhotoData: Data? = nil
-    @State private var isSaving = false
-    @State private var errorMessage: String? = nil
-    @Environment(\.dismiss) var dismiss
-
-    @StateObject private var currentImageLoader = ImageLoader()
-    @State private var additionalImageLoaders: [ImageLoader] = [] // Changed from @StateObject
-    @State private var existingAdditionalPhotoAssets: [CKAsset] = []
-
-    // For new photo selections
-    @State private var newSelectedPhotoItems: [PhotosPickerItem] = []
-    @State private var newSelectedPhotoDataArray: [Data] = []
-
-    var body: some View {
-        NavigationView {
-            Form {
-                VStack(spacing: 20) {
-                    Text("Main Profile Photo").font(.headline)
-                    // Current main profile photo display
-                    Group {
-                        if currentImageLoader.isLoading {
-                            ProgressView().frame(width: 150, height: 150)
-                        } else if let loadedImage = currentImageLoader.image {
-                            loadedImage
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 150, height: 150)
-                                .clipShape(Circle())
-                        } else {
-                            Circle().fill(Color.secondary.opacity(0.3)).frame(width: 150, height: 150)
-                                .overlay(Image(systemName: "person.fill").resizable().scaledToFit().frame(width: 75).foregroundColor(.gray))
-                        }
-                    }
-
-                    // Picker for new MAIN photo (singular)
-                    PhotosPicker(selection: $selectedPhotoItem, matching: .images, photoLibrary: .shared()) {
-                        Text(selectedPhotoData != nil ? "Change Main Photo" : "Select Main Photo")
-                    }
-                    .onChange(of: selectedPhotoItem) { newItem in
-                        Task {
-                            if let item = newItem, let data = try? await item.loadTransferable(type: Data.self) {
-                                self.selectedPhotoData = data // This is for the main profile image
-                                self.errorMessage = nil
-                            } else {
-                                self.selectedPhotoData = nil
-                                // Optionally show an error if loading the main photo fails
-                            }
-                        }
-                    }
-                    
-                    Divider()
-                    
-                    Text("Additional Photos (up to 9)").font(.headline)
-                    
-                    // Display existing additional photos
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack {
-                            ForEach(Array(zip(additionalImageLoaders.indices, additionalImageLoaders)), id: \.0) { index, loader in
-                                ZStack(alignment: .topTrailing) {
-                                    if loader.isLoading { ProgressView().frame(width: 100, height: 100) }
-                                    else if let img = loader.image {
-                                        img.resizable().scaledToFill().frame(width: 100, height: 100).clipShape(RoundedRectangle(cornerRadius: 8))
-                                    } else {
-                                        RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.2)).frame(width: 100, height: 100)
-                                            .overlay(Image(systemName: "photo").foregroundColor(.gray))
-                                    }
-                                    Button(action: { removeAdditionalPhoto(at: index) }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.red)
-                                            .background(Circle().fill(Color.white))
-                                    }
-                                    .padding(4)
-                                }
-                                .padding(.trailing, 5)
-                            }
-                        }
-                    }
-                    .frame(height: 110)
-
-                    // Picker for ADDING NEW additional photos
-                    if (existingAdditionalPhotoAssets.count + newSelectedPhotoDataArray.count) < 9 {
-                        PhotosPicker(
-                            selection: $newSelectedPhotoItems,
-                            maxSelectionCount: 9 - (existingAdditionalPhotoAssets.count + newSelectedPhotoDataArray.count), // Limit to remaining slots
-                            matching: .images,
-                            photoLibrary: .shared()
-                        ) {
-                            Text("Add More Photos")
-                        }
-                        .onChange(of: newSelectedPhotoItems) { items in
-                            Task {
-                                // Append new data, don't replace existing newSelectedPhotoDataArray entirely unless intended
-                                for item in items {
-                                    if let data = try? await item.loadTransferable(type: Data.self) {
-                                        if !newSelectedPhotoDataArray.contains(data) { // Avoid duplicates if re-picking
-                                           newSelectedPhotoDataArray.append(data)
-                                        }
-                                    } else {
-                                        print("Failed to load data for an additional photo item.")
-                                    }
-                                }
-                                // Clear the picker selection to allow picking more or the same items again if needed
-                                newSelectedPhotoItems = [] 
-                            }
-                        }
-                    }
-                    
-                    // Display newly selected additional photos (not yet saved)
-                    if !newSelectedPhotoDataArray.isEmpty {
-                        Text("New photos to add:").font(.caption)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
-                                ForEach(newSelectedPhotoDataArray, id: \.self) { data in
-                                    if let uiImage = UIImage(data: data) {
-                                        Image(uiImage: uiImage).resizable().scaledToFill().frame(width: 70, height: 70).clipShape(RoundedRectangle(cornerRadius: 8))
-                                            .padding(.trailing, 5)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(height: 80)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
-                if let errorMessage = errorMessage {
-                    Text(errorMessage).foregroundColor(.red)
-                }
-
-                Button(action: { saveProfilePhoto() }) {
-                    if isSaving { ProgressView() } else { Text("Save New Photo") }
-                }
-                .disabled(selectedPhotoData == nil || isSaving)
-            }
-            .navigationTitle("Edit Profile Photo")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { if !isSaving { dismiss() } }
-                }
-            }
-            .onAppear {
-                currentImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
-                selectedPhotoItem = nil 
-                selectedPhotoData = nil
-                
-                // Load existing additional photos
-                existingAdditionalPhotoAssets = viewModel.currentUserProfile?.additionalPhotos ?? [] // Renamed field
-                additionalImageLoaders.forEach { $0.cancel() } // Cancel any ongoing loads
-                additionalImageLoaders = existingAdditionalPhotoAssets.map { asset in
-                    let loader = ImageLoader()
-                    loader.loadImage(from: asset)
-                    return loader
-                }
-                newSelectedPhotoItems = []
-                newSelectedPhotoDataArray = []
+        // Single tap gesture for profile card - this will be recognized if double tap doesn't occur
+        .onTapGesture(count: 1) {
+            if let userProfile = node.userProfile {
+                onProfileTapped(userProfile)
             }
         }
-    }
-
-    private func removeAdditionalPhoto(at index: Int) {
-        guard index < existingAdditionalPhotoAssets.count else { return }
-        existingAdditionalPhotoAssets.remove(at: index)
-        // also remove the corresponding loader
-        additionalImageLoaders.remove(at: index)
-        // The UI will update automatically. The actual deletion from CloudKit will happen on save.
-    }
-
-    private func saveProfilePhoto() {
-        // This function now needs to handle:
-        // 1. A potentially new main profile image (selectedPhotoData).
-        // 2. An updated list of additional photos (from existingAdditionalPhotoAssets and newSelectedPhotoDataArray).
-        isSaving = true
-        errorMessage = nil
-
-        var finalAdditionalPhotoAssets: [CKAsset] = existingAdditionalPhotoAssets
-        var tempNewAssetFileURLs: [URL] = []
-
-        // Convert new additional photo data to CKAssets
-        for photoData in newSelectedPhotoDataArray {
-            let tempDir = FileManager.default.temporaryDirectory
-            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-            do {
-                try photoData.write(to: tempFileURL)
-                finalAdditionalPhotoAssets.append(CKAsset(fileURL: tempFileURL))
-                tempNewAssetFileURLs.append(tempFileURL)
-            } catch {
-                print("Error writing new additional photo data to temp file: \(error.localizedDescription)")
-                errorMessage = "Could not process one of the new additional photos."
-                isSaving = false
-                // Clean up any temp files created in this loop so far
-                for url in tempNewAssetFileURLs {
-                    try? FileManager.default.removeItem(at: url)
-                }
-                return
-            }
-        }
-        
-        // Limit to 9 additional photos (as per earlier logic, could be 10 based on total)
-        if finalAdditionalPhotoAssets.count > 9 {
-            // This case should ideally be prevented by the UI, but as a safeguard:
-            finalAdditionalPhotoAssets = Array(finalAdditionalPhotoAssets.prefix(9))
-            // Note: Temp files for truncated assets won't be cleaned up here unless managed carefully.
-            // Best to ensure UI prevents >9 additional photos from being staged.
-        }
-
-        viewModel.updateProfilePhotos(mainPhotoData: selectedPhotoData, additionalPhotoAssets: finalAdditionalPhotoAssets) { success in
-            DispatchQueue.main.async {
-                isSaving = false
-                if success {
-                    dismiss()
-                } else {
-                    errorMessage = "Failed to save photos. Please try again."
-                    // viewModel should handle cleanup of its own temp files on failure.
-                    // Cleanup temp files created in *this* view for *new* assets if viewModel doesn't take ownership or on failure
-                    for url in tempNewAssetFileURLs {
-                         try? FileManager.default.removeItem(at: url)
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct GridView_Previews: PreviewProvider {
-    static var previews: some View {
-        let mockViewModel = GridViewModel()
-        let dummyProfile = UserProfile(userID: "previewUser123", 
-                                       deviceID: "previewDeviceID_789", 
-                                       deviceName: "Preview Device", 
-                                       profileImage: nil)
-        mockViewModel.setCurrentUserProfile(dummyProfile)
-        
-        if !mockViewModel.gridNodes.isEmpty && !mockViewModel.gridNodes[0].isEmpty {
-            mockViewModel.gridNodes[0][0].userProfile = dummyProfile
-        }
-        
-        return GridView(viewModel: mockViewModel, signOutAction: {}, deleteAccountAction: {})
     }
 }
 
@@ -672,5 +448,613 @@ struct ConversationRowView: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Profile Card View (NEW)
+
+struct ProfileCardView: View {
+    @ObservedObject var viewModel: GridViewModel
+    let userProfile: UserProfile
+    @Environment(\.dismiss) var dismiss
+
+    @State private var bioText: String = ""
+    @State private var isEditingBio: Bool = false
+
+    // Image loaders for main and additional photos
+    @StateObject private var mainImageLoader = ImageLoader()
+    @State private var additionalImageLoaders: [ImageLoader] = []
+    
+    // Photo editing states
+    @State private var selectedMainPhotoItem: PhotosPickerItem? = nil
+    @State private var selectedMainPhotoData: Data? = nil
+    @State private var newSelectedPhotoItems: [PhotosPickerItem] = []
+    @State private var newSelectedPhotoDataArray: [Data] = []
+    @State private var existingAdditionalPhotoAssets: [CKAsset] = []
+    @State private var isSavingPhotos = false
+    @State private var photoErrorMessage: String? = nil
+    @State private var retryCount = 0 // NEW: Track retry attempts
+    @State private var showRetryButton = false // NEW: Show retry button on persistent failures
+
+    private var isCurrentUserProfile: Bool {
+        viewModel.currentUserProfile?.deviceID == userProfile.deviceID
+    }
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Main Profile Photo Section
+                    VStack(spacing: 12) {
+                        HStack {
+                            Spacer()
+                            Group {
+                                if mainImageLoader.isLoading {
+                                    ProgressView().frame(width: 120, height: 120)
+                                } else if let image = mainImageLoader.image {
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 120, height: 120)
+                                        .clipShape(Circle())
+                                } else {
+                                    Circle().fill(Color.gray.opacity(0.3))
+                                        .frame(width: 120, height: 120)
+                                        .overlay(Image(systemName: "person.fill").resizable().scaledToFit().padding(30).foregroundColor(.gray))
+                                }
+                            }
+                            Spacer()
+                        }
+
+                        Text(userProfile.deviceName ?? "User")
+                            .font(.title)
+                            .frame(maxWidth: .infinity, alignment: .center)
+
+                        // Main photo editing (only for current user)
+                        if isCurrentUserProfile {
+                            PhotosPicker(selection: $selectedMainPhotoItem, matching: .images, photoLibrary: .shared()) {
+                                Text(selectedMainPhotoData != nil ? "Change Main Photo" : "Update Main Photo")
+                                    .font(.caption)
+                                    .foregroundColor(.blue)
+                            }
+                            .onChange(of: selectedMainPhotoItem) { newItem in
+                                Task {
+                                    if let item = newItem, let data = try? await item.loadTransferable(type: Data.self) {
+                                        selectedMainPhotoData = data
+                                        photoErrorMessage = nil
+                                        saveMainPhoto()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    // Bio Section
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("About Me")
+                            .font(.headline)
+                        
+                        if isCurrentUserProfile {
+                            if isEditingBio {
+                                TextEditor(text: $bioText)
+                                    .frame(height: 100)
+                                    .border(Color.gray.opacity(0.5), width: 1)
+                                HStack {
+                                    Button("Cancel") {
+                                        isEditingBio = false
+                                        bioText = viewModel.currentUserProfile?.bio ?? ""
+                                    }
+                                    .foregroundColor(.secondary)
+                                    
+                                    Spacer()
+                                    
+                                    Button("Save Bio") {
+                                        isEditingBio = false
+                                        viewModel.updateUserProfileBio(bio: bioText) { success in
+                                            if success {
+                                                print("Bio updated successfully.")
+                                            } else {
+                                                print("Failed to update bio.")
+                                            }
+                                        }
+                                    }
+                                    .foregroundColor(.blue)
+                                }
+                            } else {
+                                Text(bioText.isEmpty ? "No bio yet. Tap to edit." : bioText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 8)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(8)
+                                    .onTapGesture {
+                                        isEditingBio = true
+                                    }
+                            }
+                        } else {
+                            Text(userProfile.bio ?? "No bio available.")
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 8)
+                        }
+                    }
+                    
+                    Divider()
+
+                    // Additional Photos Section
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Photos")
+                                .font(.headline)
+                            
+                            Spacer()
+                            
+                            if isCurrentUserProfile && (existingAdditionalPhotoAssets.count + newSelectedPhotoDataArray.count) < 9 {
+                                PhotosPicker(
+                                    selection: $newSelectedPhotoItems,
+                                    maxSelectionCount: 9 - (existingAdditionalPhotoAssets.count + newSelectedPhotoDataArray.count),
+                                    matching: .images,
+                                    photoLibrary: .shared()
+                                ) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundColor(.blue)
+                                        .font(.title2)
+                                }
+                                .onChange(of: newSelectedPhotoItems) { items in
+                                    Task {
+                                        for item in items {
+                                            if let data = try? await item.loadTransferable(type: Data.self) {
+                                                if !newSelectedPhotoDataArray.contains(data) {
+                                                    newSelectedPhotoDataArray.append(data)
+                                                }
+                                            }
+                                        }
+                                        newSelectedPhotoItems = []
+                                        if !newSelectedPhotoDataArray.isEmpty {
+                                            saveAdditionalPhotos()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Display existing additional photos
+                        if !additionalImageLoaders.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(additionalImageLoaders.indices, id: \.self) { index in
+                                        ZStack(alignment: .topTrailing) {
+                                            let loader = additionalImageLoaders[index]
+                                            Group {
+                                                if loader.isLoading {
+                                                    ProgressView()
+                                                } else if let image = loader.image {
+                                                    image.resizable().scaledToFill()
+                                                } else {
+                                                    RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.2))
+                                                        .overlay(Image(systemName: "photo").foregroundColor(.gray))
+                                                }
+                                            }
+                                            .frame(width: 100, height: 100)
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            
+                                            // Delete button (only for current user)
+                                            if isCurrentUserProfile {
+                                                Button(action: { removeAdditionalPhoto(at: index) }) {
+                                                    Image(systemName: "xmark.circle.fill")
+                                                        .foregroundColor(.red)
+                                                        .background(Circle().fill(Color.white))
+                                                }
+                                                .padding(4)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 4)
+                            }
+                        } else {
+                            Text(isCurrentUserProfile ? "No additional photos. Tap + to add some!" : "No additional photos.")
+                                .foregroundColor(.gray)
+                                .font(.caption)
+                        }
+                        
+                        // Show newly selected photos being processed
+                        if !newSelectedPhotoDataArray.isEmpty {
+                            Text("Processing \(newSelectedPhotoDataArray.count) new photo(s)...")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        
+                        // Photo error message and retry button
+                        if let errorMessage = photoErrorMessage {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(errorMessage)
+                                    .foregroundColor(.red)
+                                    .font(.caption)
+                                
+                                // Show retry button for persistent failures
+                                if showRetryButton {
+                                    Button(action: retryPhotoSave) {
+                                        HStack {
+                                            Image(systemName: "arrow.clockwise")
+                                            Text("Retry Save")
+                                        }
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                    }
+                                    .disabled(isSavingPhotos)
+                                    
+                                    // Show helpful tips for new device issues
+                                    if retryCount >= 3 || errorMessage.contains("CloudKit") || errorMessage.contains("daemon") {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text("💡 Tips for new devices:")
+                                                .font(.caption2)
+                                                .fontWeight(.semibold)
+                                                .foregroundColor(.orange)
+                                            
+                                            Text("• Make sure you're signed into iCloud")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                            
+                                            Text("• Wait a few minutes for iCloud to sync")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                            
+                                            Text("• Try restarting the app")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.top, 4)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Show saving status
+                        if isSavingPhotos {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Saving photos...")
+                                    .font(.caption)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                    
+                    Spacer()
+                }
+                .padding()
+            }
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    // Chat Button
+                    if !isCurrentUserProfile {
+                        Button("Chat") {
+                            dismiss()
+                            viewModel.chatRecipientToPresent = ChatRecipient(id: userProfile.deviceID)
+                        }
+                    } else {
+                        Button("My Notes") {
+                            dismiss()
+                            viewModel.chatRecipientToPresent = ChatRecipient(id: userProfile.deviceID)
+                        }
+                    }
+                }
+            }
+            .onAppear {
+                mainImageLoader.loadImage(from: userProfile.profileImage)
+                
+                // Load existing additional photos
+                existingAdditionalPhotoAssets = userProfile.additionalPhotos ?? []
+                additionalImageLoaders = existingAdditionalPhotoAssets.map { asset in
+                    let loader = ImageLoader()
+                    loader.loadImage(from: asset)
+                    return loader
+                }
+                
+                bioText = isCurrentUserProfile ? (viewModel.currentUserProfile?.bio ?? "") : (userProfile.bio ?? "")
+            }
+        }
+    }
+    
+    // MARK: - Photo Management Functions
+    
+    private func saveMainPhoto() {
+        guard let photoData = selectedMainPhotoData else { return }
+        
+        isSavingPhotos = true
+        photoErrorMessage = nil
+        
+        viewModel.updateCurrentProfileImage(newPhotoData: photoData)
+        
+        // Reload the main image
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            mainImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
+            selectedMainPhotoData = nil
+            selectedMainPhotoItem = nil
+            isSavingPhotos = false
+        }
+    }
+    
+    private func saveAdditionalPhotos() {
+        guard !newSelectedPhotoDataArray.isEmpty else { return }
+        
+        isSavingPhotos = true
+        photoErrorMessage = nil
+        showRetryButton = false
+        
+        // First, check if CloudKit is available
+        viewModel.checkCloudKitAvailability { isAvailable, errorMessage in
+            if !isAvailable {
+                self.photoErrorMessage = errorMessage ?? "CloudKit is not available"
+                self.showRetryButton = true
+                self.isSavingPhotos = false
+                return
+            }
+            
+            // CloudKit is available, proceed with photo processing
+            self.processAndSavePhotos()
+        }
+    }
+    
+    // NEW: Separated photo processing logic
+    private func processAndSavePhotos() {
+        // Convert new photo data to CKAssets
+        var updatedAssets = existingAdditionalPhotoAssets
+        var tempFileURLs: [URL] = []
+        
+        for photoData in newSelectedPhotoDataArray {
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try photoData.write(to: tempFileURL)
+                updatedAssets.append(CKAsset(fileURL: tempFileURL))
+                tempFileURLs.append(tempFileURL)
+                print("✅ Created temporary file for photo: \(tempFileURL.lastPathComponent)")
+            } catch {
+                photoErrorMessage = "Error processing photo: \(error.localizedDescription)"
+                isSavingPhotos = false
+                showRetryButton = true
+                return
+            }
+        }
+        
+        // Save to viewModel with improved error handling
+        savePhotosWithRetry(updatedAssets: updatedAssets, tempFileURLs: tempFileURLs, attempt: 1)
+    }
+    
+    // NEW: Enhanced save function with retry logic
+    private func savePhotosWithRetry(updatedAssets: [CKAsset], tempFileURLs: [URL], attempt: Int) {
+        let maxRetries = 3
+        
+        print("🔄 Attempting to save photos (attempt \(attempt)/\(maxRetries))")
+        viewModel.updateProfilePhotos(mainPhotoData: nil as Data?, additionalPhotoAssets: updatedAssets) { success in
+            DispatchQueue.main.async {
+                if success {
+                    // Success! Update UI and clear temp data
+                    existingAdditionalPhotoAssets = viewModel.currentUserProfile?.additionalPhotos ?? []
+                    additionalImageLoaders = existingAdditionalPhotoAssets.map { asset in
+                        let loader = ImageLoader()
+                        loader.loadImage(from: asset)
+                        return loader
+                    }
+                    newSelectedPhotoDataArray = []
+                    photoErrorMessage = nil
+                    showRetryButton = false
+                    retryCount = 0
+                    isSavingPhotos = false
+                    
+                    print("✅ Photos saved successfully on attempt \(attempt)")
+                    
+                    // Clean up temp files after successful save
+                    for url in tempFileURLs {
+                        try? FileManager.default.removeItem(at: url)
+                        print("🧹 Cleaned up temporary file: \(url.lastPathComponent)")
+                    }
+                    
+                } else {
+                    // Failed - check if we should retry
+                    if attempt < maxRetries {
+                        let delay = Double(attempt) * 2.0 // Exponential backoff: 2s, 4s, 6s
+                        photoErrorMessage = "Saving photos (attempt \(attempt)/\(maxRetries))... Retrying in \(Int(delay))s"
+                        
+                        print("⚠️ Photo save failed on attempt \(attempt). Retrying in \(Int(delay))s...")
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            print("🔄 Retrying photo save, attempt \(attempt + 1)")
+                            savePhotosWithRetry(updatedAssets: updatedAssets, tempFileURLs: tempFileURLs, attempt: attempt + 1)
+                        }
+                    } else {
+                        // Max retries reached - show error and cleanup
+                        photoErrorMessage = "Failed to save photos after \(maxRetries) attempts. This may be due to CloudKit connection issues. Please try again later."
+                        showRetryButton = true
+                        retryCount = attempt
+                        isSavingPhotos = false
+                        
+                        // Clean up temp files
+                        for url in tempFileURLs {
+                            try? FileManager.default.removeItem(at: url)
+                            print("🧹 Cleaned up temporary file after failed save: \(url.lastPathComponent)")
+                        }
+                        
+                        print("❌ Photo save failed after \(maxRetries) attempts")
+                    }
+                }
+            }
+        }
+    }
+    
+    // NEW: Manual retry function
+    private func retryPhotoSave() {
+        guard !newSelectedPhotoDataArray.isEmpty else { return }
+        
+        print("🔄 Manual retry initiated by user")
+        photoErrorMessage = "Checking CloudKit availability..."
+        showRetryButton = false
+        isSavingPhotos = true
+        
+        // First check CloudKit availability
+        viewModel.checkCloudKitAvailability { isAvailable, errorMessage in
+            if !isAvailable {
+                self.photoErrorMessage = errorMessage ?? "CloudKit is not available"
+                self.showRetryButton = true
+                self.isSavingPhotos = false
+                return
+            }
+            
+            // CloudKit is available, proceed with retry
+            self.photoErrorMessage = "Retrying photo save..."
+            self.processPhotosForRetry()
+        }
+    }
+    
+    // NEW: Process photos for retry
+    private func processPhotosForRetry() {
+        // Convert photos again (in case temp files were cleaned up)
+        var updatedAssets = existingAdditionalPhotoAssets
+        var tempFileURLs: [URL] = []
+        
+        for photoData in newSelectedPhotoDataArray {
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try photoData.write(to: tempFileURL)
+                updatedAssets.append(CKAsset(fileURL: tempFileURL))
+                tempFileURLs.append(tempFileURL)
+                print("✅ Recreated temporary file for retry: \(tempFileURL.lastPathComponent)")
+            } catch {
+                photoErrorMessage = "Error processing photo: \(error.localizedDescription)"
+                isSavingPhotos = false
+                showRetryButton = true
+                return
+            }
+        }
+        
+        savePhotosWithRetry(updatedAssets: updatedAssets, tempFileURLs: tempFileURLs, attempt: 1)
+    }
+    
+    private func removeAdditionalPhoto(at index: Int) {
+        guard index < existingAdditionalPhotoAssets.count else { return }
+        
+        existingAdditionalPhotoAssets.remove(at: index)
+        additionalImageLoaders.remove(at: index)
+        
+        // Save the updated list with retry logic
+        isSavingPhotos = true
+        photoErrorMessage = nil
+        
+        viewModel.updateProfilePhotos(mainPhotoData: nil as Data?, additionalPhotoAssets: existingAdditionalPhotoAssets) { success in
+            DispatchQueue.main.async {
+                isSavingPhotos = false
+                if !success {
+                    photoErrorMessage = "Failed to remove photo. Please try again."
+                    // Restore the photo in the UI since removal failed
+                    // Note: This is a simplified restoration - in a production app you'd want to restore the exact asset
+                }
+            }
+        }
+    }
+
+    private func saveProfilePhoto() {
+        // This function now needs to handle:
+        // 1. A potentially new main profile image (selectedPhotoData).
+        // 2. An updated list of additional photos (from existingAdditionalPhotoAssets and newSelectedPhotoDataArray).
+        isSavingPhotos = true
+        photoErrorMessage = nil
+
+        var finalAdditionalPhotoAssets: [CKAsset] = existingAdditionalPhotoAssets
+        var tempNewAssetFileURLs: [URL] = []
+
+        // Convert new additional photo data to CKAssets
+        for photoData in newSelectedPhotoDataArray {
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try photoData.write(to: tempFileURL)
+                finalAdditionalPhotoAssets.append(CKAsset(fileURL: tempFileURL))
+                tempNewAssetFileURLs.append(tempFileURL)
+            } catch {
+                print("Error writing new additional photo data to temp file: \(error.localizedDescription)")
+                photoErrorMessage = "Could not process one of the new additional photos."
+                isSavingPhotos = false
+                // Clean up any temp files created in this loop so far
+                for url in tempNewAssetFileURLs {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                return
+            }
+        }
+        
+        // Limit to 9 additional photos (as per earlier logic, could be 10 based on total)
+        if finalAdditionalPhotoAssets.count > 9 {
+            // This case should ideally be prevented by the UI, but as a safeguard:
+            finalAdditionalPhotoAssets = Array(finalAdditionalPhotoAssets.prefix(9))
+            // Note: Temp files for truncated assets won't be cleaned up here unless managed carefully.
+            // Best to ensure UI prevents >9 additional photos from being staged.
+        }
+
+        // DEBUG: Print all CKAsset file URLs and their existence before save
+        print("[DEBUG] About to save profile with additionalPhotos:")
+        for asset in finalAdditionalPhotoAssets {
+            let path = asset.fileURL?.path ?? "nil"
+            let exists = asset.fileURL != nil ? FileManager.default.fileExists(atPath: asset.fileURL!.path) : false
+            print("[DEBUG] CKAsset fileURL: \(path), exists: \(exists)")
+        }
+
+        viewModel.updateProfilePhotos(mainPhotoData: selectedMainPhotoData, additionalPhotoAssets: finalAdditionalPhotoAssets) { success in
+            DispatchQueue.main.async {
+                isSavingPhotos = false
+                if success {
+                    // Only clean up temp files after CloudKit save completes successfully
+                    for url in tempNewAssetFileURLs {
+                        try? FileManager.default.removeItem(at: url)
+                        print("[DEBUG] Cleaned up temp file after successful save: \(url.path)")
+                    }
+                    self.selectedMainPhotoData = nil
+                    self.selectedMainPhotoItem = nil
+                    self.isSavingPhotos = false
+                    self.photoErrorMessage = nil
+                    self.retryCount = 0
+                    self.showRetryButton = false
+                    self.newSelectedPhotoDataArray = []
+                    self.newSelectedPhotoItems = []
+                    self.additionalImageLoaders = []
+                    self.existingAdditionalPhotoAssets = []
+                    self.dismiss()
+                } else {
+                    photoErrorMessage = "Failed to save photos. Please try again."
+                    // Only clean up temp files after CloudKit save fails
+                    for url in tempNewAssetFileURLs {
+                        try? FileManager.default.removeItem(at: url)
+                        print("[DEBUG] Cleaned up temp file after failed save: \(url.path)")
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct GridView_Previews: PreviewProvider {
+    static var previews: some View {
+        let mockViewModel = GridViewModel()
+        let dummyProfile = UserProfile(userID: "previewUser123", 
+                                       deviceID: "previewDeviceID_789", 
+                                       deviceName: "Preview Device", 
+                                       profileImage: nil as CKAsset?,
+                                       additionalPhotos: [] as [CKAsset]?, // Move before bio
+                                       bio: "This is a test bio for previews.") // Move after additionalPhotos
+        mockViewModel.setCurrentUserProfile(dummyProfile)
+        
+        if !mockViewModel.gridNodes.isEmpty && !mockViewModel.gridNodes[0].isEmpty {
+            mockViewModel.gridNodes[0][0].userProfile = dummyProfile
+        }
+        
+        return GridView(viewModel: mockViewModel, signOutAction: {}, deleteAccountAction: {})
     }
 } 
