@@ -21,7 +21,7 @@ class LocationService: NSObject, ObservableObject {
     private func setupLocationManager() {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 10 // Update every 10 meters
+        locationManager.distanceFilter = 100 // Update every 100 meters (was 10 meters)
     }
     
     func requestLocationPermission() {
@@ -43,13 +43,9 @@ class LocationService: NSObject, ObservableObject {
             return
         }
         
-        locationManager.startUpdatingLocation()
-        print("Started location updates")
-        
-        // Start periodic updates every 30 seconds
-        locationUpdateTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
-            self.locationManager.requestLocation()
-        }
+        // Instead, just request location once
+        locationManager.requestLocation()
+        print("Requested location once")
     }
     
     func stopLocationUpdates() {
@@ -57,6 +53,16 @@ class LocationService: NSObject, ObservableObject {
         locationUpdateTimer?.invalidate()
         locationUpdateTimer = nil
         print("Stopped location updates")
+    }
+    
+    // NEW: Request location just once when needed
+    func requestLocationOnce() {
+        guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
+            print("Location permission not granted")
+            return
+        }
+        locationManager.requestLocation()
+        print("Requesting location once")
     }
     
     // Calculate distance between two locations in meters

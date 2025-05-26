@@ -91,11 +91,11 @@ class GridViewModel: ObservableObject {
                     // The newMessageFromSubscription is already initialized with status .sent or .received
                     // based on sender, so we can directly use its values.
                     self.messages[index] = newMessageFromSubscription 
-                    print("GridViewModel: Updated existing message (ID: \\(newMessageFromSubscription.id)) from subscription with server data. Status: \\(newMessageFromSubscription.status)")
+                    print("GridViewModel: Updated existing message (ID: \(newMessageFromSubscription.id)) from subscription with server data. Status: \(newMessageFromSubscription.status)")
                 } else {
                     // This is a genuinely new message (e.g., from the other user, or one not optimistically added).
                     self.messages.append(newMessageFromSubscription)
-                    print("GridViewModel: Added new message (ID: \\(newMessageFromSubscription.id)) from subscription. Status: \\(newMessageFromSubscription.status)")
+                    print("GridViewModel: Added new message (ID: \(newMessageFromSubscription.id)) from subscription. Status: \(newMessageFromSubscription.status)")
                 }
                 
                 self.messages.sort(by: { $0.timestamp < $1.timestamp })
@@ -107,11 +107,12 @@ class GridViewModel: ObservableObject {
     
     private func setupLocationHandlers() {
         // Listen for location updates
-        locationService.$currentLocation
-            .sink { [weak self] location in
-                self?.handleLocationUpdate(location)
-            }
-            .store(in: &cancellables)
+        // REMOVED: We don't want automatic grid refresh on every location update
+        // locationService.$currentLocation
+        //     .sink { [weak self] location in
+        //         self?.handleLocationUpdate(location)
+        //     }
+        //     .store(in: &cancellables)
         
         // Listen for authorization status changes
         locationService.$authorizationStatus
@@ -348,8 +349,8 @@ class GridViewModel: ObservableObject {
         fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
         messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         
-        // Start location updates - grid will auto-refresh when it appears
-        locationService.requestLocationPermission()
+        // REMOVED: Don't start location updates automatically
+        // locationService.requestLocationPermission()
 
         // Check for deferred navigation
         if let pendingDeviceID = pendingChatNavigationDeviceID {
@@ -371,17 +372,17 @@ class GridViewModel: ObservableObject {
                 // Assuming messages from MessagingService are already correctly initialized with status
                 self.messages = fetchedMessages.sorted(by: { $0.timestamp < $1.timestamp })
                 
-                print("GridViewModel: Preloaded \\(self.messages.count) messages for instant chat access. Statuses set.")
+                print("GridViewModel: Preloaded \(self.messages.count) messages for instant chat access. Statuses set.")
                 
                 // Group messages by conversation for debugging
                 let conversations = Dictionary(grouping: self.messages) { message in
                     let otherDeviceID = message.senderDeviceID == deviceID ? message.recipientDeviceID : message.senderDeviceID
                     return otherDeviceID
                 }
-                print("GridViewModel: Messages organized into \\(conversations.count) conversations:")
+                print("GridViewModel: Messages organized into \(conversations.count) conversations:")
                 for (otherDeviceID, conversationMessages) in conversations {
-                    let displayName = otherDeviceID == deviceID ? "My Notes" : "Device \\(String(otherDeviceID.prefix(8)))"
-                    print("  - \\(displayName): \\(conversationMessages.count) messages")
+                    let displayName = otherDeviceID == deviceID ? "My Notes" : "Device \(String(otherDeviceID.prefix(8)))"
+                    print("  - \(displayName): \(conversationMessages.count) messages")
                 }
                 
             case .failure(let error):
@@ -415,7 +416,7 @@ class GridViewModel: ObservableObject {
             let lastMessage = sortedMessages.last
             
             // Get display name from grid if available
-            var displayName = "Device \\(String(otherDeviceID.prefix(8)))"
+            var displayName = "Device \(String(otherDeviceID.prefix(8)))"
             if otherDeviceID == currentDeviceID {
                 displayName = "My Notes"
             } else {
@@ -463,7 +464,7 @@ class GridViewModel: ObservableObject {
             try photoData.write(to: tempFileURL)
             let photoAsset = CKAsset(fileURL: tempFileURL)
             currentUserProfile?.profileImage = photoAsset
-            print("Profile image updated. Temp file: \\(tempFileURL.path)")
+            print("Profile image updated. Temp file: \(tempFileURL.path)")
             persistAndUpdateProfileAndGrid()
         } catch {
             print("Error creating CKAsset for profile image: \\(error.localizedDescription)")
@@ -561,36 +562,42 @@ class GridViewModel: ObservableObject {
     func refreshPublicGrid() {
         print("GridViewModel: Starting simple refresh - upload my location, get all users sorted by distance")
         
-        guard var profile = currentUserProfile else {
+        guard let profile = currentUserProfile else {
             print("No current user profile for refresh")
             return
         }
         
-        // Step 1: Update my location if available
-        if let currentLocation = locationService.currentLocation {
-            print("Updating my location: \\(currentLocation.coordinate.latitude), \\(currentLocation.coordinate.longitude)")
-            profile.updateLocation(currentLocation)
-            self.currentUserProfile = profile
-        } else {
-            print("No current location available, refreshing with last known position")
-        }
+        // Request fresh location once
+        locationService.requestLocationOnce()
         
-        // Step 2: Upload my current status and location to CloudKit
-        proximityService.updateUserActivity(profile) { [weak self] result in
+        // Wait a moment for location update, then proceed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
             
-            switch result {
-            case .success(let updatedProfile):
-                print("Successfully uploaded my location to CloudKit")
-                self.currentUserProfile = updatedProfile
+            // Get fresh location from location service and update
+            if let currentLocation = self.locationService.currentLocation {
+                // Manually trigger location update and grid refresh
+                self.handleLocationUpdate(currentLocation)
+            } else {
+                // No current location available, just refresh with existing profile location
+                print("No current location available, refreshing with last known position")
                 
-                // Step 3: Get all users sorted by distance
-                self.proximityService.fetchAllUsers(currentUserLocation: updatedProfile.location)
-                
-            case .failure(let error):
-                print("Error uploading my location: \\(error.localizedDescription)")
-                // Still try to fetch others even if upload failed
-                self.proximityService.fetchAllUsers(currentUserLocation: profile.location)
+                // Upload current status and get all users
+                self.proximityService.updateUserActivity(profile) { result in
+                    switch result {
+                    case .success(let updatedProfile):
+                        print("Successfully uploaded my status to CloudKit")
+                        self.currentUserProfile = updatedProfile
+                        
+                        // Get all users sorted by distance
+                        self.proximityService.fetchAllUsers(currentUserLocation: updatedProfile.location)
+                        
+                    case .failure(let error):
+                        print("Error uploading my status: \\(error.localizedDescription)")
+                        // Still try to fetch others even if upload failed
+                        self.proximityService.fetchAllUsers(currentUserLocation: profile.location)
+                    }
+                }
             }
         }
     }
@@ -601,22 +608,16 @@ class GridViewModel: ObservableObject {
         profile.markAsActive()
         self.currentUserProfile = profile
         
-        print("App became active - restarting location and auto-refreshing...")
+        print("App became active - updating activity status only")
         
-        // Restart location updates
-        locationService.requestLocationPermission()
+        // REMOVED: Don't restart location updates
+        // locationService.requestLocationPermission()
         
-        // Get current location and immediately share + refresh
-        if let currentLocation = locationService.currentLocation {
-            profile.updateLocation(currentLocation)
-            self.currentUserProfile = profile
-            updateUserActivityAndLocation(profile)
-            autoRefreshGrid(with: currentLocation)
-        } else {
-            // Update activity even without new location
-            updateUserActivityAndLocation(profile)
-            autoRefreshGrid()
-        }
+        // Update activity status in CloudKit (without refreshing the grid)
+        updateUserActivityAndLocation(profile)
+        
+        // REMOVED: We don't want to auto-refresh the grid when app becomes active
+        // This should only happen on grid appear or manual refresh
     }
     
     func handleAppWillResignActive() {
@@ -678,7 +679,7 @@ class GridViewModel: ObservableObject {
 
     func selectChatPartner(partnerDeviceID: String) {
         self.currentChatRecipientDeviceID = partnerDeviceID
-        print("Selected chat partner device: \\(partnerDeviceID)")
+        print("Selected chat partner device: \(partnerDeviceID)")
     }
 
     // Simplified sendMessage - can message anyone you can see
@@ -720,7 +721,7 @@ class GridViewModel: ObservableObject {
         // This should trigger UI update due to @Published
         self.messages.append(optimisticMessage)
         self.messages.sort(by: { $0.timestamp < $1.timestamp }) // Keep sorted
-        print("GridViewModel: Optimistically added message (TempID: \\(temporaryID)): \\(text)")
+        print("GridViewModel: Optimistically added message (TempID: \(temporaryID)): \(text)")
 
         // 3. Send to messaging service
         // Note: The `message` object sent to `messagingService.sendMessage` might need to be the one
@@ -734,12 +735,12 @@ class GridViewModel: ObservableObject {
             
             // Find the optimistic message in our array using its temporaryID
             guard let optimisticMessageIndex = self.messages.firstIndex(where: { $0.id == temporaryID && $0.status == .sending }) else {
-                print("GridViewModel: Could not find optimistic message (TempID: \\(temporaryID)) to update after send attempt. It might have been already updated or removed.")
+                print("GridViewModel: Could not find optimistic message (TempID: \(temporaryID)) to update after send attempt. It might have been already updated or removed.")
                 // If the message from subscription arrived faster and replaced it, that's okay.
                 // Or if `savedMessage.id` from success case matches the `temporaryID` initially, that's also okay.
                 // Let's check if a message with the *potential* final ID (if known from savedMessage) exists.
                 if case .success(let savedMessage) = result, self.messages.contains(where: { $0.id == savedMessage.id }) {
-                    print("GridViewModel: Message (ID: \\(savedMessage.id)) seems to be already updated by subscription or direct ID match.")
+                    print("GridViewModel: Message (ID: \(savedMessage.id)) seems to be already updated by subscription or direct ID match.")
                 }
                 return
             }
@@ -751,11 +752,11 @@ class GridViewModel: ObservableObject {
                 self.messages[optimisticMessageIndex].recordID = savedMessage.recordID
                 self.messages[optimisticMessageIndex].timestamp = savedMessage.timestamp // Server authoritative timestamp
                 self.messages[optimisticMessageIndex].status = .sent
-                print("GridViewModel: Optimistic message (TempID: \\(temporaryID)) confirmed by server. New ID: \\(savedMessage.id), Status: .sent")
+                print("GridViewModel: Optimistic message (TempID: \(temporaryID)) confirmed by server. New ID: \(savedMessage.id), Status: .sent")
                 
             case .failure(let error):
                 self.messages[optimisticMessageIndex].status = .failed
-                print("GridViewModel: Optimistic message (TempID: \\(temporaryID)) failed to send: \\(error.localizedDescription). Status: .failed")
+                print("GridViewModel: Optimistic message (TempID: \(temporaryID)) failed to send: \(error.localizedDescription). Status: .failed")
                 // TODO: Implement retry logic or user notification
             }
             
@@ -779,22 +780,20 @@ class GridViewModel: ObservableObject {
         // Ensure location services are active
         locationService.requestLocationPermission()
         
-        // If we already have a profile, immediately update and refresh
-        if let profile = currentUserProfile {
-            // Get current location and update profile
-            if let currentLocation = locationService.currentLocation {
-                var updatedProfile = profile
-                updatedProfile.updateLocation(currentLocation)
-                self.currentUserProfile = updatedProfile
-                
-                // Share to iCloud immediately
-                updateUserActivityAndLocation(updatedProfile)
-                
-                // Refresh grid
-                autoRefreshGrid(with: currentLocation)
+        // Request location once for this grid refresh
+        locationService.requestLocationOnce()
+        
+        // Wait a moment for location to be available, then refresh
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            
+            if let currentLocation = self.locationService.currentLocation {
+                // Manually trigger location update and grid refresh
+                self.handleLocationUpdate(currentLocation)
             } else {
                 // No location yet, just refresh with existing data
-                autoRefreshGrid()
+                print("No location available yet, refreshing with existing data")
+                self.autoRefreshGrid()
             }
         }
     }
