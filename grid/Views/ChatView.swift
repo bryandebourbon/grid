@@ -9,6 +9,9 @@ struct ChatView: View {
     @State private var selectedPhotoItem: PhotosPickerItem? = nil // For the new photo picker
     @State private var showPhotoPicker = false // To present the picker
     
+    // Add dismiss environment for closing the sheet
+    @Environment(\.dismiss) var dismiss
+    
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
     }
@@ -99,6 +102,33 @@ struct ChatView: View {
         }
         .navigationTitle(recipientDeviceID == currentDeviceID ? "My Notes" : "Chat with \(recipientDisplayName())")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if recipientDeviceID != currentDeviceID {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button(action: {
+                            // First dismiss the chat sheet, then show report
+                            dismiss()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                // Find the recipient's profile
+                                for row in viewModel.gridNodes {
+                                    for node in row {
+                                        if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
+                                            viewModel.selectedUserProfileForReport = ProfileCardUser(id: recipientDeviceID, userProfile: profile)
+                                            return
+                                        }
+                                    }
+                                }
+                            }
+                        }) {
+                            Label("Report User", systemImage: "exclamationmark.shield")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+        }
         .onAppear {
             // When the view appears, ensure the viewModel knows which device we're chatting with.
             viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
