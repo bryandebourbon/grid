@@ -98,8 +98,8 @@ struct ReportUserView: View {
     private func submitReport() {
         isSubmitting = true
         
-        // Create report
-        viewModel.reportUser(
+        // Create report using content-filtered method
+        viewModel.reportUserWithAnalysis(
             deviceID: userProfile.deviceID,
             reason: selectedReason,
             description: additionalDetails.isEmpty ? nil : additionalDetails

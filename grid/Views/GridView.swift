@@ -330,6 +330,14 @@ struct GridView: View {
                             Label("Contact Us", systemImage: "envelope")
                         }
                         
+                        Button(action: { viewModel.showingPrivacyPolicy = true }) {
+                            Label("Privacy Policy", systemImage: "hand.raised.fill")
+                        }
+                        
+                        Button(action: { viewModel.showingTrackingPermission = true }) {
+                            Label("Tracking Settings", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                        
                         Button(action: signOutAction) {
                             Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         }
@@ -365,6 +373,12 @@ struct GridView: View {
             }
             .sheet(isPresented: $showingContactInfo) {  // NEW: Sheet for Contact Info
                 ContactInfoView()
+            }
+            .sheet(isPresented: $viewModel.showingPrivacyPolicy) {  // NEW: Sheet for Privacy Policy
+                PrivacyPolicyView()
+            }
+            .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
+                TrackingPermissionView(privacyService: viewModel.privacyService)
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -980,11 +994,13 @@ struct ProfileCardView: View {
                                     
                                     Button("Save Bio") {
                                         isEditingBio = false
-                                        viewModel.updateUserProfileBio(bio: bioText) { success in
+                                        viewModel.updateUserProfileBioWithModeration(bio: bioText) { success, error in
                                             if success {
                                                 print("Bio updated successfully.")
                                             } else {
-                                                print("Failed to update bio.")
+                                                print("Failed to update bio: \(error ?? "Unknown error")")
+                                                // Show error to user - could add an alert here
+                                                bioText = viewModel.currentUserProfile?.bio ?? ""
                                             }
                                         }
                                     }
@@ -1081,7 +1097,7 @@ struct ProfileCardView: View {
         
         isSavingPhotos = true
         
-        viewModel.updateCurrentProfileImage(newPhotoData: photoData)
+        viewModel.updateCurrentProfileImageWithModeration(newPhotoData: photoData)
         
         // Reload the main image
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

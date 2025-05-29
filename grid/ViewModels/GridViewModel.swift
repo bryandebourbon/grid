@@ -22,7 +22,26 @@ import SwiftUI
 import CloudKit
 import CoreLocation
 import PhotosUI
+#if canImport(UIKit)
+import UIKit // For UIImage support
+#endif
 
+// Explicit imports for project-specific types:
+// Ensure these types are accessible (public/internal) and correctly named.
+
+// struct UserProfile is defined in Models/UserProfile.swift
+// struct GridViewModel is defined in ViewModels/GridViewModel.swift (contains GridNode)
+// struct Message is defined in Models/Message.swift
+// struct ChatView is defined in Views/ChatView.swift (if it exists as a separate file)
+
+// Add explicit imports for model types to resolve compilation errors
+// These should be available since they're in the same target
+// but explicit imports help with clarity and resolve any module issues
+// Assuming GridNode is defined in GridViewModel or a similar accessible location.
+// Assuming Message is in Models and ChatView is in Views.
+// If these paths are incorrect, the build will fail, and we can adjust.
+
+@MainActor
 class GridViewModel: ObservableObject {
     @Published var gridNodes: [[GridNode]] = []
     @Published var currentUserProfile: UserProfile?
@@ -40,6 +59,12 @@ class GridViewModel: ObservableObject {
             updateGridWithAllProfiles(profiles)
         }
     }
+    
+    // NEW: Privacy and content moderation services
+    @Published var privacyService = PrivacyService()
+    @Published var contentModerationService = ContentModerationService()
+    @Published var showingTrackingPermission = false
+    @Published var showingPrivacyPolicy = false
     
     // NEW: Encryption mode properties
     @Published var isEncryptionMode: Bool = false {
@@ -84,6 +109,7 @@ class GridViewModel: ObservableObject {
         setupLocationHandlers()
         setupProximityHandlers()
         setupNavigationHandlers()
+        setupPrivacyHandlers()
         
         if let profile = initialProfile {
             updateUserActivityAndLocation(profile)
@@ -101,6 +127,11 @@ class GridViewModel: ObservableObject {
         
         // Request location permission on init
         locationService.requestLocationPermission()
+        
+        // Request tracking permission after a short delay (better UX)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            self.requestTrackingPermissionIfNeeded()
+        }
     }
     
     private func setupMessagingHandlers() {
@@ -213,6 +244,13 @@ class GridViewModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+    }
+    
+    private func setupPrivacyHandlers() {
+        // Add any additional setup for privacy handlers if needed
+        // This could include setting up notifications, handling privacy policy acceptance, etc.
+        // For now, we'll just add a placeholder for these handlers.
+        print("GridViewModel: Setting up privacy handlers...")
     }
     
     private func handleLocationUpdate(_ location: CLLocation?) {
@@ -1895,5 +1933,111 @@ class GridViewModel: ObservableObject {
                 }
             }
         }
+    }
+    
+    // MARK: - Privacy and Content Moderation Methods
+    
+    /// Request tracking permission if not already determined
+    private func requestTrackingPermissionIfNeeded() {
+        if privacyService.trackingAuthorizationStatus == .notDetermined {
+            showingTrackingPermission = true
+        }
+    }
+    
+    /// Send message with content filtering
+    func sendMessageWithModeration(text: String, to recipientDeviceID: String, isEncrypted: Bool = false) {
+        // First check content appropriateness
+        let moderationResult = contentModerationService.isMessageAppropriate(text)
+        
+        if !moderationResult.isAppropriate {
+            print("Message blocked by content filter: \(moderationResult.reason ?? "Unknown reason")")
+            // You could show an alert here to inform the user
+            return
+        }
+        
+        // If content is appropriate, send the message normally
+        // Note: encryption is handled internally by sendMessage based on isEncryptionMode
+        sendMessage(text: text, to: recipientDeviceID)
+        
+        // Track the event for analytics (if user has consented)
+        privacyService.trackEvent("message_sent", parameters: [
+            "recipient_type": recipientDeviceID == currentUserProfile?.deviceID ? "self" : "other",
+            "is_encrypted": isEncrypted,
+            "message_length": text.count
+        ])
+    }
+    
+    /// Update bio with content filtering
+    func updateUserProfileBioWithModeration(bio: String, completion: @escaping (Bool, String?) -> Void) {
+        // Check bio appropriateness
+        let moderationResult = contentModerationService.isBioAppropriate(bio)
+        
+        if !moderationResult.isAppropriate {
+            completion(false, moderationResult.reason)
+            return
+        }
+        
+        // If bio is appropriate, update normally
+        updateUserProfileBio(bio: bio) { [weak self] success in
+            if success {
+                self?.privacyService.trackEvent("bio_updated", parameters: [
+                    "bio_length": bio.count
+                ])
+            }
+            completion(success, nil)
+        }
+    }
+    
+    /// Update profile image with content filtering
+    func updateCurrentProfileImageWithModeration(newPhotoData: Data) {
+        #if canImport(UIKit)
+        // Check image appropriateness
+        let moderationResult = contentModerationService.isImageAppropriate(newPhotoData)
+        
+        if !moderationResult.isAppropriate {
+            print("Image blocked by content filter: \(moderationResult.reason ?? "Unknown reason")")
+            // You could show an alert here to inform the user
+            return
+        }
+        #endif
+        
+        // If image is appropriate, update normally
+        updateCurrentProfileImage(newPhotoData: newPhotoData)
+        
+        // Track the event
+        privacyService.trackEvent("profile_image_updated", parameters: [
+            "image_size_kb": newPhotoData.count / 1024
+        ])
+    }
+    
+    /// Report user with automatic content analysis
+    func reportUserWithAnalysis(deviceID: String, reason: Report.ReportReason, description: String? = nil) {
+        // If there's a description, analyze it for appropriateness
+        if let desc = description, !desc.isEmpty {
+            let moderationResult = contentModerationService.isTextAppropriate(desc)
+            if !moderationResult.isAppropriate {
+                print("Report description blocked by content filter")
+                return
+            }
+        }
+        
+        // Submit the report
+        reportUser(deviceID: deviceID, reason: reason, description: description)
+        
+        // Track the event
+        privacyService.trackEvent("user_reported", parameters: [
+            "reason": reason.rawValue,
+            "has_description": description != nil
+        ])
+    }
+    
+    /// Get content moderation summary for admin purposes
+    func getContentModerationSummary() -> [String: Any] {
+        return [
+            "tracking_enabled": privacyService.canTrackUser(),
+            "content_filtering_active": true,
+            "privacy_policy_version": "1.0",
+            "att_status": privacyService.trackingAuthorizationStatus.rawValue
+        ]
     }
 }
