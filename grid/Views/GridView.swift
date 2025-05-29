@@ -139,6 +139,7 @@ struct GridView: View {
     @State private var showProfileOverlay = false
     @State private var overlayProfile: UserProfile? = nil
     @State private var showingSettingsMenu = false
+    @State private var showingContactInfo = false  // NEW: For contact info
     @State private var gridColumns: Int = 3 // Dynamic column count
     @State private var baseColumns: Int = 3 // The confirmed column count
     @State private var currentScale: CGFloat = 1.0
@@ -325,6 +326,10 @@ struct GridView: View {
                         
                         Divider()
                         
+                        Button(action: { showingContactInfo = true }) {
+                            Label("Contact Us", systemImage: "envelope")
+                        }
+                        
                         Button(action: signOutAction) {
                             Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
                         }
@@ -354,6 +359,12 @@ struct GridView: View {
                 // Placeholder for ProfileCardView - will be created next
                 // For now, just a simple view to confirm it works
                 ProfileCardView(viewModel: viewModel, userProfile: profileUser.userProfile)
+            }
+            .sheet(item: $viewModel.selectedUserProfileForReport) { profileUser in // NEW: Sheet for Report Dialog
+                ReportUserView(viewModel: viewModel, userProfile: profileUser.userProfile)
+            }
+            .sheet(isPresented: $showingContactInfo) {  // NEW: Sheet for Contact Info
+                ContactInfoView()
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -835,6 +846,29 @@ struct ProfileOverlayView: View {
                             .cornerRadius(10)
                         }
                     }
+                    
+                    // Report button
+                    if !isCurrentUser {
+                        Button(action: {
+                            // First close the overlay, then show report dialog
+                            onClose()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                viewModel.selectedUserProfileForReport = ProfileCardUser(id: userProfile.deviceID, userProfile: userProfile)
+                            }
+                        }) {
+                            VStack {
+                                Image(systemName: "exclamationmark.shield")
+                                    .font(.title2)
+                                    .foregroundColor(.orange)
+                                Text("Report")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                            }
+                            .frame(width: 60, height: 60)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(10)
+                        }
+                    }
                 }
                 .padding(.top)
             }
@@ -1016,6 +1050,16 @@ struct ProfileCardView: View {
                                 Label(viewModel.isBlocked(userProfile.deviceID) ? "Unblock" : "Block", 
                                       systemImage: viewModel.isBlocked(userProfile.deviceID) ? "nosign" : "hand.raised")
                             }
+                            
+                            Divider()
+                            
+                            Button(action: {
+                                dismiss()
+                                viewModel.selectedUserProfileForReport = ProfileCardUser(id: userProfile.deviceID, userProfile: userProfile)
+                            }) {
+                                Label("Report User", systemImage: "exclamationmark.shield")
+                            }
+                            .foregroundColor(.red)
                         } label: {
                             Image(systemName: "ellipsis.circle")
                         }

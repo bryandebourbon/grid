@@ -32,6 +32,7 @@ class GridViewModel: ObservableObject {
     @Published var locationPermissionStatus: String = "Location permission not requested"
     @Published var chatRecipientToPresent: ChatRecipient?
     @Published var pendingChatNavigationDeviceID: String? = nil // For deferred navigation
+    @Published var selectedUserProfileForReport: ProfileCardUser? = nil // For report dialog
     @Published var showingStarredOnly: Bool = false { // Toggle for showing only starred users
         didSet {
             // Refresh the grid when filter changes
@@ -817,6 +818,10 @@ class GridViewModel: ObservableObject {
                                 self.starredUsers.insert(relationship.targetUserID)
                             case .block:
                                 self.blockedUsers.insert(relationship.targetUserID)
+                            case .report:
+                                // Reports are handled separately - they're not stored in a set
+                                // Skip report records when loading star/block relationships
+                                break
                             }
                         }
                     }
@@ -1852,6 +1857,43 @@ class GridViewModel: ObservableObject {
             return decryptedText
         } else {
             return "[Failed to decrypt message]"
+        }
+    }
+
+    // NEW: Report a user for inappropriate content
+    func reportUser(deviceID: String, reason: Report.ReportReason, description: String? = nil) {
+        guard let currentUserID = currentUserProfile?.userID,
+              let reportedUserID = getUserID(forDeviceID: deviceID) else { 
+            print("Error: Missing user IDs for report")
+            return 
+        }
+        
+        let report = Report(
+            reporterUserID: currentUserID,
+            reportedUserID: reportedUserID,
+            reportedDeviceID: deviceID,
+            reportReason: reason,
+            reportDescription: description
+        )
+        
+        let record = report.toCKRecord()
+        let publicDB = CKContainer.default().publicCloudDatabase
+        
+        publicDB.save(record) { savedRecord, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("Error submitting report: \(error.localizedDescription)")
+                    // TODO: Show user an error alert
+                } else {
+                    print("Successfully submitted report for user: \(reportedUserID)")
+                    // TODO: Show user a success alert
+                    
+                    // Optionally auto-block the reported user
+                    if !self.isBlocked(deviceID) {
+                        self.toggleBlock(for: deviceID)
+                    }
+                }
+            }
         }
     }
 }

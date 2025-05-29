@@ -12,6 +12,7 @@ struct UserRelationship: Identifiable {
     enum ActionType: String {
         case star = "star"
         case block = "block"
+        case report = "report"
         // Future: case heart = "heart"
     }
     
