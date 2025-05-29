@@ -91,7 +91,16 @@ struct ChatView: View {
                         }
                     }
                 
-                Button(action: sendMessage) {
+                Button(action: {
+                    if !newMessageText.isEmpty {
+                        let messageToSend = newMessageText
+                        newMessageText = "" // Clear input immediately for better UX
+                        
+                        // Use content-filtered message sending
+                        // Note: encryption mode is handled internally by GridViewModel based on isEncryptionMode
+                        viewModel.sendMessageWithModeration(text: messageToSend, to: recipientDeviceID)
+                    }
+                }) {
                     Image(systemName: "paperplane.fill")
                         .padding(.trailing)
                         .foregroundColor(newMessageText.isEmpty ? .gray : .blue)
