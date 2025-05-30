@@ -80,6 +80,9 @@ class GridViewModel: ObservableObject {
     @Published var showingTrackingPermission = false
     @Published var showingPrivacyPolicy = false
     
+    // NEW: Demo service for promotional screenshots
+    @Published var demoService = DemoService()
+    
     // NEW: Encryption-only messaging properties
     @Published var showingAccountRecreationAlert = false
     @Published var hasUnencryptedMessages = false
@@ -320,11 +323,29 @@ class GridViewModel: ObservableObject {
             return
         }
         
+        // Get profiles to display - either real users or demo users
+        var profilesToDisplay: [UserProfile] = []
+        
+        if demoService.isDemoMode {
+            // In demo mode, generate demo users instead of showing real users
+            if let currentLocation = locationService.currentLocation {
+                profilesToDisplay = demoService.generateDemoUsers(near: currentLocation, count: 24) // Fill most of the 5x5 grid
+                print("GridViewModel: Using \(profilesToDisplay.count) demo users for grid")
+            } else {
+                // If no location, create demo users around a default location (San Francisco)
+                let defaultLocation = CLLocation(latitude: 37.7749, longitude: -122.4194)
+                profilesToDisplay = demoService.generateDemoUsers(near: defaultLocation, count: 24)
+                print("GridViewModel: Using \(profilesToDisplay.count) demo users with default location")
+            }
+        } else {
+            profilesToDisplay = profiles
+        }
+        
         // Separate current user from other profiles
         var currentUserProfile: UserProfile?
         var otherProfiles: [UserProfile] = []
         
-        for profile in profiles {
+        for profile in profilesToDisplay {
             if profile.deviceID == currentUserDeviceID {
                 currentUserProfile = profile
             } else {
@@ -332,18 +353,20 @@ class GridViewModel: ObservableObject {
             }
         }
         
-        // Filter profiles if showing starred only
-        if showingStarredOnly {
+        // Filter profiles if showing starred only (skip in demo mode)
+        if showingStarredOnly && !demoService.isDemoMode {
             otherProfiles = otherProfiles.filter { profile in
                 starredUsers.contains(profile.userID)
             }
         }
         
-        // Filter out blocked users (mutual blocking - users I blocked OR users who blocked me)
-        otherProfiles = otherProfiles.filter { profile in
-            let iBlockedThem = blockedUsers.contains(profile.userID)
-            let theyBlockedMe = usersWhoBlockedMe.contains(profile.userID)
-            return !iBlockedThem && !theyBlockedMe
+        // Filter out blocked users (skip in demo mode)
+        if !demoService.isDemoMode {
+            otherProfiles = otherProfiles.filter { profile in
+                let iBlockedThem = blockedUsers.contains(profile.userID)
+                let theyBlockedMe = usersWhoBlockedMe.contains(profile.userID)
+                return !iBlockedThem && !theyBlockedMe
+            }
         }
         
         // Filter profiles by selected interests if any are selected
@@ -355,9 +378,14 @@ class GridViewModel: ObservableObject {
         }
         
         // Place current user first at position (0, 0)
-        if let currentProfile = currentUserProfile {
-            gridNodes[0][0].userProfile = currentProfile
-            print("Placed current user '\(currentProfile.displayName)' at top-left position (0,0)")
+        if let currentProfile = self.currentUserProfile {
+            // Use demo version of current user if demo mode is enabled
+            let profileToPlace = demoService.isDemoMode ? 
+                (demoService.createDemoCurrentUser(from: currentProfile) ?? currentProfile) : 
+                currentProfile
+                
+            gridNodes[0][0].userProfile = profileToPlace
+            print("Placed current user '\(profileToPlace.displayName)' at top-left position (0,0) - Demo mode: \(demoService.isDemoMode)")
         }
         
         // Place other profiles in remaining positions (sorted by distance if location available)
@@ -366,8 +394,9 @@ class GridViewModel: ObservableObject {
         }
         
         let filterStatus = showingStarredOnly ? " (starred only)" : ""
-        let blockingStatus = " (filtered out \(blockedUsers.count) blocked + \(usersWhoBlockedMe.count) who blocked me)"
-        print("Updated grid with \(otherProfiles.count + 1) total users\(filterStatus)\(blockingStatus) (current user at top-left)")
+        let blockingStatus = demoService.isDemoMode ? " (demo mode)" : " (filtered out \(blockedUsers.count) blocked + \(usersWhoBlockedMe.count) who blocked me)"
+        let modeLabel = demoService.isDemoMode ? "demo users" : "real users"
+        print("Updated grid with \(otherProfiles.count + 1) total \(modeLabel)\(filterStatus)\(blockingStatus) (current user at top-left)")
         objectWillChange.send()
     }
     
