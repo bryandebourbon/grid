@@ -69,6 +69,11 @@ class GridViewModel: ObservableObject {
         }
     }
     
+    // NEW: Interest search properties
+    @Published var showingInterestSearch = false
+    @Published var searchText = ""
+    @Published var filteredInterests: [Interest] = []
+    
     // NEW: Privacy and content moderation services
     @Published var privacyService = PrivacyService()
     @Published var contentModerationService = ContentModerationService()
