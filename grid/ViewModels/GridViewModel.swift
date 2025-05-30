@@ -60,6 +60,15 @@ class GridViewModel: ObservableObject {
         }
     }
     
+    // NEW: Interest filtering properties
+    @Published var selectedInterestFilter: Set<Interest> = [] {
+        didSet {
+            // Refresh the grid when interest filter changes
+            let profiles = proximityService.activeNearbyProfiles
+            updateGridWithAllProfiles(profiles)
+        }
+    }
+    
     // NEW: Privacy and content moderation services
     @Published var privacyService = PrivacyService()
     @Published var contentModerationService = ContentModerationService()
@@ -320,6 +329,14 @@ class GridViewModel: ObservableObject {
         if showingStarredOnly {
             otherProfiles = otherProfiles.filter { profile in
                 starredUsers.contains(profile.userID)
+            }
+        }
+        
+        // Filter profiles by selected interests if any are selected
+        if !selectedInterestFilter.isEmpty {
+            otherProfiles = otherProfiles.filter { profile in
+                let sharedInterests = Set(profile.interests).intersection(selectedInterestFilter)
+                return !sharedInterests.isEmpty
             }
         }
         
@@ -1721,6 +1738,51 @@ class GridViewModel: ObservableObject {
             }
         }
     }
+    
+    func updateUserProfileInterests(interests: [Interest], completion: @escaping (Bool) -> Void) {
+        guard var userProfile = self.currentUserProfile else {
+            print("No current user profile to update interests for.")
+            completion(false)
+            return
+        }
+
+        let oldInterests = userProfile.interests
+        userProfile.interests = interests
+
+        // Optimistically update local profile
+        self.currentUserProfile?.interests = interests
+        
+        // Save to CloudKit using proximityService
+        proximityService.updateUserActivity(userProfile) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let savedProfile):
+                    // Update local profile with the one returned from save
+                    self?.currentUserProfile = savedProfile
+                    self?.objectWillChange.send() // Notify views
+                    print("User interests updated and saved successfully. New interests: \(interests.map { $0.rawValue })")
+                    
+                    // Update the proximityService.activeNearbyProfiles array with the updated profile
+                    if let proximityService = self?.proximityService {
+                        // Find and update the current user's profile in the activeNearbyProfiles array
+                        if let index = proximityService.activeNearbyProfiles.firstIndex(where: { $0.deviceID == savedProfile.deviceID }) {
+                            proximityService.activeNearbyProfiles[index] = savedProfile
+                        }
+                        
+                        // Now refresh the grid with the updated profiles
+                        self?.updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+                    }
+                    
+                    completion(true)
+                case .failure(let error):
+                    print("Error saving user profile interests to CloudKit: \(error.localizedDescription)")
+                    // Revert optimistic update on failure
+                    self?.currentUserProfile?.interests = oldInterests
+                    completion(false)
+                }
+            }
+        }
+    }
 
     // NEW: Check CloudKit availability before attempting operations
     func checkCloudKitAvailability(completion: @escaping (Bool, String?) -> Void) {
@@ -2039,5 +2101,45 @@ class GridViewModel: ObservableObject {
             "privacy_policy_version": "1.0",
             "att_status": privacyService.trackingAuthorizationStatus.rawValue
         ]
+    }
+    
+    // MARK: - Interest Filter Methods
+    
+    /// Toggle interest filter on/off
+    func toggleInterestFilter(_ interest: Interest) {
+        if selectedInterestFilter.contains(interest) {
+            selectedInterestFilter.remove(interest)
+        } else {
+            selectedInterestFilter.insert(interest)
+        }
+    }
+    
+    /// Remove specific interest from filter
+    func removeInterestFilter(_ interest: Interest) {
+        selectedInterestFilter.remove(interest)
+    }
+    
+    /// Clear all interest filters
+    func clearInterestFilter() {
+        selectedInterestFilter.removeAll()
+    }
+    
+    /// Check if interest filter is active
+    var hasActiveInterestFilter: Bool {
+        return !selectedInterestFilter.isEmpty
+    }
+    
+    /// Get count of users that share interests with current user
+    func getSharedInterestCount(with userProfile: UserProfile) -> Int {
+        guard let myInterests = currentUserProfile?.interests else { return 0 }
+        let sharedInterests = Set(myInterests).intersection(Set(userProfile.interests))
+        return sharedInterests.count
+    }
+    
+    /// Get the shared interests between current user and another user
+    func getSharedInterests(with userProfile: UserProfile) -> [Interest] {
+        guard let myInterests = currentUserProfile?.interests else { return [] }
+        let sharedInterests = Set(myInterests).intersection(Set(userProfile.interests))
+        return Array(sharedInterests).sorted { $0.rawValue < $1.rawValue }
     }
 }

@@ -12,7 +12,8 @@ struct UserProfile: Codable {
     var deviceName: String          // Human-readable device name
     var profileImage: CKAsset?      // For the profile photo (optional)
     var additionalPhotos: [CKAsset]? // Up to 10 additional photos
-    var bio: String? // NEW: User's biography or about me text
+    var bio: String?                // User's biography or about me text
+    var interests: [Interest]       // NEW: User's selected interests
     
     // Location and activity tracking
     var latitude: Double?           // Current latitude
@@ -35,6 +36,7 @@ struct UserProfile: Codable {
         case lastActiveTimestamp
         case isCurrentlyActive
         case bio
+        case interests
     }
 
     // Initializer for creating a new profile
@@ -44,6 +46,7 @@ struct UserProfile: Codable {
          profileImage: CKAsset? = nil,
          additionalPhotos: [CKAsset]? = nil,
          bio: String? = nil,
+         interests: [Interest] = [],
          latitude: Double? = nil,
          longitude: Double? = nil,
          lastActiveTimestamp: Date = Date(),
@@ -55,6 +58,7 @@ struct UserProfile: Codable {
         self.profileImage = profileImage
         self.additionalPhotos = additionalPhotos
         self.bio = bio
+        self.interests = interests
         self.latitude = latitude
         self.longitude = longitude
         self.lastActiveTimestamp = lastActiveTimestamp
@@ -72,6 +76,7 @@ struct UserProfile: Codable {
         self.profileImage = nil
         self.additionalPhotos = nil
         self.bio = try container.decodeIfPresent(String.self, forKey: .bio)
+        self.interests = try container.decodeIfPresent([Interest].self, forKey: .interests) ?? []
         self.latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
@@ -89,6 +94,7 @@ struct UserProfile: Codable {
         try container.encode(self.lastActiveTimestamp, forKey: .lastActiveTimestamp)
         try container.encode(self.isCurrentlyActive, forKey: .isCurrentlyActive)
         try container.encodeIfPresent(self.bio, forKey: .bio)
+        try container.encode(self.interests, forKey: .interests)
     }
 
     // Initializer from a CKRecord
@@ -116,6 +122,13 @@ struct UserProfile: Codable {
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
         self.isCurrentlyActive = record["isCurrentlyActive"] as? Bool ?? false
         self.bio = record["bio"] as? String
+        
+        // Handle interests from CloudKit - stored as array of strings
+        if let interestStrings = record["interests"] as? [String] {
+            self.interests = interestStrings.compactMap { Interest(rawValue: $0) }
+        } else {
+            self.interests = []
+        }
     }
 
     // Helper to create/update a CKRecord for PUBLIC database (grid visibility)
@@ -130,6 +143,9 @@ struct UserProfile: Codable {
         record["lastActiveTimestamp"] = self.lastActiveTimestamp
         record["isCurrentlyActive"] = self.isCurrentlyActive
         record["bio"] = self.bio
+        
+        // Store interests as array of strings for CloudKit compatibility
+        record["interests"] = self.interests.map { $0.rawValue }
         
         if let imageAsset = self.profileImage {
             record["profileImage"] = imageAsset
@@ -197,5 +213,43 @@ struct UserProfile: Codable {
             return nil
         }
         return myLocation.distance(from: otherLocation)
+    }
+    
+    // NEW: Interest-based compatibility methods
+    
+    // Calculate shared interests with another user
+    func sharedInterests(with otherProfile: UserProfile) -> [Interest] {
+        return Set(self.interests).intersection(Set(otherProfile.interests)).sorted { $0.rawValue < $1.rawValue }
+    }
+    
+    // Calculate interest compatibility score (0.0 to 1.0)
+    func interestCompatibility(with otherProfile: UserProfile) -> Double {
+        let myInterests = Set(self.interests)
+        let theirInterests = Set(otherProfile.interests)
+        let sharedCount = myInterests.intersection(theirInterests).count
+        let totalUniqueCount = myInterests.union(theirInterests).count
+        
+        guard totalUniqueCount > 0 else { return 0.0 }
+        return Double(sharedCount) / Double(totalUniqueCount)
+    }
+    
+    // Check if user has specific interest
+    func hasInterest(_ interest: Interest) -> Bool {
+        return interests.contains(interest)
+    }
+    
+    // Get top interest categories for display
+    var topInterestCategories: [String] {
+        let categories = Interest.categories
+        var userCategories: [String] = []
+        
+        for category in categories {
+            let hasAnyInCategory = category.interests.contains { interests.contains($0) }
+            if hasAnyInCategory {
+                userCategories.append(category.name)
+            }
+        }
+        
+        return Array(userCategories.prefix(3)) // Return top 3 categories
     }
 } 

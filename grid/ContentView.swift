@@ -129,6 +129,7 @@ struct ContentView: View {
             "deviceID",
             "deviceName",
             "bio",
+            "interests",
             "additionalPhotos",
             "latitude",
             "longitude",
