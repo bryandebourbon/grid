@@ -140,6 +140,8 @@ struct GridView: View {
     @State private var overlayProfile: UserProfile? = nil
     @State private var showingSettingsMenu = false
     @State private var showingContactInfo = false  // NEW: For contact info
+    @State private var showingInterestFilter = false  // NEW: For interest filtering
+    @State private var showInterestsOnGrid = true  // NEW: Toggle for showing interests on grid cells
     @State private var gridColumns: Int = 3 // Dynamic column count
     @State private var baseColumns: Int = 3 // The confirmed column count
     @State private var currentScale: CGFloat = 1.0
@@ -164,22 +166,52 @@ struct GridView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Encryption mode indicator
-                if viewModel.isEncryptionMode {
-                    HStack {
-                        Image(systemName: "lock.fill")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                        Text("Secure Mode - Only showing encrypted devices")
-                            .font(.caption)
-                            .foregroundColor(.green)
+                // Filter indicators
+                if viewModel.isEncryptionMode || viewModel.showingStarredOnly || !viewModel.selectedInterestFilter.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            if viewModel.isEncryptionMode {
+                                FilterChip(
+                                    text: "Secure Mode",
+                                    icon: "lock.fill",
+                                    color: .green
+                                ) {
+                                    viewModel.isEncryptionMode = false
+                                }
+                            }
+                            
+                            if viewModel.showingStarredOnly {
+                                FilterChip(
+                                    text: "Starred",
+                                    icon: "star.fill",
+                                    color: .yellow
+                                ) {
+                                    viewModel.showingStarredOnly = false
+                                }
+                            }
+                            
+                            ForEach(Array(viewModel.selectedInterestFilter), id: \.self) { interest in
+                                FilterChip(
+                                    text: interest.rawValue,
+                                    icon: nil,
+                                    color: .blue,
+                                    emoji: interest.emoji
+                                ) {
+                                    viewModel.removeInterestFilter(interest)
+                                }
+                            }
+                            
+                            if !viewModel.selectedInterestFilter.isEmpty {
+                                Button("Clear All") {
+                                    viewModel.clearInterestFilter()
+                                }
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                            }
+                        }
+                        .padding(.horizontal)
                     }
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 12)
-                    .background(Color.green.opacity(0.1))
-                    .cornerRadius(8)
-                    .padding(.horizontal)
-                    .padding(.top, 4)
+                    .padding(.vertical, 8)
                 }
                 
                 if let profile = viewModel.currentUserProfile {
@@ -189,10 +221,18 @@ struct GridView: View {
                                 GridNodeView(
                                     node: node,
                                     viewModel: viewModel,
-                                    onProfileTapped: { profile in // For long press
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            self.overlayProfile = profile
-                                            self.showProfileOverlay = true
+                                    showInterests: showInterestsOnGrid,
+                                    onProfileTapped: { profile in // For long press and double tap
+                                        if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
+                                           profile.deviceID == currentUserDeviceID {
+                                            // Current user - open full profile editor
+                                            selectedUserProfileForCard = ProfileCardUser(id: profile.deviceID, userProfile: profile)
+                                        } else {
+                                            // Other user - show overlay
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                self.overlayProfile = profile
+                                                self.showProfileOverlay = true
+                                            }
                                         }
                                     },
                                     onChatTapped: { recipientDeviceID in
@@ -287,6 +327,28 @@ struct GridView: View {
                                 .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
                         }
                         
+                        // Interest filter button - NEW
+                        Button(action: {
+                            showingInterestFilter = true
+                        }) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: viewModel.selectedInterestFilter.isEmpty ? "heart" : "heart.fill")
+                                    .font(.body)
+                                    .foregroundColor(viewModel.selectedInterestFilter.isEmpty ? .primary : .pink)
+                                
+                                // Show count badge if filters are active
+                                if !viewModel.selectedInterestFilter.isEmpty {
+                                    Text("\(viewModel.selectedInterestFilter.count)")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white)
+                                        .frame(width: 16, height: 16)
+                                        .background(Circle().fill(Color.pink))
+                                        .offset(x: 8, y: -8)
+                                }
+                            }
+                        }
+                        
                         // Encryption mode button
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -307,6 +369,17 @@ struct GridView: View {
                                 }
                             }
                         }
+                        
+                        // Show interests toggle button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showInterestsOnGrid.toggle()
+                            }
+                        }) {
+                            Image(systemName: showInterestsOnGrid ? "tag.fill" : "tag")
+                                .font(.body)
+                                .foregroundColor(showInterestsOnGrid ? .orange : .primary)
+                        }
                     }
                 }
                 
@@ -322,6 +395,16 @@ struct GridView: View {
                             }
                         }) {
                             Label("My Notes", systemImage: "note.text")
+                        }
+                        
+                        Divider()
+                        
+                        Button(action: {
+                            if let currentProfile = viewModel.currentUserProfile {
+                                selectedUserProfileForCard = ProfileCardUser(id: currentProfile.deviceID, userProfile: currentProfile)
+                            }
+                        }) {
+                            Label("Edit Profile", systemImage: "person.circle")
                         }
                         
                         Divider()
@@ -379,6 +462,9 @@ struct GridView: View {
             }
             .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
                 TrackingPermissionView(privacyService: viewModel.privacyService)
+            }
+            .sheet(isPresented: $showingInterestFilter) {  // NEW: Sheet for Interest Filter
+                InterestFilterSheet(viewModel: viewModel)
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -448,6 +534,7 @@ struct GridView: View {
 struct GridNodeView: View {
     let node: GridNode
     let viewModel: GridViewModel
+    let showInterests: Bool
     let onProfileTapped: (UserProfile) -> Void // NEW: For single tap
     let onChatTapped: (String) -> Void // For double tap (was single tap)
     @StateObject private var imageLoader = ImageLoader()
@@ -479,15 +566,38 @@ struct GridNodeView: View {
             // Distance and status overlays
             if let profile = node.userProfile {
                 VStack {
-                    // Top: Badges (star and unread messages)
+                    // Top: Distance, star, encryption, and unread message badges
                     HStack {
-                        // Star indicator on top left
+                        // Distance on top left (or "Me" for current user)
+                        if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
+                           profile.deviceID == currentUserDeviceID {
+                            // "Me" label for current user
+                            Text("Me")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.8))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        } else {
+                            // Distance for other users
+                            if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
+                                Text(distanceString)
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.black.opacity(0.6))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                        }
+                        
+                        // Star indicator 
                         if viewModel.isStarred(profile.deviceID) {
                             Image(systemName: "star.fill")
-                                .font(.system(size: 14, weight: .bold))
+                                .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(.yellow)
-                                .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 20, height: 20))
-                                .padding(4)
+                                .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 18, height: 18))
                         }
                         
                         Spacer()
@@ -498,7 +608,6 @@ struct GridNodeView: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(.green)
                                 .background(Circle().fill(Color.white).frame(width: 18, height: 18))
-                                .padding(4)
                         }
                         
                         // Unread message badge on top right
@@ -514,41 +623,61 @@ struct GridNodeView: View {
                                     Circle()
                                         .stroke(Color.white, lineWidth: 1.5)
                                 )
-                                .padding(4)
                         }
                     }
+                    .padding(.horizontal, 4)
+                    .padding(.top, 4)
                     
                     Spacer()
                     
-                    // Bottom overlay: Distance and status indicators
-                    HStack {
-                        // Block indicator on bottom left
-                        if viewModel.isBlocked(profile.deviceID) {
-                            Image(systemName: "nosign")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.red)
-                                .background(Circle().fill(Color.white).frame(width: 16, height: 16))
-                                .padding(4)
-                        }
-                        
-                        Spacer()
-                        
-                        // Distance on bottom right
-                        if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
-                           profile.deviceID == currentUserDeviceID {
-                            // "Me" label for current user
-                            Text("Me")
-                                .font(.system(size: 8))
-                                .foregroundColor(.white)
-                        } else {
-                            // Just show distance for other users
-                            if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
-                                Text(distanceString)
-                                    .font(.system(size: 8))
-                                    .foregroundColor(.white)
+                    // Bottom: Block indicator and interests at very bottom
+                    VStack(spacing: 2) {
+                        // Block indicator 
+                        HStack {
+                            if viewModel.isBlocked(profile.deviceID) {
+                                Image(systemName: "nosign")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(.red)
+                                    .background(Circle().fill(Color.white).frame(width: 16, height: 16))
                             }
+                            Spacer()
+                        }
+                        .padding(.horizontal, 4)
+                        
+                        // Interests emojis at the very bottom
+                        if showInterests && !profile.interests.isEmpty {
+                            GeometryReader { geometry in
+                                let cellWidth = geometry.size.width
+                                let emojiSize: CGFloat = max(8, min(12, cellWidth / 10)) // Responsive emoji size
+                                let maxEmojis = max(3, Int(cellWidth / (emojiSize + 2))) // More emojis for larger cells
+                                
+                                HStack(spacing: 1) {
+                                    ForEach(Array(profile.interests.prefix(maxEmojis).enumerated()), id: \.offset) { index, interest in
+                                        Text(interest.emoji)
+                                            .font(.system(size: emojiSize))
+                                            .opacity(0.9)
+                                    }
+                                    
+                                    // Show "+X" if there are more interests
+                                    if profile.interests.count > maxEmojis {
+                                        Text("+\(profile.interests.count - maxEmojis)")
+                                            .font(.system(size: emojiSize - 1, weight: .medium))
+                                            .foregroundColor(.white)
+                                            .opacity(0.8)
+                                    }
+                                    
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.black.opacity(0.3))
+                                )
+                            }
+                            .frame(height: 16)
                         }
                     }
+                    .padding(.bottom, 4)
                 }
             }
         }
@@ -910,6 +1039,8 @@ struct ProfileCardView: View {
 
     @State private var bioText: String = ""
     @State private var isEditingBio: Bool = false
+    @State private var isEditingInterests: Bool = false
+    @State private var selectedInterests: Set<Interest> = []
 
     // Image loaders for main photo
     @StateObject private var mainImageLoader = ImageLoader()
@@ -1023,6 +1154,92 @@ struct ProfileCardView: View {
                         }
                     }
                     
+                    Divider()
+                    
+                    // Interests Section
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Interests")
+                                .font(.headline)
+                            
+                            Spacer()
+                            
+                            if isCurrentUserProfile {
+                                Button(isEditingInterests ? "Done" : "Edit") {
+                                    if isEditingInterests {
+                                        // Save interests
+                                        saveInterests()
+                                    } else {
+                                        // Start editing
+                                        selectedInterests = Set(viewModel.currentUserProfile?.interests ?? [])
+                                    }
+                                    isEditingInterests.toggle()
+                                }
+                                .foregroundColor(.blue)
+                                .font(.subheadline)
+                            }
+                        }
+                        
+                        if isEditingInterests && isCurrentUserProfile {
+                            // Interest editing interface
+                            VStack(alignment: .leading, spacing: 16) {
+                                Text("Select your interests (\(selectedInterests.count) selected)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                LazyVStack(alignment: .leading, spacing: 16) {
+                                    ForEach(Interest.categories) { category in
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text(category.name)
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            
+                                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2), spacing: 6) {
+                                                ForEach(category.interests) { interest in
+                                                    EditableInterestButton(
+                                                        interest: interest,
+                                                        isSelected: selectedInterests.contains(interest)
+                                                    ) {
+                                                        toggleInterest(interest)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                            }
+                        } else {
+                            // Display interests
+                            let interests = isCurrentUserProfile ? (viewModel.currentUserProfile?.interests ?? []) : userProfile.interests
+                            
+                            if interests.isEmpty {
+                                Text(isCurrentUserProfile ? "No interests selected. Tap Edit to add some." : "No interests listed.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .italic()
+                                    .padding(.vertical, 8)
+                            } else {
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2), spacing: 8) {
+                                    ForEach(interests) { interest in
+                                        HStack(spacing: 4) {
+                                            Text(interest.emoji)
+                                                .font(.caption)
+                                            Text(interest.rawValue)
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.blue.opacity(0.1))
+                                        .foregroundColor(.blue)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
                     Spacer()
                 }
                 .padding()
@@ -1085,9 +1302,32 @@ struct ProfileCardView: View {
             .onAppear {
                 mainImageLoader.loadImage(from: userProfile.profileImage)
                 bioText = isCurrentUserProfile ? (viewModel.currentUserProfile?.bio ?? "") : (userProfile.bio ?? "")
+                selectedInterests = Set(isCurrentUserProfile ? (viewModel.currentUserProfile?.interests ?? []) : userProfile.interests)
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func toggleInterest(_ interest: Interest) {
+        if selectedInterests.contains(interest) {
+            selectedInterests.remove(interest)
+        } else {
+            selectedInterests.insert(interest)
+        }
+    }
+    
+    private func saveInterests() {
+        viewModel.updateUserProfileInterests(interests: Array(selectedInterests)) { success in
+            if success {
+                print("Interests updated successfully.")
+            } else {
+                print("Failed to update interests.")
+                // Revert to original interests on failure
+                selectedInterests = Set(viewModel.currentUserProfile?.interests ?? [])
+            }
+        }
     }
     
     // MARK: - Photo Management Functions
@@ -1123,5 +1363,246 @@ struct GridView_Previews: PreviewProvider {
         }
         
         return GridView(viewModel: mockViewModel, signOutAction: {}, deleteAccountAction: {})
+    }
+}
+
+// MARK: - Filter Components
+
+struct FilterChip: View {
+    let text: String
+    let icon: String?
+    let color: Color
+    let emoji: String?
+    let onRemove: () -> Void
+    
+    init(text: String, icon: String? = nil, color: Color, emoji: String? = nil, onRemove: @escaping () -> Void) {
+        self.text = text
+        self.icon = icon
+        self.color = color
+        self.emoji = emoji
+        self.onRemove = onRemove
+    }
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            if let emoji = emoji {
+                Text(emoji)
+                    .font(.caption)
+            } else if let icon = icon {
+                Image(systemName: icon)
+                    .font(.caption)
+            }
+            
+            Text(text)
+                .font(.caption)
+                .fontWeight(.medium)
+            
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.1))
+        .foregroundColor(color)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(color.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+struct InterestFilterSheet: View {
+    @ObservedObject var viewModel: GridViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(spacing: 10) {
+                        Text("Filter by Interests")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("Find people who share your interests")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        
+                        if !viewModel.selectedInterestFilter.isEmpty {
+                            Text("\(viewModel.selectedInterestFilter.count) interests selected")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 10)
+                    
+                    // Show user's own interests first
+                    if let userInterests = viewModel.currentUserProfile?.interests, !userInterests.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Your Interests")
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                            
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+                                ForEach(userInterests) { interest in
+                                    InterestFilterButton(
+                                        interest: interest,
+                                        isSelected: viewModel.selectedInterestFilter.contains(interest),
+                                        isUserInterest: true
+                                    ) {
+                                        viewModel.toggleInterestFilter(interest)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.bottom, 20)
+                    }
+                    
+                    // All interest categories
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        ForEach(Interest.categories) { category in
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(category.name)
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                                
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+                                    ForEach(category.interests) { interest in
+                                        InterestFilterButton(
+                                            interest: interest,
+                                            isSelected: viewModel.selectedInterestFilter.contains(interest),
+                                            isUserInterest: viewModel.currentUserProfile?.interests.contains(interest) ?? false
+                                        ) {
+                                            viewModel.toggleInterestFilter(interest)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            .navigationTitle("Interest Filter")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if !viewModel.selectedInterestFilter.isEmpty {
+                        Button("Clear All") {
+                            viewModel.clearInterestFilter()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct InterestFilterButton: View {
+    let interest: Interest
+    let isSelected: Bool
+    let isUserInterest: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(interest.emoji)
+                    .font(.system(size: 14))
+                Text(interest.rawValue)
+                    .font(.system(size: 13, weight: .medium))
+                
+                if isUserInterest {
+                    Image(systemName: "person.fill")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(backgroundColor)
+            .foregroundColor(foregroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(borderColor, lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var backgroundColor: Color {
+        if isSelected {
+            return .blue
+        } else if isUserInterest {
+            return Color.blue.opacity(0.1)
+        } else {
+            return Color(.systemGray6)
+        }
+    }
+    
+    private var foregroundColor: Color {
+        if isSelected {
+            return .white
+        } else if isUserInterest {
+            return .blue
+        } else {
+            return .primary
+        }
+    }
+    
+    private var borderColor: Color {
+        if isSelected {
+            return .blue
+        } else if isUserInterest {
+            return .blue.opacity(0.3)
+        } else {
+            return .clear
+        }
+    }
+}
+
+// MARK: - Editable Interest Button for Profile Editing
+
+struct EditableInterestButton: View {
+    let interest: Interest
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(interest.emoji)
+                    .font(.system(size: 12))
+                Text(interest.rawValue)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(isSelected ? Color.blue : Color(.systemGray6))
+            .foregroundColor(isSelected ? .white : .primary)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 } 

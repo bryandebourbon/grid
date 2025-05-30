@@ -1,0 +1,190 @@
+# FRENCH ENCRYPTION DECLARATION
+## Grid App - Compliance Documentation
+
+**App Information:**
+- App Name: Grid
+- Bundle ID: com.bryandebourbon.grid
+- Developer: Bryan de Bourbon
+- App Type: Social Networking Application
+- Version: 1.0
+
+**Encryption Usage Declaration:**
+
+This application uses encryption exclusively for the following purposes:
+
+1. **Standard Message Encryption (Optional Feature)**
+   - Algorithm: AES-256-GCM (Advanced Encryption Standard)
+   - Key Exchange: RSA-2048
+   - Implementation: Apple CryptoKit Framework
+   - Purpose: Optional end-to-end encryption for private user messages
+
+2. **Standard System Encryption**
+   - CloudKit data encryption (managed by Apple)
+   - HTTPS/TLS for network communications
+   - iOS Keychain storage encryption
+
+**Compliance Statement:**
+
+The Grid application complies with French encryption regulations by:
+
+- Using only internationally recognized, standard encryption algorithms
+- Implementing no proprietary or military-grade encryption methods  
+- Utilizing Apple's publicly available CryptoKit framework
+- Providing encryption as an optional, user-controlled feature
+- Not implementing any encryption restricted for commercial software
+
+**Technical Specifications:**
+
+- Encryption Type: Symmetric (AES-256-GCM) and Asymmetric (RSA-2048)
+- Key Management: Handled by Apple CryptoKit secure enclave
+- Data Classification: Personal communications only
+- Export Classification: Freely available cryptographic software
+
+**Declaration:**
+
+This application uses only standard, internationally accepted encryption algorithms that are freely available and not subject to French encryption restrictions for commercial software distribution.
+
+**Date:** May 26, 2025
+**Developer Signature:** Bryan de Bourbon 
+
+
+
+
+
+
+I can see from the App Store Connect review that Apple is asking for additional information about your app. Let me first explore your codebase to understand the app's features and purpose, then provide comprehensive answers to the review questions.
+
+Ran tool
+
+Read file: README.md
+
+Ran tool
+
+Read file: grid/gridApp.swift
+
+Read file: grid/ContentView.swift
+
+Ran tool
+
+Read file: grid/Info.plist
+
+Search files...
+Based on my exploration of the codebase, I can now provide comprehensive answers to the App Store Connect review questions. Let me gather a bit more information about the specific app features by looking at key files:
+
+Read file: grid/Views/CreateProfileView.swift
+Now I have a comprehensive understanding of the app. Based on my analysis of the codebase, here are the expanded answers to the Apple App Store review questions:
+
+## 📋 **Apple App Store Review Questions - Expanded Answers**
+
+### **Question 1: What are your app's main features and intended purpose?**
+
+**Grid** is a **location-based social networking app** designed for proximity-based connections and real-time messaging. The app serves as a modern, privacy-focused alternative to traditional dating and social apps by emphasizing **authentic, real-time connections with people in your immediate vicinity**.
+
+#### **Core Features:**
+
+1. **📍 Location-Based User Discovery**
+   - Real-time grid display of active users within proximity
+   - Dynamic geographic filtering showing people nearby
+   - Location-based matching using CoreLocation services
+   - Users appear on a visual grid representing their physical proximity
+
+2. **💬 Instant Messaging & Chat**
+   - Real-time one-on-one messaging with nearby users
+   - CloudKit-powered messaging with push notifications
+   - End-to-end encryption mode for privacy-conscious users
+   - Message read receipts and delivery confirmation
+   - Background messaging with APNs integration
+
+3. **👤 Profile Management**
+   - Sign in with Apple for secure authentication
+   - Rich user profiles with multiple photos (up to 10)
+   - Bio and personal information sharing
+   - Device-specific profiles allowing multiple devices per Apple ID
+
+4. **🔒 Privacy & Safety Features**
+   - User blocking and reporting system
+   - Content moderation using NaturalLanguage framework
+   - App Tracking Transparency compliance
+   - Privacy-first design with optional location sharing
+   - Built-in abuse prevention and safety tools
+
+5. **⭐ Social Interaction Features**
+   - Star/favorite users for easy reconnection
+   - Profile overlay for detailed user viewing
+   - Filter options (show starred users only)
+   - Interactive grid interface with haptic feedback
+
+6. **🛡️ Advanced Security**
+   - Optional end-to-end encryption for sensitive conversations
+   - CryptoKit-based encryption profiles
+   - Secure key exchange and management
+   - Privacy mode for enhanced security
+
+#### **Technical Implementation:**
+- Built entirely on **Apple's native ecosystem** (CloudKit, CoreLocation, SwiftUI)
+- **100% free infrastructure** using Apple's services
+- Real-time synchronization across devices
+- Offline capability with local data persistence
+
+---
+
+### **Question 2: Who is your app's intended target audience on the App Store?**
+
+#### **Primary Target Audience:**
+
+**🎯 Young Adults (18-35 years old) seeking authentic, location-based social connections**
+
+The app is specifically designed for:
+
+1. **📱 Tech-Savvy Mobile Users**
+   - iPhone users comfortable with location-based services
+   - Users who value privacy and Apple's ecosystem
+   - People familiar with modern social networking patterns
+   - Early adopters interested in innovative social apps
+
+2. **🌍 Location-Conscious Social Networkers**
+   - Urban professionals and students
+   - People looking to meet others in their immediate vicinity
+   - Users interested in spontaneous, real-time social interactions
+   - Individuals who value proximity-based matching over traditional swiping
+
+3. **🔐 Privacy-Focused Users**
+   - Users concerned about data privacy and security
+   - People who prefer Apple's privacy-first approach
+   - Individuals seeking alternatives to data-heavy social platforms
+   - Users who appreciate Sign in with Apple and minimal data collection
+
+4. **💼 Specific Use Cases:**
+   - **Young professionals** looking to network locally
+   - **College students** seeking to connect on campus
+   - **Urban dwellers** wanting to meet people in their neighborhood
+   - **Travelers** looking to connect with locals or other travelers
+   - **Event attendees** seeking to network at conferences, concerts, or gatherings
+
+#### **Age Rating & Content Guidelines:**
+- **Age Rating: 17+** (as specified in privacy policy)
+- Not intended for users under 17 years old
+- Designed for mature users capable of responsible social interaction
+- Complies with App Store guidelines for social networking apps
+
+#### **Geographic Target:**
+- **Primary:** English-speaking markets (US, UK, Canada, Australia)
+- **Secondary:** Urban areas with high smartphone adoption
+- **Focus:** Developed regions with strong Apple ecosystem presence
+
+#### **User Behavior Profile:**
+- Active smartphone users who check apps multiple times daily
+- Users comfortable sharing location data for social benefits
+- People seeking alternatives to mainstream dating/social apps
+- Privacy-conscious individuals who prefer Apple's ecosystem
+
+---
+
+## 📊 **App Store Category & Positioning**
+
+- **Primary Category:** Social Networking
+- **Secondary Category:** Lifestyle
+- **Positioning:** Privacy-first, location-based social discovery
+- **Differentiation:** Real-time proximity matching with Apple ecosystem integration
+
+This comprehensive approach ensures the app serves a specific, well-defined audience while maintaining compliance with Apple's guidelines and user expectations for privacy and safety in social networking applications.
