@@ -140,8 +140,8 @@ struct GridView: View {
     @State private var overlayProfile: UserProfile? = nil
     @State private var showingSettingsMenu = false
     @State private var showingContactInfo = false  // NEW: For contact info
-    @State private var showingInterestFilter = false  // NEW: For interest filtering
-    @State private var showInterestsOnGrid = true  // NEW: Toggle for showing interests on grid cells
+    @State private var showInterestsOnGrid = false  // NEW: Toggle for showing interests on grid cells (off by default)
+    @State private var showInterestsFilter = true  // NEW: Toggle for showing interests filter section (on by default)
     @State private var gridColumns: Int = 3 // Dynamic column count
     @State private var baseColumns: Int = 3 // The confirmed column count
     @State private var currentScale: CGFloat = 1.0
@@ -212,6 +212,42 @@ struct GridView: View {
                         .padding(.horizontal)
                     }
                     .padding(.vertical, 8)
+                }
+                
+                // User interests filter pills
+                if let userInterests = viewModel.currentUserProfile?.interests, !userInterests.isEmpty, showInterestsFilter {
+                    VStack(spacing: 8) {
+                        HStack {
+                            Text("Your Interests")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("Tap to filter")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal)
+                        
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(userInterests) { interest in
+                                    InterestPillButton(
+                                        interest: interest,
+                                        isSelected: viewModel.selectedInterestFilter.contains(interest)
+                                    ) {
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            viewModel.toggleInterestFilter(interest)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6).opacity(0.5))
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 
                 if let profile = viewModel.currentUserProfile {
@@ -316,25 +352,16 @@ struct GridView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     HStack(spacing: 16) {
-                        // Star filter button
+                        // Interest filter toggle button (moved to leftmost position)
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.3)) {
-                                viewModel.showingStarredOnly.toggle()
+                                showInterestsFilter.toggle()
                             }
                         }) {
-                            Image(systemName: viewModel.showingStarredOnly ? "star.fill" : "star")
-                                .font(.body)
-                                .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
-                        }
-                        
-                        // Interest filter button - NEW
-                        Button(action: {
-                            showingInterestFilter = true
-                        }) {
                             ZStack(alignment: .topTrailing) {
-                                Image(systemName: viewModel.selectedInterestFilter.isEmpty ? "heart" : "heart.fill")
+                                Image(systemName: showInterestsFilter ? "heart.fill" : "heart")
                                     .font(.body)
-                                    .foregroundColor(viewModel.selectedInterestFilter.isEmpty ? .primary : .pink)
+                                    .foregroundColor(showInterestsFilter ? .pink : .primary)
                                 
                                 // Show count badge if filters are active
                                 if !viewModel.selectedInterestFilter.isEmpty {
@@ -347,6 +374,17 @@ struct GridView: View {
                                         .offset(x: 8, y: -8)
                                 }
                             }
+                        }
+                        
+                        // Star filter button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                viewModel.showingStarredOnly.toggle()
+                            }
+                        }) {
+                            Image(systemName: viewModel.showingStarredOnly ? "star.fill" : "star")
+                                .font(.body)
+                                .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
                         }
                         
                         // Encryption mode button
@@ -368,17 +406,6 @@ struct GridView: View {
                                         .offset(x: 4, y: -4)
                                 }
                             }
-                        }
-                        
-                        // Show interests toggle button
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                showInterestsOnGrid.toggle()
-                            }
-                        }) {
-                            Image(systemName: showInterestsOnGrid ? "tag.fill" : "tag")
-                                .font(.body)
-                                .foregroundColor(showInterestsOnGrid ? .orange : .primary)
                         }
                     }
                 }
@@ -405,6 +432,18 @@ struct GridView: View {
                             }
                         }) {
                             Label("Edit Profile", systemImage: "person.circle")
+                        }
+                        
+                        Divider()
+                        
+                        // Display Settings Section
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showInterestsOnGrid.toggle()
+                            }
+                        }) {
+                            Label(showInterestsOnGrid ? "Hide Interest Emojis" : "Show Interest Emojis", 
+                                  systemImage: showInterestsOnGrid ? "tag.fill" : "tag")
                         }
                         
                         Divider()
@@ -462,9 +501,6 @@ struct GridView: View {
             }
             .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
                 TrackingPermissionView(privacyService: viewModel.privacyService)
-            }
-            .sheet(isPresented: $showingInterestFilter) {  // NEW: Sheet for Interest Filter
-                InterestFilterSheet(viewModel: viewModel)
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -1604,5 +1640,60 @@ struct EditableInterestButton: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Interest Pill Button for Main Grid Filter
+
+struct InterestPillButton: View {
+    let interest: Interest
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(interest.emoji)
+                    .font(.system(size: 12))
+                Text(interest.rawValue)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(backgroundColor)
+            .foregroundColor(foregroundColor)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(borderColor, lineWidth: 1)
+            )
+            .scaleEffect(isSelected ? 1.05 : 1.0)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var backgroundColor: Color {
+        if isSelected {
+            return .blue
+        } else {
+            return Color(.systemBackground)
+        }
+    }
+    
+    private var foregroundColor: Color {
+        if isSelected {
+            return .white
+        } else {
+            return .primary
+        }
+    }
+    
+    private var borderColor: Color {
+        if isSelected {
+            return .blue
+        } else {
+            return Color(.systemGray4)
+        }
     }
 } 
