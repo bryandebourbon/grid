@@ -138,6 +138,8 @@ struct GridView: View {
     @State private var selectedUserProfileForCard: ProfileCardUser? = nil // NEW: For profile card
     @State private var showProfileOverlay = false
     @State private var overlayProfile: UserProfile? = nil
+    @State private var showChatOverlay = false  // NEW: For chat overlay
+    @State private var chatOverlayRecipientID: String? = nil  // NEW: For chat overlay recipient
     @State private var showingSettingsMenu = false
     @State private var showingContactInfo = false  // NEW: For contact info
     @State private var showInterestsOnGrid = false  // NEW: Toggle for showing interests on grid cells (off by default)
@@ -204,11 +206,11 @@ struct GridView: View {
                     .padding(.vertical, 8)
                 }
                 
-                // User interests filter pills
-                if let userInterests = viewModel.currentUserProfile?.interests, !userInterests.isEmpty, showInterestsFilter {
+                // Comprehensive interests filter pills
+                if showInterestsFilter {
                     VStack(spacing: 8) {
                         HStack {
-                            Text("Your Interests")
+                            Text("Browse All Interests")
                                 .font(.caption)
                                 .fontWeight(.medium)
                                 .foregroundColor(.secondary)
@@ -221,10 +223,17 @@ struct GridView: View {
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
-                                ForEach(userInterests) { interest in
+                                // Search button as first element
+                                SearchInterestsButton {
+                                    viewModel.showingInterestSearch = true
+                                }
+                                
+                                // Show all interests as pills
+                                ForEach(Interest.allCases) { interest in
                                     InterestPillButton(
                                         interest: interest,
-                                        isSelected: viewModel.selectedInterestFilter.contains(interest)
+                                        isSelected: viewModel.selectedInterestFilter.contains(interest),
+                                        isUserInterest: viewModel.currentUserProfile?.interests.contains(interest) ?? false
                                     ) {
                                         withAnimation(.easeInOut(duration: 0.2)) {
                                             viewModel.toggleInterestFilter(interest)
@@ -262,7 +271,10 @@ struct GridView: View {
                                         }
                                     },
                                     onChatTapped: { recipientDeviceID in
-                                        viewModel.chatRecipientToPresent = ChatRecipient(id: recipientDeviceID)
+                                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                            chatOverlayRecipientID = recipientDeviceID
+                                            showChatOverlay = true
+                                        }
                                     }
                                 )
                                 .transition(.asymmetric(
@@ -387,7 +399,10 @@ struct GridView: View {
                         
                         Button(action: {
                             if let myDeviceID = viewModel.currentUserProfile?.deviceID {
-                                viewModel.chatRecipientToPresent = ChatRecipient(id: myDeviceID)
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                    chatOverlayRecipientID = myDeviceID
+                                    showChatOverlay = true
+                                }
                             }
                         }) {
                             Label("My Notes", systemImage: "note.text")
@@ -445,19 +460,28 @@ struct GridView: View {
             .sheet(isPresented: $showingConversationsList) {
                 ConversationsListView(viewModel: viewModel) { deviceID in
                     showingConversationsList = false
-                    viewModel.chatRecipientToPresent = ChatRecipient(id: deviceID)
+                    // Use overlay instead of sheet
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                            chatOverlayRecipientID = deviceID
+                            showChatOverlay = true
+                        }
+                    }
                 }
-            }
-            .sheet(item: $viewModel.chatRecipientToPresent) { (recipient: ChatRecipient) in
-                NavigationView {
-                    ChatView(viewModel: viewModel, recipientDeviceID: recipient.id)
-                }
-                .navigationViewStyle(StackNavigationViewStyle())
             }
             .sheet(item: $selectedUserProfileForCard) { profileUser in // NEW: Sheet for Profile Card
                 // Placeholder for ProfileCardView - will be created next
                 // For now, just a simple view to confirm it works
-                ProfileCardView(viewModel: viewModel, userProfile: profileUser.userProfile)
+                ProfileCardView(
+                    viewModel: viewModel, 
+                    userProfile: profileUser.userProfile,
+                    onChatTapped: { deviceID in
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                            chatOverlayRecipientID = deviceID
+                            showChatOverlay = true
+                        }
+                    }
+                )
             }
             .sheet(item: $viewModel.selectedUserProfileForReport) { profileUser in // NEW: Sheet for Report Dialog
                 ReportUserView(viewModel: viewModel, userProfile: profileUser.userProfile)
@@ -470,6 +494,9 @@ struct GridView: View {
             }
             .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
                 TrackingPermissionView(privacyService: viewModel.privacyService)
+            }
+            .sheet(isPresented: $viewModel.showingInterestSearch) { // NEW: Sheet for Interest Search
+                InterestSearchView(viewModel: viewModel)
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -488,8 +515,9 @@ struct GridView: View {
         }
         .navigationViewStyle(StackNavigationViewStyle()) // Force single column navigation on iPad
         .overlay(
-            // Profile overlay that appears on long press
+            // Profile and Chat overlays
             Group {
+                // Profile overlay
                 if showProfileOverlay, let profile = overlayProfile {
                     ZStack {
                         // Semi-transparent background to dim the grid
@@ -517,14 +545,52 @@ struct GridView: View {
                                     showProfileOverlay = false
                                     overlayProfile = nil
                                 }
-                                viewModel.chatRecipientToPresent = ChatRecipient(id: profile.deviceID)
+                                // Delay to allow profile overlay to close before opening chat
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                        chatOverlayRecipientID = profile.deviceID
+                                        showChatOverlay = true
+                                    }
+                                }
                             }
                         )
                         .transition(.scale.combined(with: .opacity))
                     }
                 }
+                
+                // Chat overlay
+                if showChatOverlay, let recipientID = chatOverlayRecipientID {
+                    ZStack {
+                        // Semi-transparent background to dim the grid
+                        Color.black.opacity(0.5)
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                    showChatOverlay = false
+                                    chatOverlayRecipientID = nil
+                                }
+                            }
+                        
+                        // Chat card overlay
+                        ChatOverlayView(
+                            viewModel: viewModel,
+                            recipientDeviceID: recipientID,
+                            onClose: {
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                    showChatOverlay = false
+                                    chatOverlayRecipientID = nil
+                                }
+                            }
+                        )
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.8).combined(with: .opacity).combined(with: .move(edge: .bottom)),
+                            removal: .scale(scale: 0.8).combined(with: .opacity).combined(with: .move(edge: .bottom))
+                        ))
+                    }
+                }
             }
             .animation(.easeInOut(duration: 0.2), value: showProfileOverlay)
+            .animation(.spring(response: 0.6, dampingFraction: 0.8), value: showChatOverlay)
         )
     }
     
@@ -1041,6 +1107,7 @@ struct ProfileCardView: View {
     @ObservedObject var viewModel: GridViewModel
     let userProfile: UserProfile
     @Environment(\.dismiss) var dismiss
+    let onChatTapped: (String) -> Void
 
     @State private var bioText: String = ""
     @State private var isEditingBio: Bool = false
@@ -1270,12 +1337,12 @@ struct ProfileCardView: View {
                     if !isCurrentUserProfile {
                         Button("Chat") {
                             dismiss()
-                            viewModel.chatRecipientToPresent = ChatRecipient(id: userProfile.deviceID)
+                            onChatTapped(userProfile.deviceID)
                         }
                     } else {
                         Button("My Notes") {
                             dismiss()
-                            viewModel.chatRecipientToPresent = ChatRecipient(id: userProfile.deviceID)
+                            onChatTapped(userProfile.deviceID)
                         }
                     }
                     
@@ -1612,11 +1679,39 @@ struct EditableInterestButton: View {
     }
 }
 
+// MARK: - Search Interests Button for Magnifying Glass
+
+struct SearchInterestsButton: View {
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                Text("Search")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(.systemGray5))
+            .foregroundColor(.primary)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(Color(.systemGray4), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 // MARK: - Interest Pill Button for Main Grid Filter
 
 struct InterestPillButton: View {
     let interest: Interest
     let isSelected: Bool
+    let isUserInterest: Bool
     let action: () -> Void
     
     var body: some View {
@@ -1627,6 +1722,13 @@ struct InterestPillButton: View {
                 Text(interest.rawValue)
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
+                
+                // Show user indicator if this is one of the user's interests
+                if isUserInterest {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(isSelected ? .white.opacity(0.8) : .blue)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -1645,6 +1747,8 @@ struct InterestPillButton: View {
     private var backgroundColor: Color {
         if isSelected {
             return .blue
+        } else if isUserInterest {
+            return Color.blue.opacity(0.1)
         } else {
             return Color(.systemBackground)
         }
@@ -1653,6 +1757,8 @@ struct InterestPillButton: View {
     private var foregroundColor: Color {
         if isSelected {
             return .white
+        } else if isUserInterest {
+            return .blue
         } else {
             return .primary
         }
@@ -1661,8 +1767,350 @@ struct InterestPillButton: View {
     private var borderColor: Color {
         if isSelected {
             return .blue
+        } else if isUserInterest {
+            return .blue.opacity(0.5)
         } else {
             return Color(.systemGray4)
+        }
+    }
+}
+
+// MARK: - Interest Search View
+
+struct InterestSearchView: View {
+    @ObservedObject var viewModel: GridViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var searchText = ""
+    @FocusState private var searchFieldFocused: Bool
+    
+    // Computed property for filtered interests based on search
+    private var filteredInterests: [Interest] {
+        if searchText.isEmpty {
+            return Interest.allCases
+        } else {
+            return Interest.allCases.filter { interest in
+                interest.rawValue.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                // Search bar
+                VStack(spacing: 12) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        
+                        TextField("Search interests...", text: $searchText)
+                            .focused($searchFieldFocused)
+                            .textFieldStyle(PlainTextFieldStyle())
+                        
+                        if !searchText.isEmpty {
+                            Button(action: {
+                                searchText = ""
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(10)
+                    
+                    // Selected interests "pile up" display
+                    if !viewModel.selectedInterestFilter.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Selected Filters (\(viewModel.selectedInterestFilter.count))")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
+                            
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Array(viewModel.selectedInterestFilter), id: \.self) { interest in
+                                        SelectedInterestChip(interest: interest) {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                viewModel.removeInterestFilter(interest)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, 2)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(Color.blue.opacity(0.05))
+                        .cornerRadius(10)
+                    }
+                }
+                .padding()
+                
+                Divider()
+                
+                // Search results or all interests
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 12) {
+                        ForEach(filteredInterests) { interest in
+                            SearchableInterestButton(
+                                interest: interest,
+                                isSelected: viewModel.selectedInterestFilter.contains(interest),
+                                isUserInterest: viewModel.currentUserProfile?.interests.contains(interest) ?? false
+                            ) {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    viewModel.toggleInterestFilter(interest)
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+                
+                Spacer()
+            }
+            .navigationTitle("Search Interests")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if !viewModel.selectedInterestFilter.isEmpty {
+                        Button("Clear All") {
+                            viewModel.clearInterestFilter()
+                        }
+                        .foregroundColor(.red)
+                    }
+                }
+            }
+            .onAppear {
+                searchFieldFocused = true
+            }
+        }
+    }
+}
+
+// MARK: - Selected Interest Chip for "Pile Up" Display
+
+struct SelectedInterestChip: View {
+    let interest: Interest
+    let onRemove: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(interest.emoji)
+                .font(.system(size: 12))
+            Text(interest.rawValue)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+            
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.white)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.blue)
+        .foregroundColor(.white)
+        .clipShape(Capsule())
+    }
+}
+
+// MARK: - Searchable Interest Button
+
+struct SearchableInterestButton: View {
+    let interest: Interest
+    let isSelected: Bool
+    let isUserInterest: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(interest.emoji)
+                    .font(.system(size: 16))
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(interest.rawValue)
+                        .font(.system(size: 14, weight: .medium))
+                        .lineLimit(1)
+                    
+                    if isUserInterest {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.fill")
+                                .font(.system(size: 10))
+                            Text("Your Interest")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(isSelected ? .white.opacity(0.8) : .blue)
+                    }
+                }
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(backgroundColor)
+            .foregroundColor(foregroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(borderColor, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var backgroundColor: Color {
+        if isSelected {
+            return .blue
+        } else if isUserInterest {
+            return Color.blue.opacity(0.1)
+        } else {
+            return Color(.systemBackground)
+        }
+    }
+    
+    private var foregroundColor: Color {
+        if isSelected {
+            return .white
+        } else if isUserInterest {
+            return .blue
+        } else {
+            return .primary
+        }
+    }
+    
+    private var borderColor: Color {
+        if isSelected {
+            return .blue
+        } else if isUserInterest {
+            return .blue.opacity(0.5)
+        } else {
+            return Color(.systemGray4)
+        }
+    }
+}
+
+// MARK: - Chat Overlay View (Card-based Chat Interface)
+
+struct ChatOverlayView: View {
+    @ObservedObject var viewModel: GridViewModel
+    let recipientDeviceID: String
+    let onClose: () -> Void
+    
+    // Helper to get recipient display name
+    private func recipientDisplayName() -> String {
+        if recipientDeviceID == viewModel.currentUserProfile?.deviceID {
+            return "My Notes"
+        }
+        
+        // Find the recipient's profile to get their display name
+        for row in viewModel.gridNodes {
+            for node in row {
+                if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
+                    return profile.deviceName ?? "User"
+                }
+            }
+        }
+        return "Chat"
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header bar
+            HStack {
+                Button(action: onClose) {
+                    Image(systemName: "chevron.down")
+                        .font(.title2)
+                        .foregroundColor(.primary)
+                        .frame(width: 44, height: 44)
+                        .background(Color(.systemGray6))
+                        .clipShape(Circle())
+                }
+                
+                Spacer()
+                
+                VStack(spacing: 2) {
+                    Text(recipientDisplayName())
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    if recipientDeviceID != viewModel.currentUserProfile?.deviceID {
+                        if let distanceString = viewModel.getDistanceString(to: recipientDeviceID) {
+                            Text(distanceString)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                Spacer()
+                
+                // Menu button
+                Menu {
+                    if recipientDeviceID != viewModel.currentUserProfile?.deviceID {
+                        Button(action: {
+                            // Find the recipient's profile
+                            for row in viewModel.gridNodes {
+                                for node in row {
+                                    if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
+                                        onClose()
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            viewModel.selectedUserProfileForReport = ProfileCardUser(id: recipientDeviceID, userProfile: profile)
+                                        }
+                                        return
+                                    }
+                                }
+                            }
+                        }) {
+                            Label("Report User", systemImage: "exclamationmark.shield")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title2)
+                        .foregroundColor(.primary)
+                        .frame(width: 44, height: 44)
+                        .background(Color(.systemGray6))
+                        .clipShape(Circle())
+                }
+            }
+            .padding()
+            .background(Color(.systemGray6).opacity(0.3))
+            
+            // Chat content
+            ChatView(viewModel: viewModel, recipientDeviceID: recipientDeviceID)
+        }
+        .background(Color(.systemBackground))
+        .cornerRadius(20)
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+        .frame(maxWidth: min(400, UIScreen.main.bounds.width - 40))
+        .frame(maxHeight: min(600, UIScreen.main.bounds.height - 100))
+        .padding(.bottom, 20)
+        .onAppear {
+            // When the view appears, ensure the viewModel knows which device we're chatting with
+            viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
+            print("ChatOverlayView: Opened chat with \(recipientDeviceID)")
+            
+            // Mark all messages from this device as read
+            viewModel.markMessagesAsRead(from: recipientDeviceID)
         }
     }
 } 

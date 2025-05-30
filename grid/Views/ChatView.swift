@@ -15,6 +15,7 @@ struct ChatView: View {
     @State private var selectedPhotoItem: PhotosPickerItem? = nil // For the new photo picker
     @State private var showPhotoPicker = false // To present the picker
     @State private var fullScreenImage: FullScreenImageData? = nil // For full-screen image display
+    @FocusState private var isTextFieldFocused: Bool // NEW: For automatic keyboard focus
     
     // Add dismiss environment for closing the sheet
     @Environment(\.dismiss) var dismiss
@@ -98,6 +99,7 @@ struct ChatView: View {
                 TextField("Enter message...", text: $newMessageText)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .padding(.leading)
+                    .focused($isTextFieldFocused) // NEW: Connect to focus state
                     .onSubmit {
                         if !newMessageText.isEmpty {
                             sendMessage()
@@ -112,6 +114,9 @@ struct ChatView: View {
                         // Use content-filtered message sending
                         // Note: encryption mode is handled internally by GridViewModel based on isEncryptionMode
                         viewModel.sendMessageWithModeration(text: messageToSend, to: recipientDeviceID)
+                        
+                        // Keep focus on text field for continued typing
+                        isTextFieldFocused = true
                     }
                 }) {
                     Image(systemName: "paperplane.fill")
@@ -158,6 +163,11 @@ struct ChatView: View {
             
             // Mark all messages from this device as read
             viewModel.markMessagesAsRead(from: recipientDeviceID)
+            
+            // NEW: Automatically focus the text field to bring up keyboard
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isTextFieldFocused = true
+            }
         }
         .overlay {
             // Full-screen image viewer
@@ -184,6 +194,9 @@ struct ChatView: View {
         
         print("ChatView: Sending message instantly (no wait): \(messageText)")
         viewModel.sendMessage(text: messageText, to: recipientDeviceID)
+        
+        // Keep focus on text field for continued typing
+        isTextFieldFocused = true
         
         // Messages are automatically updated via the real-time subscription
         // No need to manually refresh - the message will appear when CloudKit confirms it
