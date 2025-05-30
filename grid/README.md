@@ -1,0 +1,113 @@
+# Grid App
+
+A location-based social networking app built with SwiftUI and CloudKit.
+
+## Features
+
+- Real-time location sharing
+- Profile management with photos and interests
+- Proximity-based messaging
+- Connection request system
+- Interest-based filtering
+- Encryption mode for private messaging
+- Content moderation and privacy controls
+
+## CloudKit Database Schema
+
+The app requires the following record types in your CloudKit Public Database:
+
+### UserProfiles
+- `userID` (String, Queryable, Sortable)
+- `deviceID` (String, Queryable, Sortable) 
+- `deviceName` (String)
+- `profileImage` (Asset)
+- `additionalPhotos` (List<Asset>)
+- `bio` (String)
+- `interests` (List<String>)
+- `latitude` (Double)
+- `longitude` (Double)
+- `lastActive` (Date/Time)
+- `isActive` (Int64, Queryable)
+
+### Messages
+- `senderDeviceID` (String, Queryable)
+- `recipientDeviceID` (String, Queryable)
+- `senderUserID` (String, Queryable)
+- `recipientUserID` (String, Queryable)
+- `text` (String)
+- `timestamp` (Date/Time, Queryable, Sortable)
+- `imageAsset` (Asset)
+- `isEncrypted` (Int64)
+- `encryptedContent` (String)
+- `encryptionKeyID` (String)
+
+### UserRelationships
+- `userID` (String, Queryable)
+- `targetUserID` (String, Queryable)
+- `actionType` (String, Queryable) // "star", "block", "report"
+- `timestamp` (Date/Time)
+
+### ConnectionRequests **NEW**
+- `senderUserID` (String, Queryable)
+- `recipientUserID` (String, Queryable)
+- `senderDeviceID` (String, Queryable)
+- `recipientDeviceID` (String, Queryable)
+- `status` (String, Queryable) // "pending", "accepted", "declined", "blocked"
+- `timestamp` (Date/Time, Queryable, Sortable)
+
+### ReadReceipts
+- `deviceID` (String, Queryable)
+- `messageID` (String, Queryable)
+- `timestamp` (Date/Time)
+
+### EncryptionProfiles
+- `deviceID` (String, Queryable) - Record Name
+- `publicKey` (String)
+- `isEncryptionEnabled` (Int64, Queryable)
+- `timestamp` (Date/Time)
+
+### Reports
+- `reporterUserID` (String)
+- `reportedUserID` (String)
+- `reportedDeviceID` (String)
+- `reportReason` (String)
+- `reportDescription` (String)
+- `timestamp` (Date/Time)
+
+## Connection System
+
+The app now features a tiered connection system:
+
+1. **Unconnected Users**: Can see profiles but cannot message. Must send connection request first.
+2. **Pending Requests**: Show as green notification badges on grid cells and in toolbar.
+3. **Connected Users**: Can message each other freely.
+
+### Connection Flow:
+1. User taps on unconnected person → Profile shows "Invite to Connect" button
+2. Recipient gets notification (green badge) and can Accept/Decline
+3. Once accepted, both users can message each other
+4. "Connected Only" filter button shows only connected users
+
+## Setup Instructions
+
+1. Create a CloudKit container for your app
+2. Add the record types above to your Public Database
+3. Set appropriate permissions and indexes
+4. Update your app's CloudKit container identifier
+5. Enable location permissions in your app
+6. Test the connection request flow
+
+## Privacy & Content Moderation
+
+The app includes built-in content moderation for:
+- Profile bios and images
+- Chat messages
+- Report system for inappropriate content
+- Automatic content filtering
+
+## Encryption Mode
+
+Users can enable encryption mode to:
+- Exchange encrypted messages with other encryption-enabled users
+- Filter grid to show only encryption-capable users
+- Secure private conversations end-to-end 
