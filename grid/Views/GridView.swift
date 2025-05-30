@@ -430,6 +430,38 @@ struct GridView: View {
                                   systemImage: showInterestsOnGrid ? "tag.fill" : "tag")
                         }
                         
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                viewModel.demoService.toggleDemoMode()
+                                // Refresh the grid to show demo users or real users
+                                viewModel.refreshPublicGrid()
+                            }
+                        }) {
+                            Label(viewModel.demoService.isDemoMode ? "Exit Demo Mode" : "Demo Mode", 
+                                  systemImage: viewModel.demoService.isDemoMode ? "person.3.fill" : "person.3")
+                        }
+                        
+                        // Debug button for demo mode (only show when demo mode is enabled)
+                        if viewModel.demoService.isDemoMode {
+                            Button(action: {
+                                print("GridView: Manually reloading demo photos...")
+                                viewModel.demoService.reloadDemoPhotos()
+                                // Refresh the grid after reloading photos
+                                viewModel.refreshPublicGrid()
+                            }) {
+                                Label("Reload Demo Photos", systemImage: "arrow.clockwise")
+                            }
+                            
+                            Button(action: {
+                                print("GridView: Shuffling demo photos...")
+                                viewModel.demoService.shufflePhotos()
+                                // Refresh the grid to show reshuffled photos
+                                viewModel.refreshPublicGrid()
+                            }) {
+                                Label("Shuffle Photos", systemImage: "shuffle")
+                            }
+                        }
+                        
                         Divider()
                         
                         Button(action: { showingContactInfo = true }) {
