@@ -167,19 +167,9 @@ struct GridView: View {
         NavigationView {
             VStack(spacing: 0) {
                 // Filter indicators
-                if viewModel.isEncryptionMode || viewModel.showingStarredOnly || !viewModel.selectedInterestFilter.isEmpty {
+                if viewModel.showingStarredOnly || !viewModel.selectedInterestFilter.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            if viewModel.isEncryptionMode {
-                                FilterChip(
-                                    text: "Secure Mode",
-                                    icon: "lock.fill",
-                                    color: .green
-                                ) {
-                                    viewModel.isEncryptionMode = false
-                                }
-                            }
-                            
                             if viewModel.showingStarredOnly {
                                 FilterChip(
                                     text: "Starred",
@@ -386,27 +376,6 @@ struct GridView: View {
                                 .font(.body)
                                 .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
                         }
-                        
-                        // Encryption mode button
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                viewModel.isEncryptionMode.toggle()
-                            }
-                        }) {
-                            ZStack(alignment: .topTrailing) {
-                                Image(systemName: viewModel.isEncryptionMode ? "lock.fill" : "lock.open")
-                                    .font(.body)
-                                    .foregroundColor(viewModel.isEncryptionMode ? .green : .primary)
-                                
-                                // Red dot for unread encrypted messages
-                                if !viewModel.isEncryptionMode && viewModel.hasUnreadEncryptedMessages() {
-                                    Circle()
-                                        .fill(Color.red)
-                                        .frame(width: 8, height: 8)
-                                        .offset(x: 4, y: -4)
-                                }
-                            }
-                        }
                     }
                 }
                 
@@ -507,6 +476,14 @@ struct GridView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Are you sure you want to delete your account? This action cannot be undone.")
+            }
+            .alert("Account Recreation Required", isPresented: $viewModel.showingAccountRecreationAlert) {
+                Button("Delete Account", role: .destructive) { 
+                    deleteAccountAction() 
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Your account contains unencrypted messages. For security, all messaging is now encrypted. Please delete your account and create a new one to continue using the app with full encryption.")
             }
         }
         .navigationViewStyle(StackNavigationViewStyle()) // Force single column navigation on iPad
@@ -637,14 +614,6 @@ struct GridNodeView: View {
                         }
                         
                         Spacer()
-                        
-                        // Encryption indicator
-                        if viewModel.getEncryptionProfile(for: profile.deviceID) != nil {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.green)
-                                .background(Circle().fill(Color.white).frame(width: 18, height: 18))
-                        }
                         
                         // Unread message badge on top right
                         let unreadCount = viewModel.getUnreadMessageCount(from: profile.deviceID)
