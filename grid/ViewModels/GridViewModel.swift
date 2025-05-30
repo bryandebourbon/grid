@@ -94,6 +94,7 @@ class GridViewModel: ObservableObject {
     // Track star and block relationships
     private var starredUsers: Set<String> = [] // Set of userIDs that are starred
     private var blockedUsers: Set<String> = [] // Set of userIDs that are blocked
+    private var usersWhoBlockedMe: Set<String> = [] // Set of userIDs who have blocked me
 
     private var messagingService: MessagingService
     private var gridService: GridService // For public grid management (legacy)
@@ -332,6 +333,13 @@ class GridViewModel: ObservableObject {
             }
         }
         
+        // Filter out blocked users (mutual blocking - users I blocked OR users who blocked me)
+        otherProfiles = otherProfiles.filter { profile in
+            let iBlockedThem = blockedUsers.contains(profile.userID)
+            let theyBlockedMe = usersWhoBlockedMe.contains(profile.userID)
+            return !iBlockedThem && !theyBlockedMe
+        }
+        
         // Filter profiles by selected interests if any are selected
         if !selectedInterestFilter.isEmpty {
             otherProfiles = otherProfiles.filter { profile in
@@ -352,7 +360,8 @@ class GridViewModel: ObservableObject {
         }
         
         let filterStatus = showingStarredOnly ? " (starred only)" : ""
-        print("Updated grid with \(otherProfiles.count + 1) total users\(filterStatus) (current user at top-left)")
+        let blockingStatus = " (filtered out \(blockedUsers.count) blocked + \(usersWhoBlockedMe.count) who blocked me)"
+        print("Updated grid with \(otherProfiles.count + 1) total users\(filterStatus)\(blockingStatus) (current user at top-left)")
         objectWillChange.send()
     }
     
@@ -842,26 +851,28 @@ class GridViewModel: ObservableObject {
         }
     }
     
-    // NEW: Load star/block relationships from CloudKit
+    // NEW: Load star/block relationships from CloudKit (both outgoing and incoming blocks)
     private func loadStarBlockRelationships(forUserID userID: String, completion: @escaping () -> Void = {}) {
         let publicDB = CKContainer.default().publicCloudDatabase
-        let predicate = NSPredicate(format: "userID == %@", userID)
-        let query = CKQuery(recordType: "UserRelationships", predicate: predicate)
         
-        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
+        // Create a dispatch group to wait for both queries
+        let dispatchGroup = DispatchGroup()
+        
+        // Query 1: Get relationships I created (people I starred/blocked)
+        dispatchGroup.enter()
+        let myRelationshipsPredicate = NSPredicate(format: "userID == %@", userID)
+        let myRelationshipsQuery = CKQuery(recordType: "UserRelationships", predicate: myRelationshipsPredicate)
+        
+        publicDB.perform(myRelationshipsQuery, inZoneWith: nil) { [weak self] records, error in
             DispatchQueue.main.async {
                 guard let self = self else {
-                    completion()
+                    dispatchGroup.leave()
                     return
                 }
                 
                 if let error = error {
-                    print("Error loading star/block relationships: \(error.localizedDescription)")
-                    completion()
-                    return
-                }
-                
-                if let records = records {
+                    print("Error loading my star/block relationships: \(error.localizedDescription)")
+                } else if let records = records {
                     // Clear existing and load fresh from CloudKit
                     self.starredUsers.removeAll()
                     self.blockedUsers.removeAll()
@@ -874,21 +885,61 @@ class GridViewModel: ObservableObject {
                             case .block:
                                 self.blockedUsers.insert(relationship.targetUserID)
                             case .report:
-                                // Reports are handled separately - they're not stored in a set
-                                // Skip report records when loading star/block relationships
+                                // Reports are handled separately
                                 break
                             }
                         }
                     }
                     
                     print("Loaded \(self.starredUsers.count) starred users and \(self.blockedUsers.count) blocked users from CloudKit")
-                    
-                    // Trigger UI update
-                    self.objectWillChange.send()
                 }
                 
-                completion()
+                dispatchGroup.leave()
             }
+        }
+        
+        // Query 2: Get relationships where I'm the target (people who blocked me)
+        dispatchGroup.enter()
+        let blockingMePredicate = NSPredicate(format: "targetUserID == %@ AND actionType == %@", userID, "block")
+        let blockingMeQuery = CKQuery(recordType: "UserRelationships", predicate: blockingMePredicate)
+        
+        publicDB.perform(blockingMeQuery, inZoneWith: nil) { [weak self] records, error in
+            DispatchQueue.main.async {
+                guard let self = self else {
+                    dispatchGroup.leave()
+                    return
+                }
+                
+                if let error = error {
+                    print("Error loading users who blocked me: \(error.localizedDescription)")
+                } else if let records = records {
+                    // Clear and reload
+                    self.usersWhoBlockedMe.removeAll()
+                    
+                    for record in records {
+                        if let relationship = UserRelationship(record: record) {
+                            self.usersWhoBlockedMe.insert(relationship.userID)
+                        }
+                    }
+                    
+                    print("Loaded \(self.usersWhoBlockedMe.count) users who have blocked me from CloudKit")
+                }
+                
+                dispatchGroup.leave()
+            }
+        }
+        
+        // Wait for both queries to complete
+        dispatchGroup.notify(queue: .main) {
+            print("All blocking relationships loaded - refreshing grid to apply filters")
+            
+            // Refresh the grid to apply blocking filters
+            let profiles = self.proximityService.activeNearbyProfiles
+            self.updateGridWithAllProfiles(profiles)
+            
+            // Trigger UI update
+            self.objectWillChange.send()
+            completion()
         }
     }
     
@@ -979,6 +1030,10 @@ class GridViewModel: ObservableObject {
             saveStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .block)
         }
         
+        // Immediately refresh the grid to show/hide the blocked user
+        let profiles = proximityService.activeNearbyProfiles
+        updateGridWithAllProfiles(profiles)
+        
         objectWillChange.send()
     }
     
@@ -1040,6 +1095,17 @@ class GridViewModel: ObservableObject {
     func isBlocked(_ deviceID: String) -> Bool {
         guard let userID = getUserID(forDeviceID: deviceID) else { return false }
         return blockedUsers.contains(userID)
+    }
+    
+    // Check if a user has blocked me (by deviceID)
+    func hasBlockedMe(_ deviceID: String) -> Bool {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return false }
+        return usersWhoBlockedMe.contains(userID)
+    }
+    
+    // Check if there's mutual blocking (either direction)
+    func hasMutualBlocking(_ deviceID: String) -> Bool {
+        return isBlocked(deviceID) || hasBlockedMe(deviceID)
     }
     
     // NEW: Check if sender is in grid, if not fetch their profile and add them
@@ -1915,11 +1981,17 @@ class GridViewModel: ObservableObject {
             // Always include current user in encryption mode
             let currentDeviceID = currentUserProfile?.deviceID
             let filteredProfiles = proximityService.activeNearbyProfiles.filter { profile in
-                profile.deviceID == currentDeviceID || encryptedDeviceIDs.contains(profile.deviceID)
+                // Check encryption requirement
+                let hasEncryption = profile.deviceID == currentDeviceID || encryptedDeviceIDs.contains(profile.deviceID)
+                
+                // Also check blocking status
+                let isNotBlocked = profile.deviceID == currentDeviceID || (!blockedUsers.contains(profile.userID) && !usersWhoBlockedMe.contains(profile.userID))
+                
+                return hasEncryption && isNotBlocked
             }
             updateGridWithAllProfiles(filteredProfiles)
         } else {
-            // Show all profiles
+            // Show all profiles (blocking filter will be applied in updateGridWithAllProfiles)
             updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         }
     }
