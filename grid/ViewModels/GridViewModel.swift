@@ -75,16 +75,9 @@ class GridViewModel: ObservableObject {
     @Published var showingTrackingPermission = false
     @Published var showingPrivacyPolicy = false
     
-    // NEW: Encryption mode properties
-    @Published var isEncryptionMode: Bool = false {
-        didSet {
-            if isEncryptionMode {
-                enableEncryptionMode()
-            } else {
-                disableEncryptionMode()
-            }
-        }
-    }
+    // NEW: Encryption-only messaging properties
+    @Published var showingAccountRecreationAlert = false
+    @Published var hasUnencryptedMessages = false
     @Published var encryptionProfiles: [String: EncryptionProfile] = [:] // deviceID -> EncryptionProfile
     @Published var hasEncryptionKeys: Bool = false
     
@@ -125,10 +118,22 @@ class GridViewModel: ObservableObject {
             updateUserActivityAndLocation(profile)
             placeCurrentUserOnGrid()
             
-            // Load read receipts first, then messages
-            loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
-                // Fetch messages after read receipts are loaded
-                self?.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
+            // Automatically enable encryption for all users
+            enableEncryptionOnlyMode()
+            
+            // Load encryption profiles first, then other data
+            loadEncryptionProfiles { [weak self] in
+                guard let self = self else { return }
+                
+                // After encryption profiles are loaded, load read receipts
+                self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    // Finally, fetch messages after read receipts are loaded
+                    self.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
+                    // Check for unencrypted messages after loading
+                    self.checkForUnencryptedMessages()
+                }
             }
             
             // Subscribe to new messages
@@ -189,7 +194,7 @@ class GridViewModel: ObservableObject {
                     }
                     
                     // Trigger UI update if this is an encrypted message
-                    if newMessage.isEncrypted && !self.isEncryptionMode {
+                    if newMessage.isEncrypted {
                         self.objectWillChange.send()
                     }
                 }
@@ -223,12 +228,8 @@ class GridViewModel: ObservableObject {
         proximityService.$activeNearbyProfiles
             .sink { [weak self] allProfiles in
                 guard let self = self else { return }
-                // If in encryption mode, filter the profiles before updating grid
-                if self.isEncryptionMode {
-                    self.refreshGridForEncryptionMode()
-                } else {
-                    self.updateGridWithAllProfiles(allProfiles)
-                }
+                // All messaging is now encrypted by default
+                self.updateGridWithAllProfiles(allProfiles)
             }
             .store(in: &cancellables)
     }
@@ -477,28 +478,36 @@ class GridViewModel: ObservableObject {
         placeCurrentUserOnGrid()
         print("GridViewModel: Set current user profile for device ID \(profile.deviceID) (user: \(profile.userID))")
         
-        // Load star/block relationships first
-        print("GridViewModel: Loading star/block relationships...")
-        loadStarBlockRelationships(forUserID: profile.userID) { [weak self] in
+        // Automatically enable encryption for all users
+        enableEncryptionOnlyMode()
+        
+        // Load encryption profiles first, then other data
+        loadEncryptionProfiles { [weak self] in
             guard let self = self else { return }
             
-            // Load read receipts after star/block
-            print("GridViewModel: Loading read receipts...")
-            self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+            // Load star/block relationships after encryption profiles
+            print("GridViewModel: Loading star/block relationships...")
+            self.loadStarBlockRelationships(forUserID: profile.userID) { [weak self] in
                 guard let self = self else { return }
                 
-                // After read receipts are loaded, fetch messages
-                print("GridViewModel: Preloading all messages for instant chat access...")
-                self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+                // After star/block relationships, load read receipts
+                print("GridViewModel: Loading read receipts...")
+                self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    // Finally, fetch messages after read receipts are loaded
+                    print("GridViewModel: Preloading all messages for instant chat access...")
+                    self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+                    
+                    // Check for unencrypted messages after loading
+                    self.checkForUnencryptedMessages()
+                }
             }
         }
         
         // Subscribe to message changes immediately
         messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         
-        // REMOVED: Don't start location updates automatically
-        // locationService.requestLocationPermission()
-
         // Check for deferred navigation
         if let pendingDeviceID = pendingChatNavigationDeviceID {
             print("GridViewModel: Handling deferred navigation to chat with deviceID: \(pendingDeviceID)")
@@ -1222,9 +1231,6 @@ class GridViewModel: ObservableObject {
             return
         }
         
-        // Check if encryption should be used
-        let shouldEncrypt = isEncryptionMode && encryptionProfiles[recipientDeviceID] != nil
-        
         let recipientProfile: UserProfile
         if recipientDeviceID == senderProfile.deviceID {
             recipientProfile = senderProfile
@@ -1253,20 +1259,37 @@ class GridViewModel: ObservableObject {
             status: .sending  // Initial status
         )
         
-        // Handle encryption if needed
-        if shouldEncrypt {
-            guard let recipientEncryptionProfile = encryptionProfiles[recipientDeviceID],
-                  let encryptedData = CryptoService.shared.encrypt(text: text, withPublicKey: recipientEncryptionProfile.publicKey) else {
-                print("Failed to encrypt message")
-                return
-            }
-            
+        // Handle encryption - try to encrypt if profiles are available
+        var canEncrypt = false
+        
+        // For self-messages, use our own public key
+        let targetEncryptionProfile: EncryptionProfile?
+        if recipientDeviceID == senderProfile.deviceID {
+            // Self-message: use our own encryption profile
+            targetEncryptionProfile = encryptionProfiles[senderProfile.deviceID]
+        } else {
+            // Other user: use their encryption profile
+            targetEncryptionProfile = encryptionProfiles[recipientDeviceID]
+        }
+        
+        if let encryptionProfile = targetEncryptionProfile,
+           let encryptedData = CryptoService.shared.encrypt(text: text, withPublicKey: encryptionProfile.publicKey) {
+            // Encryption successful
             optimisticMessage.isEncrypted = true
             optimisticMessage.encryptedContent = encryptedData.base64EncodedString()  // Convert to base64 string
-            optimisticMessage.encryptionKeyID = recipientEncryptionProfile.id
+            optimisticMessage.encryptionKeyID = encryptionProfile.id
             optimisticMessage.text = "[Encrypted Message]" // Placeholder for CloudKit
+            canEncrypt = true
+            print("GridViewModel: Message encrypted for device: \(recipientDeviceID)")
         } else {
+            // Encryption failed or no profile available - fall back to unencrypted
             optimisticMessage.isEncrypted = false
+            print("GridViewModel: Warning - No encryption profile available for device: \(recipientDeviceID), sending unencrypted message")
+            print("Available encryption profiles: \(encryptionProfiles.keys)")
+            
+            if recipientDeviceID != senderProfile.deviceID {
+                print("GridViewModel: Recipient may need to recreate their account to enable encryption")
+            }
         }
         
         // 2. Add to local messages array immediately
@@ -1561,79 +1584,164 @@ class GridViewModel: ObservableObject {
             recipientProfile = foundProfile
         }
 
-        // 1. Create CKAsset from imageData
-        let tempDir = FileManager.default.temporaryDirectory
-        let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-        var imageAsset: CKAsset?
-        do {
-            try imageData.write(to: tempFileURL)
-            imageAsset = CKAsset(fileURL: tempFileURL)
-        } catch {
-            print("Error creating CKAsset for image message: \(error.localizedDescription)")
-            // Optionally, inform the user that the image couldn't be prepared.
-            return
+        // 1. Compress image data for encryption to prevent CloudKit size limits
+        var processedImageData = imageData
+        let maxSizeForEncryption = 400 * 1024 // 400KB limit to leave room for encryption overhead
+        
+        #if canImport(UIKit)
+        if imageData.count > maxSizeForEncryption {
+            print("GridViewModel: Image is \(imageData.count) bytes, compressing for encryption...")
+            if let uiImage = UIImage(data: imageData) {
+                var compressionQuality: CGFloat = 0.8
+                while compressionQuality > 0.1 {
+                    if let compressedData = uiImage.jpegData(compressionQuality: compressionQuality) {
+                        if compressedData.count <= maxSizeForEncryption {
+                            processedImageData = compressedData
+                            print("GridViewModel: Compressed image from \(imageData.count) to \(compressedData.count) bytes (quality: \(compressionQuality))")
+                            break
+                        }
+                    }
+                    compressionQuality -= 0.1
+                }
+                
+                if processedImageData.count > maxSizeForEncryption {
+                    print("GridViewModel: Could not compress image enough for encryption, will fall back to unencrypted")
+                }
+            }
         }
+        #endif
 
-        guard let finalImageAsset = imageAsset else {
-            print("Failed to create image asset, cannot send message.")
-            // Cleanup temp file if asset creation failed mid-way, though CKAsset init might not fail if URL is valid
-            try? FileManager.default.removeItem(at: tempFileURL)
-            return
-        }
-
-        // 2. Create optimistic message (text is empty for now)
+        // 2. Create optimistic message first (we'll set the asset after determining encryption)
         let temporaryID = UUID().uuidString
-        let optimisticMessage = Message(
+        var optimisticMessage = Message(
             id: temporaryID,
             senderDeviceID: senderProfile.deviceID,
             recipientDeviceID: recipientDeviceID,
             senderUserID: senderProfile.userID,
             recipientUserID: recipientProfile.userID,
-            text: "", // Empty text for image messages, or you can add a placeholder like "[Image]"
+            text: "", // Empty text for image messages
             timestamp: Date(),
-            status: .sending,
-            imageAsset: finalImageAsset // The optimistic asset (local temp file URL)
+            status: .sending
         )
+
+        // 2. Handle encryption for image data
+        var imageAsset: CKAsset? = nil
+        var canEncrypt = false
+        
+        // Determine encryption profile to use
+        let targetEncryptionProfile: EncryptionProfile?
+        if recipientDeviceID == senderProfile.deviceID {
+            // Self-message: use our own encryption profile
+            targetEncryptionProfile = encryptionProfiles[senderProfile.deviceID]
+        } else {
+            // Other user: use their encryption profile
+            targetEncryptionProfile = encryptionProfiles[recipientDeviceID]
+        }
+        
+        if let encryptionProfile = targetEncryptionProfile,
+           let encryptedImageData = CryptoService.shared.encryptImage(data: processedImageData, withPublicKey: encryptionProfile.publicKey) {
+            
+            // Check if encrypted + base64 encoded size is reasonable for CloudKit
+            let base64EncodedString = encryptedImageData.base64EncodedString()
+            let maxCloudKitSize = 800 * 1024 // 800KB limit for safety (CloudKit limit is ~1MB)
+            
+            if base64EncodedString.count <= maxCloudKitSize {
+                // Encryption successful and size is acceptable
+                optimisticMessage.isEncrypted = true
+                optimisticMessage.encryptedImageData = base64EncodedString
+                optimisticMessage.encryptionKeyID = encryptionProfile.id
+                optimisticMessage.text = "[Encrypted Image]" // Placeholder for CloudKit
+                canEncrypt = true
+                print("GridViewModel: Image encrypted for device: \(recipientDeviceID) (final size: \(base64EncodedString.count) bytes)")
+                
+                // For encrypted images, we don't create a CKAsset - the encrypted data is stored as a string
+                imageAsset = nil
+            } else {
+                print("GridViewModel: Encrypted image still too large for CloudKit (\(base64EncodedString.count) bytes), falling back to unencrypted")
+                canEncrypt = false
+            }
+        } else {
+            if processedImageData.count > maxSizeForEncryption {
+                print("GridViewModel: Image too large for encryption even after compression, falling back to unencrypted")
+            } else if targetEncryptionProfile == nil {
+                print("GridViewModel: Warning - No encryption profile available for device: \(recipientDeviceID), sending unencrypted image")
+                print("Available encryption profiles: \(encryptionProfiles.keys)")
+            } else {
+                print("GridViewModel: Image encryption failed for device: \(recipientDeviceID), falling back to unencrypted")
+            }
+            canEncrypt = false
+        }
+        
+        if !canEncrypt {
+            // Encryption failed or not possible - fall back to unencrypted CKAsset
+            optimisticMessage.isEncrypted = false
+            
+            if recipientDeviceID != senderProfile.deviceID {
+                print("GridViewModel: Recipient may need to recreate their account to enable image encryption")
+            }
+            
+            // Create CKAsset from unencrypted imageData
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            do {
+                try imageData.write(to: tempFileURL)
+                imageAsset = CKAsset(fileURL: tempFileURL)
+            } catch {
+                print("Error creating CKAsset for unencrypted image message: \(error.localizedDescription)")
+                return
+            }
+        }
+        
+        // Set the image asset (nil for encrypted, CKAsset for unencrypted)
+        optimisticMessage.imageAsset = imageAsset
 
         // 3. Add to local messages array immediately
         self.messages.append(optimisticMessage)
         self.messages.sort(by: { $0.timestamp < $1.timestamp })
-        print("GridViewModel: Optimistically added image message (TempID: \(temporaryID))")
+        print("GridViewModel: Optimistically added \(canEncrypt ? "encrypted" : "unencrypted") image message (TempID: \(temporaryID))")
 
         // 4. Send to messaging service
         messagingService.sendMessage(optimisticMessage) { [weak self] result in
-            guard let self = self else { 
-                // If self is nil, attempt to clean up the temp file if it still exists
-                try? FileManager.default.removeItem(at: tempFileURL)
+            guard let self = self else {
+                // Clean up temp file if it exists for unencrypted images
+                if let asset = imageAsset, let url = asset.fileURL {
+                    try? FileManager.default.removeItem(at: url)
+                }
                 return
             }
 
             guard let optimisticMessageIndex = self.messages.firstIndex(where: { $0.id == temporaryID && $0.status == .sending }) else {
                 print("GridViewModel: Could not find optimistic image message (TempID: \(temporaryID)) to update after send attempt.")
-                // If message not found, the temp file might be orphaned. Clean it up.
-                try? FileManager.default.removeItem(at: tempFileURL) 
+                // Clean up temp file if it exists
+                if let asset = imageAsset, let url = asset.fileURL {
+                    try? FileManager.default.removeItem(at: url)
+                }
                 return
             }
             
             switch result {
             case .success(let savedMessage):
-                // Server confirmed, update local message.
-                // The CKAsset in savedMessage now points to the CloudKit stored asset.
-                // The local temporary file should be cleaned up.
+                // Server confirmed, update local message
                 self.messages[optimisticMessageIndex].id = savedMessage.id
                 self.messages[optimisticMessageIndex].recordID = savedMessage.recordID
                 self.messages[optimisticMessageIndex].timestamp = savedMessage.timestamp
                 self.messages[optimisticMessageIndex].status = .sent
                 self.messages[optimisticMessageIndex].imageAsset = savedMessage.imageAsset // Update with server asset
                 print("GridViewModel: Optimistic image message (TempID: \(temporaryID)) confirmed. New ID: \(savedMessage.id)")
-                try? FileManager.default.removeItem(at: tempFileURL) // Cleanup successful upload
+                
+                // Clean up temp file for unencrypted images
+                if let asset = imageAsset, let url = asset.fileURL {
+                    try? FileManager.default.removeItem(at: url)
+                }
                 
             case .failure(let error):
                 self.messages[optimisticMessageIndex].status = .failed
                 print("GridViewModel: Optimistic image message (TempID: \(temporaryID)) failed to send: \(error.localizedDescription)")
-                // Temp file cleanup for failed uploads might depend on retry strategy.
-                // For now, let's remove it. If retries are implemented, manage temp file lifecycle carefully.
-                try? FileManager.default.removeItem(at: tempFileURL)
+                
+                // Clean up temp file for unencrypted images
+                if let asset = imageAsset, let url = asset.fileURL {
+                    try? FileManager.default.removeItem(at: url)
+                }
             }
             self.messages.sort(by: { $0.timestamp < $1.timestamp })
         }
@@ -1947,74 +2055,127 @@ class GridViewModel: ObservableObject {
         publicDB.add(operation)
     }
     
-    private func loadEncryptionProfiles() {
+    private func loadEncryptionProfiles(completion: @escaping () -> Void = {}) {
         let publicDB = CKContainer.default().publicCloudDatabase
         let predicate = NSPredicate(format: "isEncryptionEnabled == 1")  // Use Int64 value
         let query = CKQuery(recordType: "EncryptionProfiles", predicate: predicate)
         
         publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self else { 
+                    completion()
+                    return 
+                }
                 
                 if let error = error {
                     print("Error loading encryption profiles: \(error.localizedDescription)")
+                    completion()
                     return
                 }
                 
-                self.encryptionProfiles.removeAll()
+                // Don't clear existing profiles, just update/add new ones
+                var loadedCount = 0
                 records?.forEach { record in
                     if let profile = EncryptionProfile(record: record) {
                         self.encryptionProfiles[profile.id] = profile
+                        loadedCount += 1
                     }
                 }
                 
-                print("Loaded \(self.encryptionProfiles.count) encryption profiles")
+                print("Loaded \(loadedCount) encryption profiles during initialization")
                 self.refreshGridForEncryptionMode()
+                completion()
             }
         }
     }
     
-    private func refreshGridForEncryptionMode() {
-        if isEncryptionMode {
-            // Filter profiles to show only those with encryption enabled
-            let encryptedDeviceIDs = Set(encryptionProfiles.keys)
-            // Always include current user in encryption mode
-            let currentDeviceID = currentUserProfile?.deviceID
-            let filteredProfiles = proximityService.activeNearbyProfiles.filter { profile in
-                // Check encryption requirement
-                let hasEncryption = profile.deviceID == currentDeviceID || encryptedDeviceIDs.contains(profile.deviceID)
+    // NEW: Load encryption profiles on-demand for specific device IDs
+    private func loadEncryptionProfilesOnDemand(for deviceIDs: [String], completion: @escaping (Bool) -> Void) {
+        let publicDB = CKContainer.default().publicCloudDatabase
+        
+        // Create record IDs for the specific devices we need
+        let recordIDs = deviceIDs.map { CKRecord.ID(recordName: "encryption_\($0)") }
+        
+        let fetchOperation = CKFetchRecordsOperation(recordIDs: recordIDs)
+        fetchOperation.fetchRecordsCompletionBlock = { [weak self] recordsByRecordID, error in
+            DispatchQueue.main.async {
+                guard let self = self else { 
+                    completion(false)
+                    return 
+                }
                 
-                // Also check blocking status
-                let isNotBlocked = profile.deviceID == currentDeviceID || (!blockedUsers.contains(profile.userID) && !usersWhoBlockedMe.contains(profile.userID))
+                if let error = error {
+                    print("Error loading encryption profiles on-demand: \(error.localizedDescription)")
+                    
+                    // Check for partial failures (some profiles found, some not)
+                    if let ckError = error as? CKError, ckError.code == .partialFailure {
+                        if let partialErrors = ckError.partialErrorsByItemID {
+                            var foundProfiles = 0
+                            
+                            // Process any successfully fetched profiles
+                            recordsByRecordID?.forEach { (recordID, record) in
+                                if let profile = EncryptionProfile(record: record) {
+                                    self.encryptionProfiles[profile.id] = profile
+                                    foundProfiles += 1
+                                    print("Loaded encryption profile for device: \(profile.id)")
+                                }
+                            }
+                            
+                            // Check if we got the profiles we need
+                            let hasAllNeeded = deviceIDs.allSatisfy { deviceID in
+                                self.encryptionProfiles[deviceID] != nil
+                            }
+                            
+                            print("On-demand load: found \(foundProfiles) profiles, need all: \(hasAllNeeded)")
+                            completion(hasAllNeeded)
+                        } else {
+                            completion(false)
+                        }
+                    } else {
+                        completion(false)
+                    }
+                    return
+                }
                 
-                return hasEncryption && isNotBlocked
+                // Success case - process all fetched profiles
+                var loadedCount = 0
+                recordsByRecordID?.forEach { (recordID, record) in
+                    if let profile = EncryptionProfile(record: record) {
+                        self.encryptionProfiles[profile.id] = profile
+                        loadedCount += 1
+                        print("Loaded encryption profile for device: \(profile.id)")
+                    }
+                }
+                
+                print("Successfully loaded \(loadedCount) encryption profiles on-demand")
+                completion(loadedCount > 0)
             }
-            updateGridWithAllProfiles(filteredProfiles)
-        } else {
-            // Show all profiles (blocking filter will be applied in updateGridWithAllProfiles)
-            updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         }
+        
+        publicDB.add(fetchOperation)
+    }
+    
+    private func refreshGridForEncryptionMode() {
+        // All messaging is now encrypted by default - always filter to show encryption-enabled profiles
+        let encryptedDeviceIDs = Set(encryptionProfiles.keys)
+        // Always include current user in encryption mode
+        let currentDeviceID = currentUserProfile?.deviceID
+        let filteredProfiles = proximityService.activeNearbyProfiles.filter { profile in
+            // Check encryption requirement
+            let hasEncryption = profile.deviceID == currentDeviceID || encryptedDeviceIDs.contains(profile.deviceID)
+            
+            // Also check blocking status
+            let isNotBlocked = profile.deviceID == currentDeviceID || (!blockedUsers.contains(profile.userID) && !usersWhoBlockedMe.contains(profile.userID))
+            
+            return hasEncryption && isNotBlocked
+        }
+        updateGridWithAllProfiles(filteredProfiles)
     }
     
     // Get encryption profile for a device
     func getEncryptionProfile(for deviceID: String) -> EncryptionProfile? {
         return encryptionProfiles[deviceID]
     }
-    
-    // Check if there are unread encrypted messages
-    func hasUnreadEncryptedMessages() -> Bool {
-        guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
-        
-        // Check for unread encrypted messages sent to current device
-        return messages.contains { message in
-            message.isEncrypted &&
-            message.recipientDeviceID == currentDeviceID &&
-            message.senderDeviceID != currentDeviceID &&
-            !readReceipts.contains(message.id)
-        }
-    }
-    
-
     
     // Decrypt message for display
     func decryptMessage(_ message: Message) -> String {
@@ -2029,6 +2190,23 @@ class GridViewModel: ObservableObject {
             return decryptedText
         } else {
             return "[Failed to decrypt message]"
+        }
+    }
+    
+    // Decrypt image for display
+    func decryptImageMessage(_ message: Message) -> Data? {
+        guard message.isEncrypted,
+              let encryptedImageDataString = message.encryptedImageData,
+              let encryptedImageData = Data(base64Encoded: encryptedImageDataString),
+              let privateKey = CryptoService.shared.getPrivateKey() else {
+            return nil
+        }
+        
+        if let decryptedImageData = CryptoService.shared.decryptImage(data: encryptedImageData, withPrivateKey: privateKey) {
+            return decryptedImageData
+        } else {
+            print("Failed to decrypt image message")
+            return nil
         }
     }
 
@@ -2090,7 +2268,7 @@ class GridViewModel: ObservableObject {
         }
         
         // If content is appropriate, send the message normally
-        // Note: encryption is handled internally by sendMessage based on isEncryptionMode
+        // Note: encryption is handled automatically since all messaging is now encrypted by default
         sendMessage(text: text, to: recipientDeviceID)
         
         // Track the event for analytics (if user has consented)
@@ -2213,5 +2391,77 @@ class GridViewModel: ObservableObject {
         guard let myInterests = currentUserProfile?.interests else { return [] }
         let sharedInterests = Set(myInterests).intersection(Set(userProfile.interests))
         return Array(sharedInterests).sorted { $0.rawValue < $1.rawValue }
+    }
+    
+    // MARK: - Encryption-Only Mode Methods
+    
+    /// Enable encryption for all messaging (called automatically on init)
+    private func enableEncryptionOnlyMode() {
+        print("GridViewModel: Enabling encryption-only mode...")
+        
+        // Check if keys exist
+        hasEncryptionKeys = CryptoService.shared.hasEncryptionKeys()
+        
+        if !hasEncryptionKeys {
+            // Generate new keys
+            if let (publicKey, _) = CryptoService.shared.generateKeyPair() {
+                hasEncryptionKeys = true
+                
+                // Create and save encryption profile
+                guard let deviceID = currentUserProfile?.deviceID else { return }
+                let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey)
+                
+                // Add to local cache immediately
+                encryptionProfiles[deviceID] = encryptionProfile
+                
+                saveEncryptionProfile(encryptionProfile)
+            }
+        } else {
+            // Keys exist, ensure our profile is published
+            guard let deviceID = currentUserProfile?.deviceID,
+                  let publicKey = CryptoService.shared.getPublicKey() else { return }
+            let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey)
+            
+            // Add to local cache immediately
+            encryptionProfiles[deviceID] = encryptionProfile
+            
+            saveEncryptionProfile(encryptionProfile)
+        }
+        
+        // Note: loadEncryptionProfiles() is now called explicitly in the initialization sequence
+    }
+    
+    /// Check for unencrypted messages that would require account recreation
+    private func checkForUnencryptedMessages() {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return }
+        
+        // Check if user has any unencrypted messages
+        hasUnencryptedMessages = messages.contains { message in
+            !message.isEncrypted && (message.senderDeviceID == currentDeviceID || message.recipientDeviceID == currentDeviceID)
+        }
+        
+        if hasUnencryptedMessages {
+            print("GridViewModel: User has unencrypted messages - account recreation required")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.showingAccountRecreationAlert = true
+            }
+        }
+    }
+    
+    /// Check if user needs to recreate account due to unencrypted messages
+    func requiresAccountRecreation() -> Bool {
+        return hasUnencryptedMessages
+    }
+
+    // Check if there are unread messages (all messages are now encrypted)
+    func hasUnreadMessages() -> Bool {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
+        
+        // Check for unread messages sent to current device
+        return messages.contains { message in
+            message.recipientDeviceID == currentDeviceID &&
+            message.senderDeviceID != currentDeviceID &&
+            !readReceipts.contains(message.id)
+        }
     }
 }

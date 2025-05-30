@@ -222,7 +222,7 @@ struct MessageRow: View {
                 }
                 
                 if let imageAsset = message.imageAsset {
-                    // Display image if present
+                    // Display unencrypted image
                     if imageLoader.isLoading {
                         ProgressView()
                             .frame(width: 150, height: 150)
@@ -240,6 +240,48 @@ struct MessageRow: View {
                             .frame(width: 150, height: 100)
                             .cornerRadius(10)
                             .overlay(Text("Error loading image").font(.caption))
+                    }
+                } else if message.isEncrypted && message.encryptedImageData != nil {
+                    // Display encrypted image
+                    if let decryptedImageData = viewModel.decryptImageMessage(message) {
+                        #if canImport(UIKit)
+                        if let uiImage = UIImage(data: decryptedImageData) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxHeight: 200)
+                                .cornerRadius(10)
+                                .onTapGesture { /* Allow full screen view? */ }
+                        } else {
+                            Rectangle()
+                                .fill(Color.red.opacity(0.2))
+                                .frame(width: 150, height: 100)
+                                .cornerRadius(10)
+                                .overlay(Text("Invalid image data").font(.caption))
+                        }
+                        #else
+                        // macOS support
+                        if let nsImage = NSImage(data: decryptedImageData) {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxHeight: 200)
+                                .cornerRadius(10)
+                                .onTapGesture { /* Allow full screen view? */ }
+                        } else {
+                            Rectangle()
+                                .fill(Color.red.opacity(0.2))
+                                .frame(width: 150, height: 100)
+                                .cornerRadius(10)
+                                .overlay(Text("Invalid image data").font(.caption))
+                        }
+                        #endif
+                    } else {
+                        Rectangle()
+                            .fill(Color.red.opacity(0.2))
+                            .frame(width: 150, height: 100)
+                            .cornerRadius(10)
+                            .overlay(Text("Failed to decrypt image").font(.caption))
                     }
                 } else if !displayText.isEmpty {
                     // Display text if no image and text is not empty
