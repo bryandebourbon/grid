@@ -110,8 +110,9 @@ struct ContentView: View {
             return
         }
         
-        // Generate a unique device identifier
-        let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        // Generate a consistent device identifier based on Apple User ID
+        // This ensures the same account works across dev builds, TestFlight, and App Store
+        let deviceID = generateConsistentDeviceID(for: userID)
         let deviceName = UIDevice.current.name
         
         print("ContentView: Checking profile for deviceID: \(deviceID) (userID: \(userID))")
@@ -198,9 +199,50 @@ struct ContentView: View {
         publicDB.add(fetchOperation)
     }
     
+    // Generate a consistent device ID that works across dev builds, TestFlight, and App Store
+    private func generateConsistentDeviceID(for userID: String) -> String {
+        // Check if we have a stored device ID for this user
+        let storedKey = "consistentDeviceID_\(userID)"
+        if let storedDeviceID = UserDefaults.standard.string(forKey: storedKey) {
+            return storedDeviceID
+        }
+        
+        // Generate a stable device ID based on the Apple User ID
+        // This ensures the same user gets the same device ID across dev builds, TestFlight, and App Store
+        // We take the last part of the Apple User ID (after the last dot) and use it as our device identifier
+        let userIDComponents = userID.components(separatedBy: ".")
+        let userSuffix = userIDComponents.last ?? "default"
+        let deviceID = "\(userSuffix)-DEVICE"
+        
+        // Store it for future use
+        UserDefaults.standard.set(deviceID, forKey: storedKey)
+        
+        print("Generated consistent device ID: \(deviceID) for user: \(userID)")
+        return deviceID
+    }
+    
+    // Helper method to clear old device ID preferences if needed for migration
+    private func clearOldDeviceIDPreferences() {
+        // Remove any old device ID keys that might conflict
+        let oldKeys = UserDefaults.standard.dictionaryRepresentation().keys.filter { 
+            $0.hasPrefix("deviceID_") && !$0.hasPrefix("consistentDeviceID_") 
+        }
+        for key in oldKeys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        print("Cleared \(oldKeys.count) old device ID preferences")
+    }
+
     private func signOut() {
         // Clear stored credentials
         clearStoredCredentials()
+        
+        // Clear the stored device ID for this user
+        if let userID = appleUserID {
+            let storedKey = "consistentDeviceID_\(userID)"
+            UserDefaults.standard.removeObject(forKey: storedKey)
+            print("Cleared stored device ID for user: \(userID)")
+        }
         
         appleUserID = nil
         userProfile = nil

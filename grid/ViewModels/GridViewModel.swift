@@ -2030,7 +2030,7 @@ class GridViewModel: ObservableObject {
         let dispatchGroup = DispatchGroup()
         var encounteredError: Error? = nil
 
-        // 1. Delete UserProfile records
+        // 1. Delete UserProfile records (user owns these)
         dispatchGroup.enter()
         let userProfilePredicate = NSPredicate(format: "userID == %@", userIDToDelete)
         let userProfileQuery = CKQuery(recordType: "UserProfiles", predicate: userProfilePredicate)
@@ -2043,7 +2043,7 @@ class GridViewModel: ObservableObject {
             dispatchGroup.leave()
         }
 
-        // 2. Delete sent Messages
+        // 2. Delete sent Messages (user owns these)
         dispatchGroup.enter()
         let sentMessagesPredicate = NSPredicate(format: "senderUserID == %@", userIDToDelete)
         let sentMessagesQuery = CKQuery(recordType: "Messages", predicate: sentMessagesPredicate)
@@ -2056,23 +2056,40 @@ class GridViewModel: ObservableObject {
             dispatchGroup.leave()
         }
 
-        // 3. Delete received Messages (where this user was the recipient)
+        // 3. Delete UserRelationship records (star/block records user created)
         dispatchGroup.enter()
-        let receivedMessagesPredicate = NSPredicate(format: "recipientUserID == %@", userIDToDelete)
-        let receivedMessagesQuery = CKQuery(recordType: "Messages", predicate: receivedMessagesPredicate)
+        let userRelationshipPredicate = NSPredicate(format: "userID == %@", userIDToDelete)
+        let userRelationshipQuery = CKQuery(recordType: "UserRelationships", predicate: userRelationshipPredicate)
         
-        fetchAndDeleteRecords(database: publicDB, query: receivedMessagesQuery, recordTypeForLog: "Received Messages") { error in
+        fetchAndDeleteRecords(database: publicDB, query: userRelationshipQuery, recordTypeForLog: "UserRelationships") { error in
             if let error = error {
-                print("GridViewModel: Error deleting received Message records: \(error.localizedDescription)")
+                print("GridViewModel: Error deleting UserRelationship records: \(error.localizedDescription)")
                 encounteredError = encounteredError ?? error
             }
             dispatchGroup.leave()
         }
 
+        // 4. Delete EncryptionProfile records (user owns these)
+        dispatchGroup.enter()
+        let encryptionProfilePredicate = NSPredicate(format: "deviceID == %@", currentUserProfile?.deviceID ?? "")
+        let encryptionProfileQuery = CKQuery(recordType: "EncryptionProfiles", predicate: encryptionProfilePredicate)
+        
+        fetchAndDeleteRecords(database: publicDB, query: encryptionProfileQuery, recordTypeForLog: "EncryptionProfiles") { error in
+            if let error = error {
+                print("GridViewModel: Error deleting EncryptionProfile records: \(error.localizedDescription)")
+                encounteredError = encounteredError ?? error
+            }
+            dispatchGroup.leave()
+        }
+
+        // NOTE: We do NOT delete received messages because the user doesn't own those CloudKit records.
+        // Received messages are owned by their senders and can only be deleted by them.
+        // This prevents the "WRITE operation not permitted" error.
+
         // Notify when all deletion tasks are complete
         dispatchGroup.notify(queue: .main) {
             if encounteredError == nil {
-                print("GridViewModel: Successfully deleted all records associated with userID: \(userIDToDelete)")
+                print("GridViewModel: Successfully deleted all user-owned records associated with userID: \(userIDToDelete)")
             }
             completion(encounteredError)
         }
