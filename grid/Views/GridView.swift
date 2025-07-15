@@ -142,6 +142,7 @@ struct GridView: View {
     @State private var chatOverlayRecipientID: String? = nil  // NEW: For chat overlay recipient
     @State private var showingSettingsMenu = false
     @State private var showingContactInfo = false  // NEW: For contact info
+    @State private var showingBlockedUsers = false  // NEW: For blocked users view
     @State private var showInterestsOnGrid = false  // NEW: Toggle for showing interests on grid cells (off by default)
     @State private var showInterestsFilter = true  // NEW: Toggle for showing interests filter section (on by default)
     @State private var gridColumns: Int = 3 // Dynamic column count
@@ -464,6 +465,10 @@ struct GridView: View {
                         
                         Divider()
                         
+                        Button(action: { showingBlockedUsers = true }) {
+                            Label("Blocked Users", systemImage: "hand.raised.slash")
+                        }
+                        
                         Button(action: { showingContactInfo = true }) {
                             Label("Contact Us", systemImage: "envelope")
                         }
@@ -520,6 +525,9 @@ struct GridView: View {
             }
             .sheet(isPresented: $showingContactInfo) {  // NEW: Sheet for Contact Info
                 ContactInfoView()
+            }
+            .sheet(isPresented: $showingBlockedUsers) {  // NEW: Sheet for Blocked Users
+                BlockedUsersView(viewModel: viewModel)
             }
             .sheet(isPresented: $viewModel.showingPrivacyPolicy) {  // NEW: Sheet for Privacy Policy
                 PrivacyPolicyView()
