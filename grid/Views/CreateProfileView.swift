@@ -18,9 +18,33 @@ struct CreateProfileView: View {
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
 
-    // Generate device-specific info
-    private let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+    // Generate device-specific info consistently across build types
+    private var deviceID: String {
+        return generateConsistentDeviceID(for: appleUserID)
+    }
     private let deviceName = UIDevice.current.name
+
+    // Generate a consistent device ID that works across dev builds, TestFlight, and App Store
+    private func generateConsistentDeviceID(for userID: String) -> String {
+        // Check if we have a stored device ID for this user
+        let storedKey = "consistentDeviceID_\(userID)"
+        if let storedDeviceID = UserDefaults.standard.string(forKey: storedKey) {
+            return storedDeviceID
+        }
+        
+        // Generate a stable device ID based on the Apple User ID
+        // This ensures the same user gets the same device ID across dev builds, TestFlight, and App Store
+        // We take the last part of the Apple User ID (after the last dot) and use it as our device identifier
+        let userIDComponents = userID.components(separatedBy: ".")
+        let userSuffix = userIDComponents.last ?? "default"
+        let deviceID = "\(userSuffix)-DEVICE"
+        
+        // Store it for future use
+        UserDefaults.standard.set(deviceID, forKey: storedKey)
+        
+        print("Generated consistent device ID: \(deviceID) for user: \(userID)")
+        return deviceID
+    }
 
     var body: some View {
         NavigationView {
