@@ -798,7 +798,7 @@ struct GridNodeView: View {
         .onChange(of: node.userProfile?.profileImage?.fileURL) { _ in // Try to reload if asset URL changes
             imageLoader.loadImage(from: node.userProfile?.profileImage)
         }
-        // Double tap gesture for profile overlay (must be before single tap)
+        // Double tap gesture for chat (must be before single tap)
         .onTapGesture(count: 2) {
             if let userProfile = node.userProfile {
                 // Haptic feedback for double tap
@@ -807,20 +807,8 @@ struct GridNodeView: View {
                 impactFeedback.impactOccurred()
                 #endif
                 
-                onProfileTapped(userProfile)
-            }
-        }
-        // Single tap gesture for chat
-        .onTapGesture {
-            if let userProfile = node.userProfile {
                 // If blocked, show profile instead of trying to chat
                 if viewModel.isBlocked(userProfile.deviceID) {
-                    // Haptic feedback
-                    #if os(iOS)
-                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-                    impactFeedback.impactOccurred()
-                    #endif
-                    
                     onProfileTapped(userProfile)
                 } else {
                     let messagingStatus = viewModel.canMessageUser(deviceID: userProfile.deviceID)
@@ -831,6 +819,18 @@ struct GridNodeView: View {
                         // Optionally show an alert here
                     }
                 }
+            }
+        }
+        // Single tap gesture for profile
+        .onTapGesture {
+            if let userProfile = node.userProfile {
+                // Haptic feedback
+                #if os(iOS)
+                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                impactFeedback.impactOccurred()
+                #endif
+                
+                onProfileTapped(userProfile)
             }
         }
         // Long press gesture for profile overlay
