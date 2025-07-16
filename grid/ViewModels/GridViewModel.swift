@@ -83,6 +83,9 @@ class GridViewModel: ObservableObject {
     // NEW: Demo service for promotional screenshots
     @Published var demoService = DemoService()
     
+    // NEW: Stories service for story management
+    @Published var storiesService = StoriesService()
+    
     // NEW: Encryption-only messaging properties
     @Published var showingAccountRecreationAlert = false
     @Published var hasUnencryptedMessages = false
@@ -141,6 +144,11 @@ class GridViewModel: ObservableObject {
                     self.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
                     // Check for unencrypted messages after loading
                     self.checkForUnencryptedMessages()
+                    
+                    // Load stories data
+                    Task {
+                        await self.refreshStories()
+                    }
                 }
             }
             
@@ -548,6 +556,11 @@ class GridViewModel: ObservableObject {
                     
                     // Check for unencrypted messages after loading
                     self.checkForUnencryptedMessages()
+                    
+                    // Load stories data
+                    Task {
+                        await self.refreshStories()
+                    }
                 }
             }
         }
@@ -2595,5 +2608,104 @@ class GridViewModel: ObservableObject {
             message.senderDeviceID != currentDeviceID &&
             !readReceipts.contains(message.id)
         }
+    }
+    
+    // MARK: - Stories Management Methods
+    
+    /// Upload a new story
+    func uploadStory(imageData: Data, caption: String? = nil) async throws {
+        guard let currentProfile = currentUserProfile else {
+            throw NSError(domain: "GridViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "No current user profile"])
+        }
+        
+        do {
+            let story = try await storiesService.uploadStory(
+                imageData: imageData,
+                caption: caption,
+                userID: currentProfile.userID,
+                deviceID: currentProfile.deviceID
+            )
+            print("GridViewModel: Successfully uploaded story: \(story.id)")
+        } catch {
+            print("GridViewModel: Error uploading story: \(error.localizedDescription)")
+            throw error
+        }
+    }
+    
+    /// Get stories for a specific device with unread indicator
+    func getStoriesForDevice(_ deviceID: String) async -> (stories: [Story], hasUnviewed: Bool) {
+        guard let currentDeviceID = currentUserProfile?.deviceID else {
+            return ([], false)
+        }
+        
+        return await storiesService.getStoriesForDevice(deviceID, viewerDeviceID: currentDeviceID)
+    }
+    
+    /// Check if a device has new/unviewed stories
+    func hasUnviewedStories(for deviceID: String) async -> Bool {
+        let result = await getStoriesForDevice(deviceID)
+        return result.hasUnviewed
+    }
+    
+    /// Mark a story as viewed
+    func viewStory(_ story: Story) async {
+        guard let currentProfile = currentUserProfile else { return }
+        
+        await storiesService.recordStoryView(
+            storyID: story.id,
+            viewerUserID: currentProfile.userID,
+            viewerDeviceID: currentProfile.deviceID
+        )
+    }
+    
+    /// Delete a specific story (only for current user's stories)
+    func deleteStory(_ story: Story) async {
+        guard let currentDeviceID = currentUserProfile?.deviceID,
+              story.deviceID == currentDeviceID else {
+            print("GridViewModel: Cannot delete story - not owned by current user")
+            return
+        }
+        
+        await storiesService.deleteStory(story)
+    }
+    
+    /// Refresh stories data
+    func refreshStories() async {
+        await storiesService.refreshStories()
+    }
+    
+    /// Get all active stories for the grid
+    func getAllActiveStories() -> [Story] {
+        return storiesService.allActiveStories
+    }
+    
+    /// Get current user's stories
+    func getMyStories() -> [Story] {
+        return storiesService.myStories
+    }
+    
+    /// Check if current user has any active stories
+    func hasActiveStories() -> Bool {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
+        return storiesService.allActiveStories.contains { $0.deviceID == currentDeviceID && $0.isValid }
+    }
+    
+    /// Get stories grouped by device ID for easier UI handling
+    func getStoriesGroupedByDevice() -> [String: [Story]] {
+        var grouped: [String: [Story]] = [:]
+        
+        for story in storiesService.allActiveStories where story.isValid {
+            if grouped[story.deviceID] == nil {
+                grouped[story.deviceID] = []
+            }
+            grouped[story.deviceID]?.append(story)
+        }
+        
+        // Sort stories within each device group by timestamp (newest first)
+        for deviceID in grouped.keys {
+            grouped[deviceID]?.sort { $0.timestamp > $1.timestamp }
+        }
+        
+        return grouped
     }
 }
