@@ -1158,9 +1158,9 @@ struct ProfileCardView: View {
     @StateObject private var mainImageLoader = ImageLoader()
     
     // Photo editing states
-    @State private var selectedMainPhotoItem: PhotosPickerItem? = nil
     @State private var selectedMainPhotoData: Data? = nil
     @State private var isSavingPhotos = false
+    @State private var isEditingPhoto = false
 
     private var isCurrentUserProfile: Bool {
         viewModel.currentUserProfile?.deviceID == userProfile.deviceID
@@ -1198,19 +1198,11 @@ struct ProfileCardView: View {
 
                         // Main photo editing (only for current user)
                         if isCurrentUserProfile {
-                            PhotosPicker(selection: $selectedMainPhotoItem, matching: .images, photoLibrary: .shared()) {
-                                Text(selectedMainPhotoData != nil ? "Change Main Photo" : "Update Main Photo")
-                                    .font(.caption)
-                                    .foregroundColor(.blue)
+                            Button("Edit Photo") {
+                                isEditingPhoto = true
                             }
-                            .onChange(of: selectedMainPhotoItem) { newItem in
-                                Task {
-                                    if let item = newItem, let data = try? await item.loadTransferable(type: Data.self) {
-                                        selectedMainPhotoData = data
-                                        saveMainPhoto()
-                                    }
-                                }
-                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
                         }
                     }
 
@@ -1418,6 +1410,52 @@ struct ProfileCardView: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+        .sheet(isPresented: $isEditingPhoto) {
+            NavigationView {
+                VStack(spacing: 20) {
+                    Text("Edit Profile Photo")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .padding(.top)
+                    
+                    CircularPhotoEditor(
+                        selectedPhotoData: $selectedMainPhotoData,
+                        circleSize: 250,
+                        placeholder: "Update Profile Photo",
+                        onPhotoChanged: { _ in
+                            // Photo was changed, will be saved when user taps Done
+                        }
+                    )
+                    
+                    Spacer()
+                }
+                .padding()
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("Cancel") {
+                            selectedMainPhotoData = nil
+                            isEditingPhoto = false
+                        }
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") {
+                            saveMainPhoto()
+                            isEditingPhoto = false
+                        }
+                        .disabled(selectedMainPhotoData == nil)
+                    }
+                }
+            }
+            .onAppear {
+                // Initialize with current photo if available
+                if let currentImage = userProfile.profileImage,
+                   let url = currentImage.fileURL,
+                   let data = try? Data(contentsOf: url) {
+                    selectedMainPhotoData = data
+                }
+            }
+        }
     }
     
     // MARK: - Helper Methods
@@ -1455,7 +1493,6 @@ struct ProfileCardView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             mainImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
             selectedMainPhotoData = nil
-            selectedMainPhotoItem = nil
             isSavingPhotos = false
         }
     }
