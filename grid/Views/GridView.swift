@@ -145,8 +145,18 @@ struct GridView: View {
     @State private var showingBlockedUsers = false  // NEW: For blocked users view
     @State private var showInterestsOnGrid = false  // NEW: Toggle for showing interests on grid cells (off by default)
     @State private var showInterestsFilter = true  // NEW: Toggle for showing interests filter section (on by default)
-    @State private var useCircularPhotos = UserDefaults.standard.bool(forKey: "experimentalCircularPhotos")  // NEW: Experimental circular photos
+    @State private var storiesMode = UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false  // NEW: Stories mode (default: off)
+    @State private var useCircularPhotos = UserDefaults.standard.object(forKey: "circularPhotos") as? Bool ?? true  // NEW: Circular photos (default: on)
     @State private var gridColumns: Int = 3 // Dynamic column count
+    
+    // Computed property for actual photo shape based on stories mode and circular photos setting
+    private var shouldUseCircularPhotos: Bool {
+        if storiesMode {
+            return true // Always circular in stories mode
+        } else {
+            return useCircularPhotos // Use manual setting in non-stories mode
+        }
+    }
     @State private var baseColumns: Int = 3 // The confirmed column count
     @State private var currentScale: CGFloat = 1.0
     @State private var isScaling = false
@@ -259,7 +269,8 @@ struct GridView: View {
                                     node: node,
                                     viewModel: viewModel,
                                     showInterests: showInterestsOnGrid,
-                                    useCircularPhotos: useCircularPhotos,
+                                    useCircularPhotos: shouldUseCircularPhotos,
+                                    storiesMode: storiesMode,
                                     onProfileTapped: { profile in // For long press and double tap
                                         if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
                                            profile.deviceID == currentUserDeviceID {
@@ -278,6 +289,10 @@ struct GridView: View {
                                             chatOverlayRecipientID = recipientDeviceID
                                             showChatOverlay = true
                                         }
+                                    },
+                                    onStoriesTapped: { profile in
+                                        // TODO: Phase 4 - Open stories viewer
+                                        print("Stories tapped for user: \(profile.deviceID)")
                                     }
                                 )
                                 .transition(.asymmetric(
@@ -435,12 +450,25 @@ struct GridView: View {
                         
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.3)) {
-                                useCircularPhotos.toggle()
-                                UserDefaults.standard.set(useCircularPhotos, forKey: "experimentalCircularPhotos")
+                                storiesMode.toggle()
+                                UserDefaults.standard.set(storiesMode, forKey: "storiesMode")
                             }
                         }) {
-                            Label(useCircularPhotos ? "Square Photos" : "Circular Photos (Experimental)", 
-                                  systemImage: useCircularPhotos ? "rectangle" : "circle")
+                            Label(storiesMode ? "Exit Stories Mode" : "Stories Mode", 
+                                  systemImage: storiesMode ? "circle.badge.minus" : "circle.badge.plus")
+                        }
+                        
+                        // Only show circular photos toggle when NOT in stories mode (since stories mode forces circular)
+                        if !storiesMode {
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    useCircularPhotos.toggle()
+                                    UserDefaults.standard.set(useCircularPhotos, forKey: "circularPhotos")
+                                }
+                            }) {
+                                Label(useCircularPhotos ? "Square Photos" : "Circular Photos", 
+                                      systemImage: useCircularPhotos ? "rectangle" : "circle")
+                            }
                         }
                         
                         Button(action: {
@@ -667,8 +695,10 @@ struct GridNodeView: View {
     let viewModel: GridViewModel
     let showInterests: Bool
     let useCircularPhotos: Bool
-    let onProfileTapped: (UserProfile) -> Void // NEW: For single tap
-    let onChatTapped: (String) -> Void // For double tap (was single tap)
+    let storiesMode: Bool
+    let onProfileTapped: (UserProfile) -> Void // For long press or single tap (when not in stories mode)
+    let onChatTapped: (String) -> Void // For double tap
+    let onStoriesTapped: (UserProfile) -> Void // For single tap in stories mode
     @StateObject private var imageLoader = ImageLoader()
 
     var body: some View {
@@ -834,7 +864,7 @@ struct GridNodeView: View {
                 }
             }
         }
-        // Single tap gesture for profile
+        // Single tap gesture - stories or profile depending on mode
         .onTapGesture {
             if let userProfile = node.userProfile {
                 // Haptic feedback
@@ -843,10 +873,14 @@ struct GridNodeView: View {
                 impactFeedback.impactOccurred()
                 #endif
                 
-                onProfileTapped(userProfile)
+                if storiesMode {
+                    onStoriesTapped(userProfile)
+                } else {
+                    onProfileTapped(userProfile)
+                }
             }
         }
-        // Long press gesture for profile overlay
+        // Long press gesture for profile overlay (always shows profile)
         .onLongPressGesture {
             if let userProfile = node.userProfile {
                 // Haptic feedback for long press
