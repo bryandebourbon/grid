@@ -1645,108 +1645,9 @@ class GridViewModel: ObservableObject {
     }
 
     // Function to process PhotosPickerItems for additional photos
-    func processSelectedPhotoItems(_ items: [PhotosPickerItem]) {
-        guard let currentUserProfile = self.currentUserProfile else {
-            print("GridViewModel: Cannot process photos, no current user profile.")
-            return
-        }
-        
-        var loadedImageDatas: [Data] = []
-        let group = DispatchGroup()
-        
-        print("GridViewModel: Processing \\(items.count) selected photo items...")
-        
-        for item in items {
-            group.enter()
-            item.loadTransferable(type: Data.self) { result in
-                defer { group.leave() }
-                switch result {
-                case .success(let data?):
-                    loadedImageDatas.append(data)
-                    print("GridViewModel: Successfully loaded image data (\u{2022}\\(data.count) bytes).")
-                case .success(nil):
-                    print("GridViewModel: Warning - loaded image data is nil.")
-                case .failure(let error):
-                    print("GridViewModel: Error loading image data: \\(error.localizedDescription)")
-                }
-            }
-        }
-        
-        group.notify(queue: .main) {
-            print("GridViewModel: All selected photos processed. Total loaded: \(loadedImageDatas.count)")
-            
-            // Store the actual image data as CloudKit assets
-            var updatedPhotoAssets = self.currentUserProfile?.additionalPhotos ?? []
-            
-            // Create CKAsset objects from image data
-            for (index, imageData) in loadedImageDatas.enumerated() {
-                // Use Documents directory for temporary storage before CloudKit upload
-                guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                    print("GridViewModel: Could not access Documents directory")
-                    continue
-                }
-                
-                let fileName = "temp_photo_\(UUID().uuidString).jpg"
-                let tempFileURL = documentsDir.appendingPathComponent(fileName)
-                
-                do {
-                    try imageData.write(to: tempFileURL)
-                    // Create CKAsset from the temporary file
-                    let photoAsset = CKAsset(fileURL: tempFileURL)
-                    updatedPhotoAssets.append(photoAsset)
-                    print("GridViewModel: Created CKAsset for photo \(index + 1): \(tempFileURL.lastPathComponent)")
-                } catch {
-                    print("GridViewModel: Error creating CKAsset for photo \(index + 1): \(error.localizedDescription)")
-                }
-            }
-            
-            self.currentUserProfile?.additionalPhotos = updatedPhotoAssets
-            print("GridViewModel: Updated additionalPhotos count: \(updatedPhotoAssets.count)")
-            
-            // Save the profile if it was modified
-            if var profileToSave = self.currentUserProfile {
-                // Save to CloudKit immediately to ensure persistence
-                self.proximityService.updateUserActivity(profileToSave) { [weak self] result in
-                    switch result {
-                    case .success(let savedProfile):
-                        print("GridViewModel: Successfully saved profile with photo assets to CloudKit")
-                        // Update with the saved profile to ensure consistency
-                        self?.currentUserProfile = savedProfile
-                    case .failure(let error):
-                        print("GridViewModel: Error saving profile with photo assets to CloudKit: \(error.localizedDescription)")
-                        print("GridViewModel: Photos will remain local until next successful save")
-                        // Don't overwrite the local profile - keep the photos locally until we can save to CloudKit
-                        // The photos will be retried on the next profile update
-                    }
-                }
-                print("GridViewModel: Initiated save of profile with new photo assets to CloudKit")
-            } else {
-                print("GridViewModel: currentUserProfile is nil, cannot save additional photos.")
-            }
-        }
-    }
+
     
-    // Method to retry saving photos to CloudKit
-    func retrySavePhotosToCloudKit() {
-        guard let profile = currentUserProfile,
-              let photos = profile.additionalPhotos,
-              !photos.isEmpty else {
-            print("GridViewModel: No photos to retry saving")
-            return
-        }
-        
-        print("GridViewModel: Retrying save of \(photos.count) photos to CloudKit")
-        
-        proximityService.updateUserActivity(profile) { [weak self] result in
-            switch result {
-            case .success(let savedProfile):
-                print("GridViewModel: Successfully retried save of profile with photo assets to CloudKit")
-                self?.currentUserProfile = savedProfile
-            case .failure(let error):
-                print("GridViewModel: Retry failed - Error saving profile with photo assets to CloudKit: \(error.localizedDescription)")
-            }
-        }
-    }
+
     
     // Method to clean up duplicate userID records
     // REMOVING THIS METHOD as ProximityService.cleanupDuplicateUserIDs was removed
@@ -1779,64 +1680,7 @@ class GridViewModel: ObservableObject {
         // cleanupDuplicateUserIDs()
     }
 
-    func updateProfilePhotos(mainPhotoData: Data?, additionalPhotoAssets: [CKAsset], completion: @escaping (Bool) -> Void) {
-        guard currentUserProfile != nil else {
-            print("Cannot update photos, currentUserProfile is nil.")
-            completion(false)
-            return
-        }
 
-        var mainPhotoAsset: CKAsset? = currentUserProfile?.profileImage // Keep existing if no new main photo data
-        var tempMainPhotoURL: URL? // For cleanup if new main photo is processed
-
-        if let data = mainPhotoData {
-            // New main photo provided, process it
-            let tempDir = FileManager.default.temporaryDirectory
-            let fileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-            do {
-                try data.write(to: fileURL)
-                mainPhotoAsset = CKAsset(fileURL: fileURL)
-                tempMainPhotoURL = fileURL // Keep track for cleanup
-                print("New main profile image processed. Temp file: \(fileURL.path)")
-            } catch {
-                print("Error creating CKAsset for new main profile image: \(error.localizedDescription)")
-                completion(false)
-                return
-            }
-        } else if currentUserProfile?.profileImage != nil && mainPhotoData == nil {
-            // This condition implies the user might want to remove the main photo without setting a new one.
-            // If your UI allows this, set mainPhotoAsset to nil.
-            // For now, we assume if mainPhotoData is nil, we keep the existing or it was never set.
-            // If you add a "remove main photo" button, this logic would change:
-            // mainPhotoAsset = nil 
-        }
-
-        currentUserProfile?.profileImage = mainPhotoAsset
-        currentUserProfile?.additionalPhotos = additionalPhotoAssets
-
-        print("Profile photos updated locally. Persisting to CloudKit...")
-        
-        persistAndUpdateProfileAndGrid() { success in
-            if !success {
-                print("Failed to persist profile updates to CloudKit.")
-                
-                // Check if this was a CloudKit daemon connection error
-                // The actual error handling is done in persistAndUpdateProfileAndGrid
-                // but we can provide additional context here
-                
-                // If saving to CloudKit failed, new temp files might need cleanup.
-                // The main tempMainPhotoURL is particularly important here.
-                if let url = tempMainPhotoURL {
-                    try? FileManager.default.removeItem(at: url)
-                    print("Cleaned up temporary main photo file after failed save: \(url.path)")
-                }
-                // Note: additionalPhotoAssets passed to this function are either existing (no new temp file) 
-                // or new (temp files created in ProfileCardView). 
-                // ProfileCardView is responsible for cleaning up its *newly created* temp files on failure from this callback.
-            }
-            completion(success)
-        }
-    }
 
     func sendImageMessage(imageData: Data, to recipientDeviceID: String) {
         guard let senderProfile = currentUserProfile else {
