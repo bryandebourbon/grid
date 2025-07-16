@@ -32,7 +32,13 @@ struct StoriesRingView: View {
     }
     
     private var ringWidth: CGFloat {
-        size * 0.08 // Ring width proportional to size
+        size * 0.06 // Slightly thinner ring (6% instead of 8%)
+    }
+    
+    // Calculate the circle size so that the stroke stays within bounds
+    private var circleSize: CGFloat {
+        // Reduce the circle size by the ring width so the stroke doesn't extend beyond the cell
+        size - ringWidth
     }
     
     var body: some View {
@@ -41,7 +47,7 @@ struct StoriesRingView: View {
         if hasStories && hasUnviewedStories {
             Circle()
                 .stroke(ringGradient, lineWidth: ringWidth)
-                .frame(width: size, height: size)
+                .frame(width: circleSize, height: circleSize)
         } else {
             // No ring when no stories or all stories are viewed
             EmptyView()
