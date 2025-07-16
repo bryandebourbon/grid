@@ -19,36 +19,94 @@ class StoriesService: ObservableObject {
     
     /// Upload a new story to CloudKit
     func uploadStory(imageData: Data, caption: String?, userID: String, deviceID: String) async throws -> Story {
+        print("StoriesService: 📤 Starting story upload...")
+        print("StoriesService: 📊 Image data size: \(imageData.count) bytes")
+        print("StoriesService: 👤 UserID: \(userID), DeviceID: \(deviceID)")
+        print("StoriesService: 💬 Caption: \(caption ?? "none")")
+        
         // Create temporary file for upload
         let tempDir = FileManager.default.temporaryDirectory
         let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
         
-        try imageData.write(to: tempFileURL)
+        print("StoriesService: 📁 Creating temp file at: \(tempFileURL.path)")
+        
+        do {
+            try imageData.write(to: tempFileURL)
+            print("StoriesService: ✅ Successfully wrote image data to temp file")
+            
+            // Verify the file was created
+            let fileExists = FileManager.default.fileExists(atPath: tempFileURL.path)
+            print("StoriesService: 📁 Temp file exists: \(fileExists)")
+            
+            if fileExists {
+                let fileSize = try? FileManager.default.attributesOfItem(atPath: tempFileURL.path)[.size] as? Int64 ?? 0
+                print("StoriesService: 📏 Temp file size: \(fileSize ?? 0) bytes")
+            }
+        } catch {
+            print("StoriesService: ❌ Failed to write image data to temp file: \(error)")
+            throw error
+        }
+        
         let imageAsset = CKAsset(fileURL: tempFileURL)
+        print("StoriesService: 📷 Created CKAsset with fileURL: \(imageAsset.fileURL?.absoluteString ?? "nil")")
         
         // Create story
         let story = Story(userID: userID, deviceID: deviceID, imageAsset: imageAsset, caption: caption)
+        print("StoriesService: 📝 Created Story object with ID: \(story.id)")
+        
         let record = story.toCKRecord()
+        print("StoriesService: 🗂️ Created CKRecord with type: \(record.recordType), ID: \(record.recordID.recordName)")
+        
+        // Log what fields are being saved to CloudKit
+        print("StoriesService: 📊 CKRecord fields:")
+        for (key, value) in record.allKeys().enumerated() {
+            let fieldValue = record[value]
+            if let asset = fieldValue as? CKAsset {
+                print("StoriesService:   \(value): CKAsset(fileURL: \(asset.fileURL?.absoluteString ?? "nil"))")
+            } else {
+                print("StoriesService:   \(value): \(String(describing: fieldValue))")
+            }
+        }
         
         return try await withCheckedThrowingContinuation { continuation in
             let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
             operation.savePolicy = .changedKeys
             
+            print("StoriesService: 📡 Starting CloudKit save operation...")
+            
             operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
                 Task { @MainActor in
                     // Clean up temp file
+                    print("StoriesService: 🧹 Cleaning up temp file...")
                     try? FileManager.default.removeItem(at: tempFileURL)
                     
                     if let error = error {
-                        print("StoriesService: Error uploading story: \(error.localizedDescription)")
+                        print("StoriesService: ❌ CloudKit save error: \(error.localizedDescription)")
+                        print("StoriesService: ❌ Error details: \(error)")
                         continuation.resume(throwing: error)
-                    } else if let savedRecord = savedRecords?.first,
-                              let savedStory = Story(record: savedRecord) {
-                        print("StoriesService: Successfully uploaded story: \(savedStory.id)")
-                        self.myStories.append(savedStory)
-                        self.allActiveStories.append(savedStory)
-                        continuation.resume(returning: savedStory)
+                    } else if let savedRecord = savedRecords?.first {
+                        print("StoriesService: ✅ CloudKit save successful!")
+                        print("StoriesService: 📝 Saved record ID: \(savedRecord.recordID.recordName)")
+                        
+                        // Verify the saved record has the imageAsset
+                        if let savedAsset = savedRecord["imageAsset"] as? CKAsset {
+                            print("StoriesService: 📷 Saved record has imageAsset with fileURL: \(savedAsset.fileURL?.absoluteString ?? "nil")")
+                        } else {
+                            print("StoriesService: ⚠️ Saved record has no imageAsset!")
+                        }
+                        
+                        if let savedStory = Story(record: savedRecord) {
+                            print("StoriesService: ✅ Successfully created Story from saved record")
+                            self.myStories.append(savedStory)
+                            self.allActiveStories.append(savedStory)
+                            continuation.resume(returning: savedStory)
+                        } else {
+                            print("StoriesService: ❌ Failed to create Story from saved record")
+                            let error = NSError(domain: "StoriesService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create Story from saved record"])
+                            continuation.resume(throwing: error)
+                        }
                     } else {
+                        print("StoriesService: ❌ No saved records returned from CloudKit")
                         let error = NSError(domain: "StoriesService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to save story"])
                         continuation.resume(throwing: error)
                     }
@@ -88,26 +146,75 @@ class StoriesService: ObservableObject {
     
     /// Fetch stories for a specific user/device
     func fetchStoriesForDevice(_ deviceID: String) async -> [Story] {
+        print("StoriesService: 🔍 Starting fetchStoriesForDevice for deviceID: \(deviceID)")
+        
         let predicate = NSPredicate(format: "deviceID == %@ AND isActive == 1 AND expirationDate > %@", deviceID, Date() as NSDate)
         let query = CKQuery(recordType: "Stories", predicate: predicate)
         query.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
         
         do {
+            print("StoriesService: 📡 Executing CloudKit query for stories...")
             let records = try await publicDB.records(matching: query)
-            let stories = records.matchResults.compactMap { (_, result) in
+            print("StoriesService: 📥 Received \(records.matchResults.count) raw records from CloudKit")
+            
+            let stories = records.matchResults.compactMap { (recordID, result) in
                 switch result {
                 case .success(let record):
-                    return Story(record: record)
+                    print("StoriesService: ✅ Processing record: \(record.recordID.recordName)")
+                    
+                    // Log record details for debugging
+                    if let imageAsset = record["imageAsset"] as? CKAsset {
+                        print("StoriesService: 📷 Record has imageAsset with fileURL: \(imageAsset.fileURL?.absoluteString ?? "nil")")
+                        
+                        // Check if the file exists locally
+                        if let fileURL = imageAsset.fileURL {
+                            let fileExists = FileManager.default.fileExists(atPath: fileURL.path)
+                            print("StoriesService: 📁 Asset file exists locally: \(fileExists)")
+                            if fileExists {
+                                do {
+                                    let fileSize = try FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64 ?? 0
+                                    print("StoriesService: 📏 Asset file size: \(fileSize) bytes")
+                                } catch {
+                                    print("StoriesService: ⚠️ Could not get file size: \(error)")
+                                }
+                            }
+                        } else {
+                            print("StoriesService: ⚠️ ImageAsset has no fileURL")
+                        }
+                    } else {
+                        print("StoriesService: ⚠️ Record has no imageAsset")
+                    }
+                    
+                    if let caption = record["caption"] as? String {
+                        print("StoriesService: 💬 Record has caption: \(caption)")
+                    }
+                    
+                    let story = Story(record: record)
+                    if story != nil {
+                        print("StoriesService: ✅ Successfully created Story object from record")
+                    } else {
+                        print("StoriesService: ❌ Failed to create Story object from record")
+                    }
+                    return story
+                    
                 case .failure(let error):
-                    print("StoriesService: Error fetching story record for device \(deviceID): \(error.localizedDescription)")
+                    print("StoriesService: ❌ Error fetching story record for device \(deviceID): \(error.localizedDescription)")
                     return nil
                 }
             }
             
-            print("StoriesService: Fetched \(stories.count) stories for device: \(deviceID)")
+            print("StoriesService: 📊 Successfully processed \(stories.count) out of \(records.matchResults.count) records")
+            print("StoriesService: ✅ Fetched \(stories.count) stories for device: \(deviceID)")
+            
+            // Log each story's details
+            for (index, story) in stories.enumerated() {
+                print("StoriesService: Story \(index): ID=\(story.id), hasAsset=\(story.imageAsset != nil), valid=\(story.isValid)")
+            }
+            
             return stories
         } catch {
-            print("StoriesService: Error fetching stories for device \(deviceID): \(error.localizedDescription)")
+            print("StoriesService: ❌ Error fetching stories for device \(deviceID): \(error.localizedDescription)")
+            print("StoriesService: ❌ Error details: \(error)")
             return []
         }
     }

@@ -181,6 +181,31 @@ struct GridView: View {
     }
 
     var body: some View {
+        ZStack {
+            // Main grid content
+            mainGridView
+            
+            // Story viewer overlay (replaces fullScreenCover)
+            if showingStoryViewer, let deviceID = storyViewerDeviceID {
+                // Full screen overlay with tap-to-dismiss background
+                Color.black.opacity(0.001) // Nearly transparent but tappable
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        print("GridView: 🚨 Background tapped - Dismissing story viewer")
+                        showingStoryViewer = false
+                        storyViewerDeviceID = nil
+                    }
+                
+                // The actual story viewer
+                StoryViewerView(viewModel: viewModel, deviceID: deviceID)
+                    .transition(.opacity)
+                    .zIndex(1000)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: showingStoryViewer)
+    }
+    
+    private var mainGridView: some View {
         NavigationView {
             VStack(spacing: 0) {
                 // Filter indicators
@@ -294,26 +319,42 @@ struct GridView: View {
                                         }
                                     },
                                     onStoriesTapped: { profile in
+                                        print("GridView: 📱 Story tapped for profile: \(profile.deviceID)")
+                                        
                                         // Check if it's the current user
                                         if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
                                            profile.deviceID == currentUserDeviceID {
+                                            print("GridView: 👤 Current user tapped their own story")
+                                            
                                             // Check if current user has active stories
-                                            if viewModel.hasActiveStories() {
+                                            let hasStories = viewModel.hasActiveStories()
+                                            print("GridView: 📊 Current user has active stories: \(hasStories)")
+                                            
+                                            if hasStories {
                                                 // Open stories viewer for current user
-                                                print("GridView: Opening story viewer for current user: \(profile.deviceID)")
+                                                print("GridView: ✅ Opening story viewer for current user: \(profile.deviceID)")
                                                 storyViewerDeviceID = profile.deviceID
                                                 showingStoryViewer = true
                                             } else {
                                                 // No stories - open creation
-                                                print("GridView: Opening story creation for current user: \(profile.deviceID)")
+                                                print("GridView: ➕ No active stories, opening story creation for current user: \(profile.deviceID)")
                                                 showingStoryCreation = true
                                             }
                                         } else {
                                             // Open stories viewer for other users
-                                            print("GridView: Opening story viewer for other user: \(profile.deviceID)")
+                                            print("GridView: 👥 Opening story viewer for other user: \(profile.deviceID)")
+                                            
+                                            // Check if other user has stories (for debugging)
+                                            let hasStories = viewModel.hasActiveStories(for: profile.deviceID)
+                                            print("GridView: 📊 Other user has active stories: \(hasStories)")
+                                            
                                             storyViewerDeviceID = profile.deviceID
                                             showingStoryViewer = true
                                         }
+                                        
+                                        print("GridView: 🎬 Story viewer will show for deviceID: \(storyViewerDeviceID ?? "none")")
+                                        print("GridView: 📺 showingStoryViewer: \(showingStoryViewer)")
+                                        print("GridView: ➕ showingStoryCreation: \(showingStoryCreation)")
                                     }
                                 )
                                 .transition(.asymmetric(
@@ -617,11 +658,6 @@ struct GridView: View {
             }
             .sheet(isPresented: $showingStoryCreation) {  // NEW: Sheet for Story Creation
                 StoryCreationView(viewModel: viewModel)
-            }
-            .fullScreenCover(isPresented: $showingStoryViewer) {  // NEW: Full screen for Story Viewer
-                if let deviceID = storyViewerDeviceID {
-                    StoryViewerView(viewModel: viewModel, deviceID: deviceID)
-                }
             }
             .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
                 TrackingPermissionView(privacyService: viewModel.privacyService)

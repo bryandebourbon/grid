@@ -2614,9 +2614,15 @@ class GridViewModel: ObservableObject {
     
     /// Upload a new story
     func uploadStory(imageData: Data, caption: String? = nil) async throws {
+        print("GridViewModel: 📤 Starting story upload process...")
+        
         guard let currentProfile = currentUserProfile else {
+            print("GridViewModel: ❌ No current user profile available for story upload")
             throw NSError(domain: "GridViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "No current user profile"])
         }
+        
+        print("GridViewModel: 👤 Uploading story for user: \(currentProfile.userID), device: \(currentProfile.deviceID)")
+        print("GridViewModel: 📊 Image data size: \(imageData.count) bytes, Caption: \(caption ?? "none")")
         
         do {
             let story = try await storiesService.uploadStory(
@@ -2625,37 +2631,68 @@ class GridViewModel: ObservableObject {
                 userID: currentProfile.userID,
                 deviceID: currentProfile.deviceID
             )
-            print("GridViewModel: Successfully uploaded story: \(story.id)")
+            print("GridViewModel: ✅ Successfully uploaded story: \(story.id)")
+            
+            // Refresh the stories to ensure UI is updated
+            print("GridViewModel: 🔄 Refreshing stories after upload...")
+            await refreshStories()
+            
         } catch {
-            print("GridViewModel: Error uploading story: \(error.localizedDescription)")
+            print("GridViewModel: ❌ Error uploading story: \(error.localizedDescription)")
+            print("GridViewModel: ❌ Error details: \(error)")
             throw error
         }
     }
     
+    /// Refresh all active stories
+    func refreshStories() async {
+        print("GridViewModel: 🔄 Refreshing all stories...")
+        await storiesService.refreshStories()
+        print("GridViewModel: ✅ Stories refresh completed")
+    }
+    
     /// Get stories for a specific device with unread indicator
     func getStoriesForDevice(_ deviceID: String) async -> (stories: [Story], hasUnviewed: Bool) {
+        print("GridViewModel: 🔍 getStoriesForDevice called for deviceID: \(deviceID)")
+        
         guard let currentDeviceID = currentUserProfile?.deviceID else {
+            print("GridViewModel: ❌ No current user profile available")
             return ([], false)
         }
         
-        return await storiesService.getStoriesForDevice(deviceID, viewerDeviceID: currentDeviceID)
+        print("GridViewModel: 👤 Current user deviceID: \(currentDeviceID)")
+        print("GridViewModel: 📞 Calling storiesService.getStoriesForDevice...")
+        
+        let result = await storiesService.getStoriesForDevice(deviceID, viewerDeviceID: currentDeviceID)
+        
+        print("GridViewModel: 📊 Result: \(result.stories.count) stories, hasUnviewed: \(result.hasUnviewed)")
+        
+        return result
     }
-    
+
     /// Check if a device has new/unviewed stories
     func hasUnviewedStories(for deviceID: String) async -> Bool {
+        print("GridViewModel: 🔍 hasUnviewedStories called for deviceID: \(deviceID)")
         let result = await getStoriesForDevice(deviceID)
+        print("GridViewModel: 📊 hasUnviewedStories result: \(result.hasUnviewed)")
         return result.hasUnviewed
     }
-    
+
     /// Mark a story as viewed
     func viewStory(_ story: Story) async {
-        guard let currentProfile = currentUserProfile else { return }
+        print("GridViewModel: 👁️ viewStory called for story ID: \(story.id)")
+        guard let currentProfile = currentUserProfile else { 
+            print("GridViewModel: ❌ No current user profile available for viewStory")
+            return 
+        }
         
+        print("GridViewModel: 📞 Calling storiesService.recordStoryView...")
         await storiesService.recordStoryView(
             storyID: story.id,
             viewerUserID: currentProfile.userID,
             viewerDeviceID: currentProfile.deviceID
         )
+        print("GridViewModel: ✅ Story view recorded")
     }
     
     /// Delete a specific story (only for current user's stories)
@@ -2667,11 +2704,6 @@ class GridViewModel: ObservableObject {
         }
         
         await storiesService.deleteStory(story)
-    }
-    
-    /// Refresh stories data
-    func refreshStories() async {
-        await storiesService.refreshStories()
     }
     
     /// Get all active stories for the grid
@@ -2686,15 +2718,53 @@ class GridViewModel: ObservableObject {
     
     /// Check if current user has any active stories
     func hasActiveStories() -> Bool {
-        guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
-        let hasStories = storiesService.allActiveStories.contains { $0.deviceID == currentDeviceID && $0.isValid }
-        print("GridViewModel: hasActiveStories() for \(currentDeviceID) = \(hasStories) (total stories: \(storiesService.allActiveStories.count))")
+        guard let currentDeviceID = currentUserProfile?.deviceID else { 
+            print("GridViewModel: hasActiveStories() - No current user device ID")
+            return false 
+        }
+        
+        let allStories = storiesService.allActiveStories
+        let userStories = allStories.filter { $0.deviceID == currentDeviceID && $0.isValid }
+        let hasStories = !userStories.isEmpty
+        
+        print("GridViewModel: hasActiveStories() for \(currentDeviceID):")
+        print("  - Total cached stories: \(allStories.count)")
+        print("  - User's valid stories: \(userStories.count)")
+        print("  - Has active stories: \(hasStories)")
+        
+        if !userStories.isEmpty {
+            print("  - User's story IDs: \(userStories.map { $0.id })")
+        }
+        
         return hasStories
     }
     
     /// Check if a specific device has any active stories
     func hasActiveStories(for deviceID: String) -> Bool {
-        return storiesService.allActiveStories.contains { $0.deviceID == deviceID && $0.isValid }
+        let allStories = storiesService.allActiveStories
+        let deviceStories = allStories.filter { $0.deviceID == deviceID && $0.isValid }
+        let hasStories = !deviceStories.isEmpty
+        
+        print("GridViewModel: hasActiveStories(for: \(deviceID)):")
+        print("  - Total cached stories: \(allStories.count)")
+        print("  - Device's valid stories: \(deviceStories.count)")
+        print("  - Has active stories: \(hasStories)")
+        
+        return hasStories
+    }
+    
+    /// Check if current user has any active stories (async version with fresh data)
+    func hasActiveStoriesAsync() async -> Bool {
+        print("GridViewModel: hasActiveStoriesAsync() - Fetching fresh stories data...")
+        await refreshStories()
+        return hasActiveStories()
+    }
+    
+    /// Check if a specific device has any active stories (async version with fresh data)
+    func hasActiveStoriesAsync(for deviceID: String) async -> Bool {
+        print("GridViewModel: hasActiveStoriesAsync(for: \(deviceID)) - Fetching fresh stories data...")
+        await refreshStories()
+        return hasActiveStories(for: deviceID)
     }
     
     /// Get stories grouped by device ID for easier UI handling
