@@ -197,7 +197,12 @@ struct GridView: View {
                     }
                 
                 // The actual story viewer
-                StoryViewerView(viewModel: viewModel, deviceID: deviceID)
+                StoryViewerView(viewModel: viewModel, deviceID: deviceID) {
+                    withAnimation {
+                        showingStoryViewer = false
+                        storyViewerDeviceID = nil
+                    }
+                }
                     .transition(.opacity)
                     .zIndex(1000)
             }
