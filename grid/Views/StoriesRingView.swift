@@ -36,12 +36,14 @@ struct StoriesRingView: View {
     }
     
     var body: some View {
-        if hasStories {
+        // Show ring only if user has stories AND there are unviewed stories
+        // (applies to both current user and other users)
+        if hasStories && hasUnviewedStories {
             Circle()
                 .stroke(ringGradient, lineWidth: ringWidth)
                 .frame(width: size, height: size)
         } else {
-            // No ring for users without stories
+            // No ring when no stories or all stories are viewed
             EmptyView()
         }
     }
