@@ -148,6 +148,9 @@ struct GridView: View {
     @State private var storiesMode = UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false  // NEW: Stories mode (default: off)
     @State private var useCircularPhotos = UserDefaults.standard.object(forKey: "circularPhotos") as? Bool ?? true  // NEW: Circular photos (default: on)
     @State private var gridColumns: Int = 3 // Dynamic column count
+    @State private var showingStoryCreation = false  // NEW: For story creation sheet
+    @State private var showingStoryViewer = false  // NEW: For story viewer
+    @State private var storyViewerDeviceID: String? = nil  // NEW: Device ID for story viewer
     
     // Computed property for actual photo shape based on stories mode and circular photos setting
     private var shouldUseCircularPhotos: Bool {
@@ -291,8 +294,26 @@ struct GridView: View {
                                         }
                                     },
                                     onStoriesTapped: { profile in
-                                        // TODO: Phase 4 - Open stories viewer
-                                        print("Stories tapped for user: \(profile.deviceID)")
+                                        // Check if it's the current user
+                                        if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
+                                           profile.deviceID == currentUserDeviceID {
+                                            // Check if current user has active stories
+                                            if viewModel.hasActiveStories() {
+                                                // Open stories viewer for current user
+                                                print("GridView: Opening story viewer for current user: \(profile.deviceID)")
+                                                storyViewerDeviceID = profile.deviceID
+                                                showingStoryViewer = true
+                                            } else {
+                                                // No stories - open creation
+                                                print("GridView: Opening story creation for current user: \(profile.deviceID)")
+                                                showingStoryCreation = true
+                                            }
+                                        } else {
+                                            // Open stories viewer for other users
+                                            print("GridView: Opening story viewer for other user: \(profile.deviceID)")
+                                            storyViewerDeviceID = profile.deviceID
+                                            showingStoryViewer = true
+                                        }
                                     }
                                 )
                                 .transition(.asymmetric(
@@ -410,7 +431,19 @@ struct GridView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
+                    HStack(spacing: 16) {
+                        // Story creation button when in stories mode
+                        if storiesMode {
+                            Button(action: {
+                                showingStoryCreation = true
+                            }) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        
+                        Menu {
                         Button(action: { showingConversationsList = true }) {
                             Label("Conversations", systemImage: "message")
                         }
@@ -424,6 +457,15 @@ struct GridView: View {
                             }
                         }) {
                             Label("My Notes", systemImage: "note.text")
+                        }
+                        
+                        // Story creation option when in stories mode
+                        if storiesMode {
+                            Button(action: {
+                                showingStoryCreation = true
+                            }) {
+                                Label("Create Story", systemImage: "camera.circle.fill")
+                            }
                         }
                         
                         Divider()
@@ -532,6 +574,7 @@ struct GridView: View {
                         Image(systemName: "gearshape.fill")
                             .font(.body)
                     }
+                    }
                 }
             }
             .sheet(isPresented: $showingConversationsList) {
@@ -571,6 +614,14 @@ struct GridView: View {
             }
             .sheet(isPresented: $viewModel.showingPrivacyPolicy) {  // NEW: Sheet for Privacy Policy
                 PrivacyPolicyView()
+            }
+            .sheet(isPresented: $showingStoryCreation) {  // NEW: Sheet for Story Creation
+                StoryCreationView(viewModel: viewModel)
+            }
+            .fullScreenCover(isPresented: $showingStoryViewer) {  // NEW: Full screen for Story Viewer
+                if let deviceID = storyViewerDeviceID {
+                    StoryViewerView(viewModel: viewModel, deviceID: deviceID)
+                }
             }
             .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
                 TrackingPermissionView(privacyService: viewModel.privacyService)
@@ -700,6 +751,7 @@ struct GridNodeView: View {
     let onChatTapped: (String) -> Void // For double tap
     let onStoriesTapped: (UserProfile) -> Void // For single tap in stories mode
     @StateObject private var imageLoader = ImageLoader()
+    @State private var hasUnviewedStories = false
 
     var body: some View {
         ZStack {
@@ -724,6 +776,23 @@ struct GridNodeView: View {
             .aspectRatio(1, contentMode: .fit)
             .background(Color.gray.opacity(0.1)) // Background for empty or loading states
             .modifier(DynamicClipShape(useCircular: useCircularPhotos)) // Dynamic shape based on setting
+            
+            // Stories ring overlay (only in stories mode)
+            if storiesMode, let profile = node.userProfile {
+                GeometryReader { geometry in
+                    let size = min(geometry.size.width, geometry.size.height)
+                    let hasStories = viewModel.hasActiveStories(for: profile.deviceID)
+                    let isCurrentUser = profile.deviceID == viewModel.currentUserProfile?.deviceID
+                    
+                    StoriesRingView(
+                        hasStories: hasStories,
+                        hasUnviewedStories: hasUnviewedStories,
+                        isCurrentUser: isCurrentUser,
+                        size: size
+                    )
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                }
+            }
             
             // Distance and status overlays
             if let profile = node.userProfile {
@@ -837,9 +906,16 @@ struct GridNodeView: View {
         }
         .onAppear {
             imageLoader.loadImage(from: node.userProfile?.profileImage)
+            loadStoriesStatus()
         }
         .onChange(of: node.userProfile?.profileImage?.fileURL) { _ in // Try to reload if asset URL changes
             imageLoader.loadImage(from: node.userProfile?.profileImage)
+        }
+        .onChange(of: storiesMode) { _ in
+            loadStoriesStatus()
+        }
+        .onChange(of: viewModel.storiesService.allActiveStories) { _ in
+            loadStoriesStatus()
         }
         // Double tap gesture for chat (must be before single tap)
         .onTapGesture(count: 2) {
@@ -890,6 +966,20 @@ struct GridNodeView: View {
                 #endif
                 
                 onProfileTapped(userProfile)
+            }
+        }
+    }
+    
+    private func loadStoriesStatus() {
+        guard storiesMode, let profile = node.userProfile else {
+            hasUnviewedStories = false
+            return
+        }
+        
+        Task {
+            let unviewed = await viewModel.hasUnviewedStories(for: profile.deviceID)
+            await MainActor.run {
+                hasUnviewedStories = unviewed
             }
         }
     }

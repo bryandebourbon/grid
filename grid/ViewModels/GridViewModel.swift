@@ -2687,7 +2687,14 @@ class GridViewModel: ObservableObject {
     /// Check if current user has any active stories
     func hasActiveStories() -> Bool {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
-        return storiesService.allActiveStories.contains { $0.deviceID == currentDeviceID && $0.isValid }
+        let hasStories = storiesService.allActiveStories.contains { $0.deviceID == currentDeviceID && $0.isValid }
+        print("GridViewModel: hasActiveStories() for \(currentDeviceID) = \(hasStories) (total stories: \(storiesService.allActiveStories.count))")
+        return hasStories
+    }
+    
+    /// Check if a specific device has any active stories
+    func hasActiveStories(for deviceID: String) -> Bool {
+        return storiesService.allActiveStories.contains { $0.deviceID == deviceID && $0.isValid }
     }
     
     /// Get stories grouped by device ID for easier UI handling

@@ -1,7 +1,7 @@
 import Foundation
 import CloudKit
 
-struct Story: Identifiable {
+struct Story: Identifiable, Equatable {
     let id: String // Unique story ID (also used as CloudKit record name)
     let userID: String // Apple user ID who posted the story
     let deviceID: String // Device that posted the story
@@ -106,6 +106,11 @@ struct Story: Identifiable {
         self.expirationDate = expirationDate
         self.isActive = isActive
         self.recordID = recordID
+    }
+    
+    // MARK: - Equatable
+    static func == (lhs: Story, rhs: Story) -> Bool {
+        return lhs.id == rhs.id
     }
 }
 
