@@ -3,7 +3,12 @@ import SwiftUI
 struct StoryViewerView: View {
     @ObservedObject var viewModel: GridViewModel
     let deviceID: String
-    @Environment(\.dismiss) var dismiss
+    /// Closure provided by parent to dismiss the viewer (e.g., flip Boolean in GridView).
+    /// Always call this when the viewer should close.
+    let onClose: () -> Void
+
+    // Fallback for cases where StoryViewerView is presented with a sheet
+    @Environment(\.dismiss) private var envDismiss
     @State private var stories: [Story] = []
     @State private var currentStoryIndex: Int = 0
     @State private var isLoading = true
@@ -11,7 +16,6 @@ struct StoryViewerView: View {
     @State private var isCurrentUserViewing: Bool = false
     @StateObject private var imageLoader = ImageLoader()
     @State private var debugInfo: String = "Initializing..."
-    @State private var emergencyExitVisible = true
     
     // Timer for auto-advancing stories
     @State private var storyTimer: Timer?
@@ -23,29 +27,6 @@ struct StoryViewerView: View {
             // Background
             Color.black
                 .ignoresSafeArea()
-            
-            // EMERGENCY EXIT BUTTON - Always visible at first
-            if emergencyExitVisible {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button("🚨 EMERGENCY EXIT") {
-                            print("StoryViewerView: 🚨 EMERGENCY EXIT button tapped")
-                            cleanupStoryViewing()
-                            dismiss()
-                        }
-                        .font(.headline)
-                        .foregroundColor(.red)
-                        .padding()
-                        .background(Color.white)
-                        .cornerRadius(10)
-                        .padding(.top, 50)
-                        .padding(.trailing, 20)
-                    }
-                    Spacer()
-                }
-                .zIndex(1000) // Always on top
-            }
             
             if isLoading {
                 // Loading state with debug info
@@ -72,8 +53,7 @@ struct StoryViewerView: View {
                     // Manual dismiss button during loading
                     Button("Cancel Loading") {
                         print("StoryViewerView: Cancel loading button tapped")
-                        cleanupStoryViewing()
-                        dismiss()
+                        closeViewer()
                     }
                     .font(.subheadline)
                     .foregroundColor(.white)
@@ -110,8 +90,7 @@ struct StoryViewerView: View {
                     
                     Button("Close") {
                         print("StoryViewerView: Close button tapped (no stories)")
-                        cleanupStoryViewing()
-                        dismiss()
+                        closeViewer()
                     }
                     .font(.headline)
                     .foregroundColor(.black)
@@ -136,12 +115,6 @@ struct StoryViewerView: View {
         .onDisappear {
             print("StoryViewerView: 👋 onDisappear called")
             cleanupStoryViewing()
-        }
-        // Emergency gesture to detect taps for exit (in addition to GridView handling)
-        .onTapGesture(count: 2) {
-            print("StoryViewerView: 🚨 Double tap detected - Emergency exit")
-            cleanupStoryViewing()
-            dismiss()
         }
     }
     
@@ -170,10 +143,6 @@ struct StoryViewerView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
-                        .onAppear {
-                            // Hide emergency exit button after successful image load
-                            emergencyExitVisible = false
-                        }
                 } else {
                     // Error state
                     VStack(spacing: 16) {
@@ -198,8 +167,7 @@ struct StoryViewerView: View {
                         
                         Button("Close Story Viewer") {
                             print("StoryViewerView: Close button tapped (error state)")
-                            cleanupStoryViewing()
-                            dismiss()
+                            closeViewer()
                         }
                         .font(.headline)
                         .foregroundColor(.black)
@@ -213,7 +181,7 @@ struct StoryViewerView: View {
             }
             
             // Story controls overlay (only show if image loaded successfully)
-            if !emergencyExitVisible && imageLoader.image != nil {
+            if imageLoader.image != nil {
                 VStack {
                     // Top section with progress and close button
                     VStack(spacing: 12) {
@@ -260,8 +228,7 @@ struct StoryViewerView: View {
                             // Close button
                             Button(action: {
                                 print("StoryViewerView: Close button tapped")
-                                cleanupStoryViewing()
-                                dismiss()
+                                closeViewer()
                             }) {
                                 Image(systemName: "xmark")
                                     .font(.title2)
@@ -297,22 +264,31 @@ struct StoryViewerView: View {
                 }
                 
                 // Invisible tap areas for navigation (only when image is loaded)
-                HStack(spacing: 0) {
-                    // Left tap area - previous story
+                // Exclude top 120 points to avoid interfering with controls
+                VStack(spacing: 0) {
+                    // Top safe area (for controls) - no taps
                     Rectangle()
                         .fill(Color.clear)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            previousStory()
-                        }
+                        .frame(height: 120)
                     
-                    // Right tap area - next story
-                    Rectangle()
-                        .fill(Color.clear)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            nextStory()
-                        }
+                    // Navigation tap area (below controls)
+                    HStack(spacing: 0) {
+                        // Left tap area - previous story
+                        Rectangle()
+                            .fill(Color.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                previousStory()
+                            }
+                        
+                        // Right tap area - next story
+                        Rectangle()
+                            .fill(Color.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                nextStory()
+                            }
+                    }
                 }
             }
         }
@@ -459,8 +435,7 @@ struct StoryViewerView: View {
             print("StoryViewerView: ✅ Moved to story \(currentStoryIndex + 1)/\(stories.count)")
         } else {
             print("StoryViewerView: ➡️ Already at first story, dismissing")
-            cleanupStoryViewing()
-            dismiss()
+            closeViewer()
         }
     }
     
@@ -472,8 +447,7 @@ struct StoryViewerView: View {
             print("StoryViewerView: ✅ Moved to story \(currentStoryIndex + 1)/\(stories.count)")
         } else {
             print("StoryViewerView: 🏁 Reached end of stories, dismissing")
-            cleanupStoryViewing()
-            dismiss()
+            closeViewer()
         }
     }
     
@@ -500,10 +474,20 @@ struct StoryViewerView: View {
             return "\(hours)h ago"
         }
     }
+
+    /// Unified close logic used throughout the view.
+    private func closeViewer() {
+        cleanupStoryViewing()
+        onClose()
+        // Also call envDismiss() in case this view was presented modally
+        envDismiss()
+    }
 }
 
 struct StoryViewerView_Previews: PreviewProvider {
     static var previews: some View {
-        StoryViewerView(viewModel: GridViewModel(), deviceID: "sample-device")
+        StoryViewerView(viewModel: GridViewModel(), deviceID: "sample-device") {
+            // onClose closure for preview
+        }
     }
 } 
