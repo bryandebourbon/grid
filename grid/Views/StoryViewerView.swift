@@ -368,14 +368,7 @@ struct StoryViewerView: View {
                         }
                     }
                     
-                    // Mark stories as viewed if not current user
-                    if !isCurrentUserViewing {
-                        Task {
-                            for story in stories {
-                                await viewModel.viewStory(story)
-                            }
-                        }
-                    }
+                    // Stories will be marked as viewed individually as user progresses through them
                 }
             }
         } catch {
@@ -430,6 +423,9 @@ struct StoryViewerView: View {
     private func previousStory() {
         print("StoryViewerView: ⬅️ Previous story tapped")
         
+        // Mark current story as viewed before moving
+        markCurrentStoryAsViewed()
+        
         if currentStoryIndex > 0 {
             currentStoryIndex -= 1
             print("StoryViewerView: ✅ Moved to story \(currentStoryIndex + 1)/\(stories.count)")
@@ -441,6 +437,9 @@ struct StoryViewerView: View {
     
     private func nextStory() {
         print("StoryViewerView: ➡️ Next story triggered")
+        
+        // Mark current story as viewed before moving to next
+        markCurrentStoryAsViewed()
         
         if currentStoryIndex < stories.count - 1 {
             currentStoryIndex += 1
@@ -475,8 +474,21 @@ struct StoryViewerView: View {
         }
     }
 
+    /// Mark the current story as viewed
+    private func markCurrentStoryAsViewed() {
+        guard let currentStory = currentStory else { return }
+        
+        Task {
+            print("StoryViewerView: 👁️ Marking story as viewed: \(currentStory.id)")
+            await viewModel.viewStory(currentStory)
+        }
+    }
+    
     /// Unified close logic used throughout the view.
     private func closeViewer() {
+        // Mark the final story as viewed before closing
+        markCurrentStoryAsViewed()
+        
         cleanupStoryViewing()
         onClose()
         // Also call envDismiss() in case this view was presented modally
