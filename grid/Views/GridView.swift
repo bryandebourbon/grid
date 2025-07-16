@@ -145,6 +145,7 @@ struct GridView: View {
     @State private var showingBlockedUsers = false  // NEW: For blocked users view
     @State private var showInterestsOnGrid = false  // NEW: Toggle for showing interests on grid cells (off by default)
     @State private var showInterestsFilter = true  // NEW: Toggle for showing interests filter section (on by default)
+    @State private var useCircularPhotos = UserDefaults.standard.bool(forKey: "experimentalCircularPhotos")  // NEW: Experimental circular photos
     @State private var gridColumns: Int = 3 // Dynamic column count
     @State private var baseColumns: Int = 3 // The confirmed column count
     @State private var currentScale: CGFloat = 1.0
@@ -258,6 +259,7 @@ struct GridView: View {
                                     node: node,
                                     viewModel: viewModel,
                                     showInterests: showInterestsOnGrid,
+                                    useCircularPhotos: useCircularPhotos,
                                     onProfileTapped: { profile in // For long press and double tap
                                         if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
                                            profile.deviceID == currentUserDeviceID {
@@ -429,6 +431,16 @@ struct GridView: View {
                         }) {
                             Label(showInterestsOnGrid ? "Hide Interest Emojis" : "Show Interest Emojis", 
                                   systemImage: showInterestsOnGrid ? "tag.fill" : "tag")
+                        }
+                        
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                useCircularPhotos.toggle()
+                                UserDefaults.standard.set(useCircularPhotos, forKey: "experimentalCircularPhotos")
+                            }
+                        }) {
+                            Label(useCircularPhotos ? "Square Photos" : "Circular Photos (Experimental)", 
+                                  systemImage: useCircularPhotos ? "rectangle" : "circle")
                         }
                         
                         Button(action: {
@@ -654,6 +666,7 @@ struct GridNodeView: View {
     let node: GridNode
     let viewModel: GridViewModel
     let showInterests: Bool
+    let useCircularPhotos: Bool
     let onProfileTapped: (UserProfile) -> Void // NEW: For single tap
     let onChatTapped: (String) -> Void // For double tap (was single tap)
     @StateObject private var imageLoader = ImageLoader()
@@ -680,7 +693,7 @@ struct GridNodeView: View {
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity) // Ensure it expands
             .aspectRatio(1, contentMode: .fit)
             .background(Color.gray.opacity(0.1)) // Background for empty or loading states
-            .clipShape(Rectangle()) // Or Circle(), depending on desired node shape
+            .modifier(DynamicClipShape(useCircular: useCircularPhotos)) // Dynamic shape based on setting
             
             // Distance and status overlays
             if let profile = node.userProfile {
@@ -2190,4 +2203,18 @@ struct ChatOverlayView: View {
             viewModel.markMessagesAsRead(from: recipientDeviceID)
         }
     }
-} 
+}
+
+// MARK: - Dynamic Clip Shape Modifier
+
+struct DynamicClipShape: ViewModifier {
+    let useCircular: Bool
+    
+    func body(content: Content) -> some View {
+        if useCircular {
+            content.clipShape(Circle())
+        } else {
+            content.clipShape(Rectangle())
+        }
+    }
+}
