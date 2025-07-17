@@ -112,24 +112,24 @@ struct BioStoriesOverlayView: View {
             
             // Stories section
             if isLoading {
-                VStack(spacing: 16) {
+                VStack(spacing: 12) {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: .blue))
                     Text("Loading stories...")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .frame(height: 300)
+                .frame(height: 200)
                 .frame(maxWidth: .infinity)
                 .background(Color(.systemGray6))
             } else if stories.isEmpty {
-                VStack(spacing: 16) {
+                VStack(spacing: 12) {
                     Image(systemName: "camera.circle")
-                        .font(.system(size: 60))
+                        .font(.system(size: 40))
                         .foregroundColor(.gray.opacity(0.6))
                     
                     Text(isCurrentUser ? "No Stories Yet" : "No Stories")
-                        .font(.title3)
+                        .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
                     
@@ -139,7 +139,7 @@ struct BioStoriesOverlayView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
                 }
-                .frame(height: 300)
+                .frame(height: 200)
                 .frame(maxWidth: .infinity)
                 .background(Color(.systemGray6))
             } else {
@@ -158,23 +158,21 @@ struct BioStoriesOverlayView: View {
                         } else if let loadedImage = imageLoader.image {
                             loadedImage
                                 .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(maxWidth: .infinity, maxHeight: 300)
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
                             // Error state
-                            VStack(spacing: 16) {
+                            VStack(spacing: 8) {
                                 Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 40))
+                                    .font(.system(size: 30))
                                     .foregroundColor(.red)
                                 Text("Failed to Load Story")
-                                    .font(.subheadline)
+                                    .font(.caption)
                                     .foregroundColor(.white)
                             }
                         }
                     }
-                    .frame(height: 300)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.black)
+                    .frame(maxWidth: .infinity, idealHeight: 400, maxHeight: .infinity)
                     .clipped()
                     
                     // Story controls overlay
@@ -189,23 +187,23 @@ struct BioStoriesOverlayView: View {
                                     .cornerRadius(2)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 4)
                         
                         Spacer()
                         
                         // Caption if available
                         if let caption = currentStory?.caption, !caption.isEmpty {
                             Text(caption)
-                                .font(.body)
+                                .font(.caption)
                                 .foregroundColor(.white)
                                 .multilineTextAlignment(.center)
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 12)
-                                .background(Color.black.opacity(0.5))
-                                .cornerRadius(12)
                                 .padding(.horizontal, 16)
-                                .padding(.bottom, 16)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.5))
+                                .cornerRadius(8)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 8)
                         }
                     }
                     
