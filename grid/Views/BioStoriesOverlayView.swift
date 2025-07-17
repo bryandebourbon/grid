@@ -430,7 +430,7 @@ struct BioStoriesOverlayView: View {
         if index < currentStoryIndex {
             return 1.0 // Completed
         } else if index == currentStoryIndex {
-            return storyProgress // Current progress
+            return min(storyProgress, 1.0) // Current progress, clamped to 1.0
         } else {
             return 0.0 // Not started
         }
