@@ -88,15 +88,6 @@ struct BioStoriesOverlayView: View {
                 
                 // Action buttons
                 HStack(spacing: 16) {
-                    // Chat button
-                    Button(action: {
-                        onChatTapped(userProfile.deviceID)
-                    }) {
-                        Image(systemName: "message.fill")
-                            .font(.title3)
-                            .foregroundColor(.blue)
-                    }
-                    
                     // Star button (only for other users)
                     if !isCurrentUser {
                         Button(action: {
@@ -241,10 +232,10 @@ struct BioStoriesOverlayView: View {
             
             // Stories thumbnail scroll view (only show if there are stories)
             if !stories.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: 2) {
                     HStack {
                         Text("Stories")
-                            .font(.subheadline)
+                            .font(.caption)
                             .fontWeight(.medium)
                             .foregroundColor(.secondary)
                         Spacer()
@@ -252,7 +243,7 @@ struct BioStoriesOverlayView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 12)
                     
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
@@ -280,11 +271,12 @@ struct BioStoriesOverlayView: View {
                                 )
                             }
                         }
-                        .padding(.horizontal)
+                        .padding(.horizontal, 12)
                     }
+                    .frame(height: 80) // Fixed height to match thumbnail height
                 }
-                .padding(.vertical, 8)
-                .background(Color(.systemGray6).opacity(0.5))
+                .padding(.vertical, 4)
+                .background(Color(.systemGray6).opacity(0.3))
             }
             
             // Bio section
@@ -299,6 +291,15 @@ struct BioStoriesOverlayView: View {
                     if let bio = userProfile.bio, !bio.isEmpty {
                         Image(systemName: "text.alignleft")
                             .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                    
+                    // Chat button in bottom right corner
+                    Button(action: {
+                        onChatTapped(userProfile.deviceID)
+                    }) {
+                        Image(systemName: "message.fill")
+                            .font(.title3)
                             .foregroundColor(.blue)
                     }
                 }
