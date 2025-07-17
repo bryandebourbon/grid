@@ -144,14 +144,24 @@ class GridViewModel: ObservableObject {
                 self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
                     guard let self = self else { return }
                     
-                    // Finally, fetch messages after read receipts are loaded
-                    self.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
-                    // Check for unencrypted messages after loading
-                    self.checkForUnencryptedMessages()
-                    
-                    // Load stories data
-                    Task {
-                        await self.refreshStories()
+                    // Load story views to restore viewed/unviewed state
+                    self.loadStoryViews(forDeviceID: profile.deviceID) { [weak self] in
+                        guard let self = self else { return }
+                        
+                        // Load current user's album to restore pin state
+                        self.loadCurrentUserAlbum(forDeviceID: profile.deviceID) { [weak self] in
+                            guard let self = self else { return }
+                            
+                            // Finally, fetch messages after all persistent state is loaded
+                            self.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
+                            // Check for unencrypted messages after loading
+                            self.checkForUnencryptedMessages()
+                            
+                            // Load stories data
+                            Task {
+                                await self.refreshStories()
+                            }
+                        }
                     }
                 }
             }
@@ -544,29 +554,41 @@ class GridViewModel: ObservableObject {
         loadEncryptionProfiles { [weak self] in
             guard let self = self else { return }
             
-            // Load star/block relationships after encryption profiles
-            print("GridViewModel: Loading star/block relationships...")
-            self.loadStarBlockRelationships(forUserID: profile.userID) { [weak self] in
+                    // Load star/block relationships after encryption profiles
+        print("GridViewModel: Loading star/block relationships...")
+        self.loadStarBlockRelationships(forUserID: profile.userID) { [weak self] in
+            guard let self = self else { return }
+            
+            // After star/block relationships, load read receipts
+            print("GridViewModel: Loading read receipts...")
+            self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
                 guard let self = self else { return }
                 
-                // After star/block relationships, load read receipts
-                print("GridViewModel: Loading read receipts...")
-                self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
+                // Load story views to restore viewed/unviewed state
+                print("GridViewModel: Loading story views...")
+                self.loadStoryViews(forDeviceID: profile.deviceID) { [weak self] in
                     guard let self = self else { return }
                     
-                    // Finally, fetch messages after read receipts are loaded
-                    print("GridViewModel: Preloading all messages for instant chat access...")
-                    self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
-                    
-                    // Check for unencrypted messages after loading
-                    self.checkForUnencryptedMessages()
-                    
-                    // Load stories data
-                    Task {
-                        await self.refreshStories()
+                    // Load current user's album to restore pin state
+                    print("GridViewModel: Loading user album...")
+                    self.loadCurrentUserAlbum(forDeviceID: profile.deviceID) { [weak self] in
+                        guard let self = self else { return }
+                        
+                        // Finally, fetch messages after all persistent state is loaded
+                        print("GridViewModel: Preloading all messages for instant chat access...")
+                        self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
+                        
+                        // Check for unencrypted messages after loading
+                        self.checkForUnencryptedMessages()
+                        
+                        // Load stories data
+                        Task {
+                            await self.refreshStories()
+                        }
                     }
                 }
             }
+        }
         }
         
         // Subscribe to message changes immediately
@@ -3119,6 +3141,71 @@ class GridViewModel: ObservableObject {
             
         } catch {
             print("GridViewModel: ❌ Error updating user profile with album info: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Initialization Helpers
+    
+    /// Load story views from CloudKit on app startup
+    private func loadStoryViews(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
+        print("GridViewModel: 📖 Loading story views for device: \(deviceID)")
+        
+        let publicDB = CKContainer.default().publicCloudDatabase
+        let predicate = NSPredicate(format: "viewerDeviceID == %@", deviceID)
+        let query = CKQuery(recordType: "StoryViews", predicate: predicate)
+        
+        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
+            DispatchQueue.main.async {
+                guard let self = self else {
+                    completion()
+                    return
+                }
+                
+                if let error = error {
+                    print("GridViewModel: ❌ Error loading story views: \(error.localizedDescription)")
+                    completion()
+                    return
+                }
+                
+                var loadedViews: [String: [StoryView]] = [:]
+                var totalViewsLoaded = 0
+                
+                records?.forEach { record in
+                    if let storyView = StoryView(record: record) {
+                        if loadedViews[storyView.storyID] == nil {
+                            loadedViews[storyView.storyID] = []
+                        }
+                        loadedViews[storyView.storyID]?.append(storyView)
+                        totalViewsLoaded += 1
+                    }
+                }
+                
+                // Update the stories service with loaded views
+                Task { @MainActor in
+                    for (storyID, views) in loadedViews {
+                        self.storiesService.storyViews[storyID] = views
+                    }
+                    print("GridViewModel: ✅ Loaded \(totalViewsLoaded) story views for \(loadedViews.keys.count) stories")
+                    completion()
+                }
+            }
+        }
+    }
+    
+    /// Load current user's album from CloudKit on app startup
+    private func loadCurrentUserAlbum(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
+        print("GridViewModel: 📁 Loading album for device: \(deviceID)")
+        
+        Task {
+            if let album = await getAlbum(for: deviceID) {
+                print("GridViewModel: ✅ Loaded album \(album.id) with \(album.photosCount) photos")
+            } else {
+                print("GridViewModel: ℹ️ No album found for device: \(deviceID)")
+            }
+            
+            await MainActor.run {
+                completion()
+            }
         }
     }
 }
