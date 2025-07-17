@@ -231,6 +231,44 @@ struct BioStoriesOverlayView: View {
                 }
             }
             
+            // Stories thumbnail scroll view (only show if there are stories)
+            if !stories.isEmpty {
+                VStack(spacing: 8) {
+                    HStack {
+                        Text("Stories")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("\(currentStoryIndex + 1) of \(stories.count)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(stories.enumerated()), id: \.offset) { index, story in
+                                StoryThumbnailView(
+                                    story: story,
+                                    isSelected: index == currentStoryIndex,
+                                    onTapped: {
+                                        // Jump to selected story
+                                        withAnimation(.easeInOut(duration: 0.3)) {
+                                            markCurrentStoryAsViewed() // Mark current as viewed before switching
+                                            currentStoryIndex = index
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                .padding(.vertical, 8)
+                .background(Color(.systemGray6).opacity(0.5))
+            }
+            
             // Bio section
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -376,6 +414,77 @@ struct BioStoriesOverlayView: View {
         
         Task {
             await viewModel.viewStory(currentStory)
+        }
+    }
+}
+
+// MARK: - Story Thumbnail View
+
+struct StoryThumbnailView: View {
+    let story: Story
+    let isSelected: Bool
+    let onTapped: () -> Void
+    
+    @StateObject private var thumbnailImageLoader = ImageLoader()
+    
+    var body: some View {
+        Button(action: onTapped) {
+            ZStack {
+                // Thumbnail image
+                Group {
+                    if thumbnailImageLoader.isLoading {
+                        ProgressView()
+                            .frame(width: 60, height: 80)
+                    } else if let image = thumbnailImageLoader.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 60, height: 80)
+                            .clipped()
+                    } else {
+                        // Placeholder
+                        Rectangle()
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 60, height: 80)
+                            .overlay(
+                                Image(systemName: "photo")
+                                    .font(.title3)
+                                    .foregroundColor(.gray)
+                            )
+                    }
+                }
+                .cornerRadius(8)
+                
+                // Selection border
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.blue, lineWidth: 3)
+                        .frame(width: 60, height: 80)
+                }
+                
+                // Caption indicator if available
+                if let caption = story.caption, !caption.isEmpty {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Image(systemName: "text.bubble.fill")
+                                .font(.caption2)
+                                .foregroundColor(.white)
+                                .background(
+                                    Circle()
+                                        .fill(Color.black.opacity(0.6))
+                                        .frame(width: 16, height: 16)
+                                )
+                                .padding(4)
+                        }
+                    }
+                }
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .onAppear {
+            thumbnailImageLoader.loadImage(from: story.imageAsset)
         }
     }
 }
