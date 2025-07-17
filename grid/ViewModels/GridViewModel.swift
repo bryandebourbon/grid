@@ -86,6 +86,10 @@ class GridViewModel: ObservableObject {
     // NEW: Stories service for story management
     @Published var storiesService = StoriesService()
     
+    // NEW: Album management properties
+    @Published var userAlbums: [String: Album] = [:] // deviceID -> Album
+    private let publicDB = CKContainer.default().publicCloudDatabase
+    
     // NEW: Encryption-only messaging properties
     @Published var showingAccountRecreationAlert = false
     @Published var hasUnencryptedMessages = false
@@ -2784,5 +2788,337 @@ class GridViewModel: ObservableObject {
         }
         
         return grouped
+    }
+    
+    // MARK: - Album Management
+    
+    /// Create an album for the current user if they don't have one
+    func createAlbumIfNeeded() async -> AlbumResult {
+        guard let currentProfile = currentUserProfile else {
+            print("GridViewModel: ❌ No current user profile available for album creation")
+            return AlbumResult.failure("No current user profile")
+        }
+        
+        // Check if user already has an album
+        if let existingAlbum = userAlbums[currentProfile.deviceID] {
+            print("GridViewModel: ✅ User already has an album: \(existingAlbum.id)")
+            return AlbumResult.success(existingAlbum)
+        }
+        
+        // Create new album
+        let album = Album(ownerUserID: currentProfile.userID, ownerDeviceID: currentProfile.deviceID)
+        
+        print("GridViewModel: 📝 Creating new album: \(album.id) for user: \(currentProfile.deviceID)")
+        
+        do {
+            let record = album.toCKRecord()
+            let savedRecord = try await publicDB.save(record)
+            
+            if let savedAlbum = Album(record: savedRecord) {
+                print("GridViewModel: ✅ Album created successfully: \(savedAlbum.id)")
+                
+                // Update local cache and user profile
+                userAlbums[currentProfile.deviceID] = savedAlbum
+                await updateUserProfileWithAlbum(savedAlbum)
+                
+                return AlbumResult.success(savedAlbum)
+            } else {
+                print("GridViewModel: ❌ Failed to create Album from saved record")
+                return AlbumResult.failure("Failed to create album from saved record")
+            }
+        } catch {
+            print("GridViewModel: ❌ Error creating album: \(error.localizedDescription)")
+            return AlbumResult.failure(error.localizedDescription)
+        }
+    }
+    
+    /// Pin a story to the current user's album
+    func pinStoryToAlbum(_ story: Story) async -> PinResult {
+        guard let currentProfile = currentUserProfile else {
+            print("GridViewModel: ❌ No current user profile for pinning story")
+            return PinResult.failure("No current user profile")
+        }
+        
+        // Only allow pinning own stories in Phase 1
+        guard story.deviceID == currentProfile.deviceID else {
+            print("GridViewModel: ❌ Cannot pin other users' stories in Phase 1")
+            return PinResult.failure("Cannot pin other users' stories")
+        }
+        
+        print("GridViewModel: 📌 Attempting to pin story \(story.id) to album")
+        
+        // Ensure user has an album
+        let albumResult = await createAlbumIfNeeded()
+        guard albumResult.success, var album = albumResult.album else {
+            print("GridViewModel: ❌ Failed to get or create album: \(albumResult.error ?? "Unknown error")")
+            return PinResult.failure("Failed to get or create album")
+        }
+        
+        // Check if album is full
+        if !album.hasSpace {
+            print("GridViewModel: ❌ Album is full (\(Album.maxPhotos) photos maximum)")
+            return PinResult.albumFull()
+        }
+        
+        // Check if story is already pinned
+        if album.isPhotoPinned(storyID: story.id) {
+            print("GridViewModel: ⚠️ Story \(story.id) is already pinned")
+            return PinResult.alreadyPinned()
+        }
+        
+        // Create metadata for the pinned photo
+        let metadata = PhotoMetadata(
+            storyID: story.id,
+            originalStoryDate: story.timestamp,
+            caption: story.caption
+        )
+        
+        // Add photo to album
+        guard let imageAsset = story.imageAsset else {
+            print("GridViewModel: ❌ Story has no image asset to pin")
+            return PinResult.failure("Story has no image asset")
+        }
+        
+        let added = album.addPhoto(asset: imageAsset, metadata: metadata)
+        guard added else {
+            print("GridViewModel: ❌ Failed to add photo to album")
+            return PinResult.failure("Failed to add photo to album")
+        }
+        
+        // Save updated album to CloudKit
+        do {
+            let record = album.toCKRecord()
+            
+            // Use modifyRecords for explicit update operation
+            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
+            operation.savePolicy = .changedKeys
+            operation.qualityOfService = .userInitiated
+            
+            var savedRecord: CKRecord?
+            
+            return try await withCheckedThrowingContinuation { continuation in
+                operation.perRecordSaveBlock = { (recordID: CKRecord.ID, result: Result<CKRecord, Error>) in
+                    switch result {
+                    case .success(let record):
+                        savedRecord = record
+                    case .failure(let error):
+                        print("GridViewModel: ❌ Error saving individual record: \(error.localizedDescription)")
+                    }
+                }
+                
+                operation.modifyRecordsCompletionBlock = { (savedRecords: [CKRecord]?, deletedRecordIDs: [CKRecord.ID]?, error: Error?) in
+                    if let error = error {
+                        print("GridViewModel: ❌ Error saving album after pinning: \(error.localizedDescription)")
+                        continuation.resume(returning: PinResult.failure(error.localizedDescription))
+                    } else if let record = savedRecord,
+                              let savedAlbum = Album(record: record) {
+                        print("GridViewModel: ✅ Successfully pinned story to album")
+                        
+                        // Update local cache and user profile
+                        Task {
+                            self.userAlbums[currentProfile.deviceID] = savedAlbum
+                            await self.updateUserProfileWithAlbum(savedAlbum)
+                        }
+                        
+                        continuation.resume(returning: PinResult.success())
+                    } else {
+                        print("GridViewModel: ❌ Failed to create Album from saved record after pinning")
+                        continuation.resume(returning: PinResult.failure("Failed to save album changes"))
+                    }
+                }
+                
+                publicDB.add(operation)
+            }
+        } catch {
+            print("GridViewModel: ❌ Error saving album after pinning: \(error.localizedDescription)")
+            return PinResult.failure(error.localizedDescription)
+        }
+    }
+    
+    /// Unpin a story from the current user's album
+    func unpinStoryFromAlbum(_ story: Story) async -> PinResult {
+        guard let currentProfile = currentUserProfile else {
+            print("GridViewModel: ❌ No current user profile for unpinning story")
+            return PinResult.failure("No current user profile")
+        }
+        
+        guard var album = userAlbums[currentProfile.deviceID] else {
+            print("GridViewModel: ❌ No album found for current user")
+            return PinResult.failure("No album found")
+        }
+        
+        print("GridViewModel: 📌 Attempting to unpin story \(story.id) from album")
+        
+        // Remove photo from album
+        let removed = album.removePhoto(storyID: story.id)
+        guard removed else {
+            print("GridViewModel: ⚠️ Story \(story.id) was not pinned in album")
+            return PinResult.failure("Story not found in album")
+        }
+        
+        // Save updated album to CloudKit
+        do {
+            let record = album.toCKRecord()
+            
+            // Use modifyRecords for explicit update operation
+            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
+            operation.savePolicy = .changedKeys
+            operation.qualityOfService = .userInitiated
+            
+            var savedRecord: CKRecord?
+            
+            return try await withCheckedThrowingContinuation { continuation in
+                operation.perRecordSaveBlock = { (recordID: CKRecord.ID, result: Result<CKRecord, Error>) in
+                    switch result {
+                    case .success(let record):
+                        savedRecord = record
+                    case .failure(let error):
+                        print("GridViewModel: ❌ Error saving individual record: \(error.localizedDescription)")
+                    }
+                }
+                
+                operation.modifyRecordsCompletionBlock = { (savedRecords: [CKRecord]?, deletedRecordIDs: [CKRecord.ID]?, error: Error?) in
+                    if let error = error {
+                        print("GridViewModel: ❌ Error saving album after unpinning: \(error.localizedDescription)")
+                        continuation.resume(returning: PinResult.failure(error.localizedDescription))
+                    } else if let record = savedRecord,
+                              let savedAlbum = Album(record: record) {
+                        print("GridViewModel: ✅ Successfully unpinned story from album")
+                        
+                        // Update local cache and user profile
+                        Task {
+                            self.userAlbums[currentProfile.deviceID] = savedAlbum
+                            await self.updateUserProfileWithAlbum(savedAlbum)
+                        }
+                        
+                        continuation.resume(returning: PinResult.success())
+                    } else {
+                        print("GridViewModel: ❌ Failed to create Album from saved record after unpinning")
+                        continuation.resume(returning: PinResult.failure("Failed to save album changes"))
+                    }
+                }
+                
+                publicDB.add(operation)
+            }
+        } catch {
+            print("GridViewModel: ❌ Error saving album after unpinning: \(error.localizedDescription)")
+            return PinResult.failure(error.localizedDescription)
+        }
+    }
+    
+    /// Get album for a specific user
+    func getAlbum(for deviceID: String) async -> Album? {
+        // Check local cache first
+        if let cachedAlbum = userAlbums[deviceID] {
+            print("GridViewModel: ✅ Found album in cache for \(deviceID)")
+            return cachedAlbum
+        }
+        
+        print("GridViewModel: 🔍 Fetching album from CloudKit for \(deviceID)")
+        
+        // Fetch from CloudKit
+        let predicate = NSPredicate(format: "ownerDeviceID == %@", deviceID)
+        let query = CKQuery(recordType: "Albums", predicate: predicate)
+        
+        do {
+            let result = try await publicDB.records(matching: query)
+            let records = result.matchResults.compactMap { try? $0.1.get() }
+            
+            if let record = records.first, let album = Album(record: record) {
+                print("GridViewModel: ✅ Found album in CloudKit for \(deviceID)")
+                userAlbums[deviceID] = album
+                return album
+            } else {
+                print("GridViewModel: ❌ No album found in CloudKit for \(deviceID)")
+                return nil
+            }
+        } catch {
+            print("GridViewModel: ❌ Error fetching album from CloudKit: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    /// Check if a story is pinned in current user's album
+    func isStoryPinned(_ storyID: String) -> Bool {
+        guard let currentProfile = currentUserProfile else {
+            return false
+        }
+        
+        guard let album = userAlbums[currentProfile.deviceID] else {
+            return false
+        }
+        
+        return album.isPhotoPinned(storyID: storyID)
+    }
+    
+    /// Get current user's album
+    func getCurrentUserAlbum() async -> Album? {
+        guard let currentProfile = currentUserProfile else {
+            return nil
+        }
+        
+        return await getAlbum(for: currentProfile.deviceID)
+    }
+    
+    /// Load albums for all nearby users (for preview display)
+    func loadNearbyUsersAlbums() async {
+        print("GridViewModel: 🔄 Loading albums for nearby users")
+        
+        let nearbyDeviceIDs = proximityService.activeNearbyProfiles.map { $0.deviceID }
+        
+        for deviceID in nearbyDeviceIDs {
+            if userAlbums[deviceID] == nil {
+                _ = await getAlbum(for: deviceID)
+            }
+        }
+        
+        print("GridViewModel: ✅ Finished loading albums for nearby users")
+    }
+    
+    /// Update user profile with album information
+    private func updateUserProfileWithAlbum(_ album: Album) async {
+        guard var currentProfile = currentUserProfile else { return }
+        
+        // Update profile with album info
+        currentProfile.updateAlbumInfo(albumID: album.id, previewPhotos: album.previewPhotos)
+        
+        // Save updated profile to CloudKit using CKModifyRecordsOperation for explicit update
+        do {
+            let record = currentProfile.toPublicCKRecord()
+            
+            // Use CKModifyRecordsOperation to handle both create and update
+            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
+            operation.savePolicy = .changedKeys // This allows updating existing records
+            operation.qualityOfService = .userInitiated
+            
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                operation.perRecordSaveBlock = { (recordID: CKRecord.ID, result: Result<CKRecord, Error>) in
+                    switch result {
+                    case .success(_):
+                        break // Success handled in completion block
+                    case .failure(let error):
+                        print("GridViewModel: ❌ Error saving individual profile record: \(error.localizedDescription)")
+                    }
+                }
+                
+                operation.modifyRecordsCompletionBlock = { (savedRecords: [CKRecord]?, deletedRecordIDs: [CKRecord.ID]?, error: Error?) in
+                    if let error = error {
+                        print("GridViewModel: ❌ Error updating user profile with album info: \(error.localizedDescription)")
+                        continuation.resume(throwing: error)
+                    } else {
+                        print("GridViewModel: ✅ Updated user profile with album info")
+                        continuation.resume()
+                    }
+                }
+                
+                publicDB.add(operation)
+            }
+            
+            // Update local profile
+            self.currentUserProfile = currentProfile
+            
+        } catch {
+            print("GridViewModel: ❌ Error updating user profile with album info: \(error.localizedDescription)")
+        }
     }
 }

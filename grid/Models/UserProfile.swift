@@ -15,6 +15,11 @@ struct UserProfile: Codable {
     var bio: String?                // User's biography or about me text
     var interests: [Interest]       // NEW: User's selected interests
     
+    // Album-related fields
+    var albumID: String?            // Reference to user's album
+    var albumPreviewPhotos: [CKAsset]? // First 4 album photos for preview
+    var hasAlbum: Bool              // Quick check if user has an album
+    
     // Location and activity tracking
     var latitude: Double?           // Current latitude
     var longitude: Double?          // Current longitude
@@ -37,6 +42,8 @@ struct UserProfile: Codable {
         case isCurrentlyActive
         case bio
         case interests
+        case albumID
+        case hasAlbum
     }
 
     // Initializer for creating a new profile
@@ -47,6 +54,9 @@ struct UserProfile: Codable {
          additionalPhotos: [CKAsset]? = nil,
          bio: String? = nil,
          interests: [Interest] = [],
+         albumID: String? = nil,
+         albumPreviewPhotos: [CKAsset]? = nil,
+         hasAlbum: Bool = false,
          latitude: Double? = nil,
          longitude: Double? = nil,
          lastActiveTimestamp: Date = Date(),
@@ -59,6 +69,9 @@ struct UserProfile: Codable {
         self.additionalPhotos = additionalPhotos
         self.bio = bio
         self.interests = interests
+        self.albumID = albumID
+        self.albumPreviewPhotos = albumPreviewPhotos
+        self.hasAlbum = hasAlbum
         self.latitude = latitude
         self.longitude = longitude
         self.lastActiveTimestamp = lastActiveTimestamp
@@ -77,6 +90,9 @@ struct UserProfile: Codable {
         self.additionalPhotos = nil
         self.bio = try container.decodeIfPresent(String.self, forKey: .bio)
         self.interests = try container.decodeIfPresent([Interest].self, forKey: .interests) ?? []
+        self.albumID = try container.decodeIfPresent(String.self, forKey: .albumID)
+        self.albumPreviewPhotos = nil // CKAssets populated from CKRecord
+        self.hasAlbum = try container.decodeIfPresent(Bool.self, forKey: .hasAlbum) ?? false
         self.latitude = try container.decodeIfPresent(Double.self, forKey: .latitude)
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
@@ -95,6 +111,8 @@ struct UserProfile: Codable {
         try container.encode(self.isCurrentlyActive, forKey: .isCurrentlyActive)
         try container.encodeIfPresent(self.bio, forKey: .bio)
         try container.encode(self.interests, forKey: .interests)
+        try container.encodeIfPresent(self.albumID, forKey: .albumID)
+        try container.encode(self.hasAlbum, forKey: .hasAlbum)
     }
 
     // Initializer from a CKRecord
@@ -129,6 +147,11 @@ struct UserProfile: Codable {
         } else {
             self.interests = []
         }
+        
+        // Handle album fields
+        self.albumID = record["albumID"] as? String
+        self.albumPreviewPhotos = record["albumPreviewPhotos"] as? [CKAsset]
+        self.hasAlbum = (record["hasAlbum"] as? Int64) == 1
     }
 
     // Helper to create/update a CKRecord for PUBLIC database (grid visibility)
@@ -147,6 +170,10 @@ struct UserProfile: Codable {
         // Store interests as array of strings for CloudKit compatibility
         record["interests"] = self.interests.map { $0.rawValue }
         
+        // Album fields
+        record["albumID"] = self.albumID
+        record["hasAlbum"] = self.hasAlbum ? Int64(1) : Int64(0)
+        
         if let imageAsset = self.profileImage {
             record["profileImage"] = imageAsset
         } else {
@@ -157,6 +184,12 @@ struct UserProfile: Codable {
             record["additionalPhotos"] = photos
         } else {
             record["additionalPhotos"] = nil // Explicitly set to nil if no additional photos
+        }
+        
+        if let albumPhotos = self.albumPreviewPhotos {
+            record["albumPreviewPhotos"] = albumPhotos
+        } else {
+            record["albumPreviewPhotos"] = nil
         }
         return record
     }
@@ -251,5 +284,31 @@ struct UserProfile: Codable {
         }
         
         return Array(userCategories.prefix(3)) // Return top 3 categories
+    }
+    
+    // MARK: - Album Helper Methods
+    
+    // Update album information in profile
+    mutating func updateAlbumInfo(albumID: String, previewPhotos: [CKAsset]) {
+        self.albumID = albumID
+        self.albumPreviewPhotos = Array(previewPhotos.prefix(4)) // Max 4 for preview
+        self.hasAlbum = true
+    }
+    
+    // Clear album information (when album is deleted)
+    mutating func clearAlbumInfo() {
+        self.albumID = nil
+        self.albumPreviewPhotos = nil
+        self.hasAlbum = false
+    }
+    
+    // Check if this profile has an album
+    var hasActiveAlbum: Bool {
+        return hasAlbum && albumID != nil
+    }
+    
+    // Get album preview count
+    var albumPreviewCount: Int {
+        return albumPreviewPhotos?.count ?? 0
     }
 } 
