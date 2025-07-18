@@ -274,6 +274,82 @@ struct GridView: View {
             // Main grid content
             mainGridView
             
+            // Edge swipe detector for dismissing overlays
+            if showingBioStoriesOverlay || showChatOverlay {
+                HStack {
+                    // Left edge swipe area
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 20)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture()
+                                .onEnded { value in
+                                    let horizontalMovement = value.translation.width
+                                    let minimumSwipeDistance: CGFloat = 50
+                                    
+                                    // Dismiss on swipe right from left edge
+                                    if horizontalMovement > minimumSwipeDistance {
+                                        // Haptic feedback for edge swipe dismiss
+                                        #if os(iOS)
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        #endif
+                                        
+                                        if showingBioStoriesOverlay {
+                                            withAnimation(.easeInOut(duration: 0.3)) {
+                                                showingBioStoriesOverlay = false
+                                                bioStoriesProfile = nil
+                                            }
+                                        } else if showChatOverlay {
+                                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                                showChatOverlay = false
+                                                chatOverlayRecipientID = nil
+                                            }
+                                        }
+                                    }
+                                }
+                        )
+                    
+                    Spacer()
+                    
+                    // Right edge swipe area
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: 20)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture()
+                                .onEnded { value in
+                                    let horizontalMovement = value.translation.width
+                                    let minimumSwipeDistance: CGFloat = 50
+                                    
+                                    // Dismiss on swipe left from right edge
+                                    if horizontalMovement < -minimumSwipeDistance {
+                                        // Haptic feedback for edge swipe dismiss
+                                        #if os(iOS)
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        #endif
+                                        
+                                        if showingBioStoriesOverlay {
+                                            withAnimation(.easeInOut(duration: 0.3)) {
+                                                showingBioStoriesOverlay = false
+                                                bioStoriesProfile = nil
+                                            }
+                                        } else if showChatOverlay {
+                                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                                showChatOverlay = false
+                                                chatOverlayRecipientID = nil
+                                            }
+                                        }
+                                    }
+                                }
+                        )
+                }
+                .zIndex(999) // Just below the overlays but above the main content
+            }
+            
             // Bio+Stories overlay
             if showingBioStoriesOverlay, let profile = bioStoriesProfile {
                 // Semi-transparent background to show grid underneath
