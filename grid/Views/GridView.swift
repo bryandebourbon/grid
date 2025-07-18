@@ -316,10 +316,11 @@ struct GridView: View {
                     DragGesture()
                         .onEnded { value in
                             let verticalMovement = value.translation.height
+                            let horizontalMovement = value.translation.width
                             let minimumSwipeDistance: CGFloat = 100
                             
-                            // Dismiss on swipe up or down
-                            if abs(verticalMovement) > minimumSwipeDistance {
+                            // Dismiss on swipe up/down or left/right
+                            if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
                                 // Haptic feedback for swipe dismiss
                                 #if os(iOS)
                                 let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
@@ -962,6 +963,28 @@ struct GridView: View {
                             insertion: .scale(scale: 0.8).combined(with: .opacity).combined(with: .move(edge: .bottom)),
                             removal: .scale(scale: 0.8).combined(with: .opacity).combined(with: .move(edge: .bottom))
                         ))
+                        .gesture(
+                            DragGesture()
+                                .onEnded { value in
+                                    let verticalMovement = value.translation.height
+                                    let horizontalMovement = value.translation.width
+                                    let minimumSwipeDistance: CGFloat = 100
+                                    
+                                    // Dismiss on swipe up/down or left/right
+                                    if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
+                                        // Haptic feedback for swipe dismiss
+                                        #if os(iOS)
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        #endif
+                                        
+                                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                            showChatOverlay = false
+                                            chatOverlayRecipientID = nil
+                                        }
+                                    }
+                                }
+                        )
                     }
                 }
             }
