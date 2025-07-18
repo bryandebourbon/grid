@@ -163,6 +163,15 @@ struct GridView: View {
     @State private var baseColumns: Int = 3 // The confirmed column count
     @State private var currentScale: CGFloat = 1.0
     @State private var isScaling = false
+    // NEW: State for double-tap and swipe gestures
+    @State private var dragOffset: CGSize = .zero
+    @State private var isDragging = false
+    @State private var lastTapTime: Date = Date()
+    @State private var tapCount = 0
+    @State private var dragStartTime: Date = Date()
+    @State private var dragVelocity: CGFloat = 0
+    @State private var isLongPressing = false
+    @State private var longPressStarted = false
     var signOutAction: () -> Void
     var deleteAccountAction: () -> Void
 
@@ -178,6 +187,86 @@ struct GridView: View {
         let columnDelta = Int((1.0 - scale) / scaleThreshold)
         let previewCols = baseColumns + columnDelta
         return max(minColumns, min(maxColumns, previewCols))
+    }
+    
+    // NEW: Handle double-tap zoom (like maps)
+    private func handleDoubleTap() {
+        let currentTime = Date()
+        let timeSinceLastTap = currentTime.timeIntervalSince(lastTapTime)
+        
+        print("GridView: 🎯 Double-tap detected")
+        print("GridView: ⏱️ Time since last tap: \(timeSinceLastTap)s")
+        print("GridView: 📱 Current state - isDragging: \(isDragging), isLongPressing: \(isLongPressing)")
+        print("GridView: 📐 Current columns: \(gridColumns), baseColumns: \(baseColumns)")
+        
+        lastTapTime = currentTime
+        
+        let currentColumns = gridColumns
+        var targetColumns: Int
+        
+        // Double-tap cycle: 3 -> 2 -> 5 -> 3 (zoom in, zoom in more, zoom out)
+        if currentColumns == 3 {
+            targetColumns = 2 // Zoom in
+        } else if currentColumns == 2 {
+            targetColumns = 5 // Zoom out to max
+        } else {
+            targetColumns = 3 // Return to default
+        }
+        
+        print("GridView: 🔄 Double-tap zoom transition: \(currentColumns) -> \(targetColumns) columns")
+        
+        // Haptic feedback
+        #if os(iOS)
+        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+        impactFeedback.impactOccurred()
+        #endif
+        
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+            gridColumns = targetColumns
+            baseColumns = targetColumns
+        }
+        
+        print("GridView: ✅ Double-tap zoom completed")
+    }
+    
+    // NEW: Handle drag-based zoom with velocity detection
+    private func handleDragZoom(_ dragValue: DragGesture.Value) {
+        let currentTime = Date()
+        let timeSinceStart = currentTime.timeIntervalSince(dragStartTime)
+        
+        // Calculate velocity (pixels per second)
+        let distance = sqrt(pow(dragValue.translation.width, 2) + pow(dragValue.translation.height, 2))
+        let velocity = timeSinceStart > 0 ? distance / timeSinceStart : 0
+        
+        print("GridView: 📊 Drag stats - Distance: \(Int(distance))px, Time: \(String(format: "%.2f", timeSinceStart))s, Velocity: \(Int(velocity))px/s")
+        
+        // Fast swipe detection - if velocity is too high, don't zoom
+        let fastSwipeThreshold: CGFloat = 500 // pixels per second
+        if velocity > fastSwipeThreshold {
+            print("GridView: 🚀 Fast swipe detected (\(Int(velocity))px/s > \(Int(fastSwipeThreshold))px/s) - ignoring zoom")
+            return
+        }
+        
+        // Only proceed with zoom if it's a deliberate slow drag
+        let sensitivity: CGFloat = 200 // Pixels needed for one column change
+        let verticalDelta = -dragValue.translation.height // Negative because up = zoom in
+        let columnChange = Int(verticalDelta / sensitivity)
+        
+        let newColumns = max(minColumns, min(maxColumns, baseColumns + columnChange))
+        
+        if newColumns != gridColumns {
+            print("GridView: 🔍 Zoom change: \(gridColumns) -> \(newColumns) columns (delta: \(Int(verticalDelta))px)")
+            
+            // Haptic feedback on column change
+            #if os(iOS)
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+            #endif
+            
+            withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.8, blendDuration: 0)) {
+                gridColumns = newColumns
+            }
+        }
     }
 
     var body: some View {
@@ -313,6 +402,10 @@ struct GridView: View {
                 }
                 
                 if let profile = viewModel.currentUserProfile {
+                    // Grid supports multiple zoom gestures (like Maps):
+                    // • Pinch to zoom in/out
+                    // • Double-tap for quick zoom in/out 
+                    // • Long drag up/down for continuous zoom
                     ScrollView {
                         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: gridColumns), spacing: 2) {
                             ForEach(viewModel.gridNodes.flatMap { $0 }) { node in
@@ -384,8 +477,9 @@ struct GridView: View {
                             print("GridView Debug: isScaling: \(isScaling)")
                         }
                     }
-                    .scrollDisabled(isScaling) // Disable scroll during pinch
+                    .scrollDisabled(isScaling || isDragging) // Disable scroll during pinch or drag zoom
                     .simultaneousGesture(
+                        // Existing pinch gesture
                         MagnificationGesture()
                             .onChanged { value in
                                 if !isScaling {
@@ -429,6 +523,81 @@ struct GridView: View {
                                 #endif
                             }
                     )
+                    .onTapGesture(count: 2) {
+                        // Double-tap gesture for discrete zoom with comprehensive logging
+                        print("GridView: 🎯 Double-tap gesture triggered")
+                        print("GridView: 🚦 Gesture state check - isDragging: \(isDragging), isLongPressing: \(isLongPressing)")
+                        
+                        if !isDragging && !isLongPressing {
+                            print("GridView: ✅ Conditions met, executing double-tap zoom")
+                            handleDoubleTap()
+                        } else {
+                            print("GridView: ❌ Double-tap blocked - isDragging: \(isDragging), isLongPressing: \(isLongPressing)")
+                        }
+                    }
+                    .simultaneousGesture(
+                        // Long press to initiate zoom mode, then drag to zoom
+                        LongPressGesture(minimumDuration: 0.5)
+                            .onEnded { _ in
+                                print("GridView: 👆 Long press detected - entering zoom mode")
+                                isLongPressing = true
+                                longPressStarted = true
+                                baseColumns = gridColumns
+                                
+                                // Haptic feedback for long press
+                                #if os(iOS)
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                impactFeedback.impactOccurred()
+                                #endif
+                            }
+                    )
+                    .simultaneousGesture(
+                        // Drag gesture for zoom (only active after long press)
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { value in
+                                // Only activate drag zoom if long press was detected
+                                guard isLongPressing || longPressStarted else {
+                                    return
+                                }
+                                
+                                if !isDragging {
+                                    isDragging = true
+                                    dragStartTime = Date()
+                                    print("GridView: 🎯 Drag zoom started (after long press)")
+                                    
+                                    // Additional haptic feedback when drag starts
+                                    #if os(iOS)
+                                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                    impactFeedback.impactOccurred()
+                                    #endif
+                                }
+                                
+                                handleDragZoom(value)
+                            }
+                            .onEnded { _ in
+                                if isDragging {
+                                    print("GridView: 🏁 Drag zoom ended at \(gridColumns) columns")
+                                    
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                                        baseColumns = gridColumns
+                                        isDragging = false
+                                        isLongPressing = false
+                                        longPressStarted = false
+                                    }
+                                    
+                                    // Final haptic feedback
+                                    #if os(iOS)
+                                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                    impactFeedback.impactOccurred()
+                                    #endif
+                                } else {
+                                    // Reset long press state even if no drag occurred
+                                    print("GridView: 🔄 Resetting long press state (no drag)")
+                                    isLongPressing = false
+                                    longPressStarted = false
+                                }
+                            }
+                    )
                     .refreshable {
                         await refreshGrid()
                     }
@@ -442,6 +611,13 @@ struct GridView: View {
             .onAppear {
                 // Auto-refresh when grid appears
                 viewModel.handleGridAppeared()
+                
+                // Inform user about new zoom gestures
+                print("🔍 Grid Zoom Gestures Available:")
+                print("   • Pinch to zoom in/out")
+                print("   • Double-tap for quick zoom (cycles: 3→2→5→3 columns)")
+                print("   • Long press (0.5s) + drag up/down for continuous zoom")
+                print("   • Fast swipes will scroll normally (not zoom)")
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
