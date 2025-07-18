@@ -70,17 +70,11 @@ struct BioStoriesOverlayView: View {
                             .font(.headline)
                             .fontWeight(.semibold)
                         
-                        if !isCurrentUser {
-                            if let distanceString = viewModel.getDistanceString(to: userProfile.deviceID) {
-                                Text(distanceString)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else {
-                            Text("You")
-                                .font(.caption)
-                                .foregroundColor(.blue)
-                        }
+                        // Bio replaces distance
+                        Text(userProfile.bio ?? "No bio available.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
                     }
                 }
                 
@@ -277,37 +271,44 @@ struct BioStoriesOverlayView: View {
                 .background(Color(.systemGray6).opacity(0.3))
             }
             
-            // Bio section
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Bio")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    
-                    // Bio indicator
-                    if let bio = userProfile.bio, !bio.isEmpty {
-                        Image(systemName: "text.alignleft")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                    }
-                    
-                    // Chat button in bottom right corner
-                    Button(action: {
-                        onChatTapped(userProfile.deviceID)
-                    }) {
+            // Bottom action tray
+            HStack(spacing: 16) {
+                // Message button
+                Button(action: {
+                    onChatTapped(userProfile.deviceID)
+                }) {
+                    HStack(spacing: 8) {
                         Image(systemName: "message.fill")
                             .font(.title3)
-                            .foregroundColor(.blue)
+                        Text("Message")
+                            .font(.body)
+                            .fontWeight(.medium)
                     }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .cornerRadius(12)
                 }
                 
-                Text(userProfile.bio ?? "No bio available.")
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 8)
+                // Pay button (placeholder for future functionality)
+                Button(action: {
+                    // TODO: Implement pay functionality
+                    print("Pay button tapped - functionality to be implemented")
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "dollarsign.circle.fill")
+                            .font(.title3)
+                        Text("Pay")
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.green)
+                    .cornerRadius(12)
+                }
             }
             .padding()
             .background(Color(.systemBackground))
