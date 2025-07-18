@@ -274,142 +274,78 @@ struct GridView: View {
             // Main grid content
             mainGridView
             
-            // Edge swipe detector for dismissing overlays
-            if showingBioStoriesOverlay || showChatOverlay {
-                HStack {
-                    // Left edge swipe area
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(width: 20)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture()
-                                .onEnded { value in
-                                    let horizontalMovement = value.translation.width
-                                    let minimumSwipeDistance: CGFloat = 50
-                                    
-                                    // Dismiss on swipe right from left edge
-                                    if horizontalMovement > minimumSwipeDistance {
-                                        // Haptic feedback for edge swipe dismiss
-                                        #if os(iOS)
-                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                        impactFeedback.impactOccurred()
-                                        #endif
-                                        
-                                        if showingBioStoriesOverlay {
-                                            withAnimation(.easeInOut(duration: 0.3)) {
-                                                showingBioStoriesOverlay = false
-                                                bioStoriesProfile = nil
-                                            }
-                                        } else if showChatOverlay {
-                                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                                showChatOverlay = false
-                                                chatOverlayRecipientID = nil
-                                            }
-                                        }
-                                    }
-                                }
-                        )
-                    
-                    Spacer()
-                    
-                    // Right edge swipe area
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(width: 20)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture()
-                                .onEnded { value in
-                                    let horizontalMovement = value.translation.width
-                                    let minimumSwipeDistance: CGFloat = 50
-                                    
-                                    // Dismiss on swipe left from right edge
-                                    if horizontalMovement < -minimumSwipeDistance {
-                                        // Haptic feedback for edge swipe dismiss
-                                        #if os(iOS)
-                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                        impactFeedback.impactOccurred()
-                                        #endif
-                                        
-                                        if showingBioStoriesOverlay {
-                                            withAnimation(.easeInOut(duration: 0.3)) {
-                                                showingBioStoriesOverlay = false
-                                                bioStoriesProfile = nil
-                                            }
-                                        } else if showChatOverlay {
-                                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                                showChatOverlay = false
-                                                chatOverlayRecipientID = nil
-                                            }
-                                        }
-                                    }
-                                }
-                        )
-                }
-                .zIndex(999) // Just below the overlays but above the main content
-            }
+
             
             // Bio+Stories overlay
             if showingBioStoriesOverlay, let profile = bioStoriesProfile {
-                // Semi-transparent background to show grid underneath
-                Color.black.opacity(0.3) // Dimmed but visible
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation {
-                            showingBioStoriesOverlay = false
-                            bioStoriesProfile = nil
-                        }
-                    }
-                
-                // The actual bio+stories overlay
-                BioStoriesOverlayView(
-                    viewModel: viewModel,
-                    userProfile: profile,
-                    onClose: {
-                        withAnimation {
-                            showingBioStoriesOverlay = false
-                            bioStoriesProfile = nil
-                        }
-                    },
-                    onChatTapped: { deviceID in
-                        // Close overlay and open chat
-                        showingBioStoriesOverlay = false
-                        bioStoriesProfile = nil
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                chatOverlayRecipientID = deviceID
-                                showChatOverlay = true
+                ZStack {
+                    // Semi-transparent background to show grid underneath
+                    Color.black.opacity(0.3) // Dimmed but visible
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle()) // Ensure the entire background area is tappable
+                        .onTapGesture {
+                            // Haptic feedback for tap dismiss
+                            #if os(iOS)
+                            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                            impactFeedback.impactOccurred()
+                            #endif
+                            
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showingBioStoriesOverlay = false
+                                bioStoriesProfile = nil
                             }
                         }
-                    }
-                )
-                .padding(.horizontal, 40)
-                .transition(.scale.combined(with: .opacity))
-                .zIndex(1000)
-                .gesture(
-                    DragGesture()
-                        .onEnded { value in
-                            let verticalMovement = value.translation.height
-                            let horizontalMovement = value.translation.width
-                            let minimumSwipeDistance: CGFloat = 100
+                        .gesture(
+                            // Enhanced swipe gestures for background dismissal
+                            DragGesture()
+                                .onEnded { value in
+                                    let verticalMovement = value.translation.height
+                                    let horizontalMovement = value.translation.width
+                                    let minimumSwipeDistance: CGFloat = 80 // Reduced for more responsive dismissal
+                                    
+                                    // Dismiss on any directional swipe
+                                    if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
+                                        // Haptic feedback for swipe dismiss
+                                        #if os(iOS)
+                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                        impactFeedback.impactOccurred()
+                                        #endif
+                                        
+                                        withAnimation(.easeInOut(duration: 0.3)) {
+                                            showingBioStoriesOverlay = false
+                                            bioStoriesProfile = nil
+                                        }
+                                    }
+                                }
+                        )
+                    
+                    // The actual bio+stories overlay
+                    BioStoriesOverlayView(
+                        viewModel: viewModel,
+                        userProfile: profile,
+                        onClose: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showingBioStoriesOverlay = false
+                                bioStoriesProfile = nil
+                            }
+                        },
+                        onChatTapped: { deviceID in
+                            // Close overlay and open chat
+                            showingBioStoriesOverlay = false
+                            bioStoriesProfile = nil
                             
-                            // Dismiss on swipe up/down or left/right
-                            if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
-                                // Haptic feedback for swipe dismiss
-                                #if os(iOS)
-                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                impactFeedback.impactOccurred()
-                                #endif
-                                
-                                withAnimation(.easeInOut(duration: 0.3)) {
-                                    showingBioStoriesOverlay = false
-                                    bioStoriesProfile = nil
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                    chatOverlayRecipientID = deviceID
+                                    showChatOverlay = true
                                 }
                             }
                         }
-                )
+                    )
+                    .padding(.horizontal, 40)
+                    .transition(.scale.combined(with: .opacity))
+                    .zIndex(1000)
+                }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: showingBioStoriesOverlay)
@@ -976,12 +912,42 @@ struct GridView: View {
                         // Semi-transparent background to dim the grid
                         Color.black.opacity(0.5)
                             .ignoresSafeArea()
+                            .contentShape(Rectangle()) // Ensure the entire background area is tappable
                             .onTapGesture {
+                                // Haptic feedback for tap dismiss
+                                #if os(iOS)
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                impactFeedback.impactOccurred()
+                                #endif
+                                
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     showProfileOverlay = false
                                     overlayProfile = nil
                                 }
                             }
+                            .gesture(
+                                // Enhanced swipe gestures for background dismissal
+                                DragGesture()
+                                    .onEnded { value in
+                                        let verticalMovement = value.translation.height
+                                        let horizontalMovement = value.translation.width
+                                        let minimumSwipeDistance: CGFloat = 80 // Reduced for more responsive dismissal
+                                        
+                                        // Dismiss on any directional swipe
+                                        if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
+                                            // Haptic feedback for swipe dismiss
+                                            #if os(iOS)
+                                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                            impactFeedback.impactOccurred()
+                                            #endif
+                                            
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                showProfileOverlay = false
+                                                overlayProfile = nil
+                                            }
+                                        }
+                                    }
+                            )
                         
                         // Profile card overlay
                         ProfileOverlayView(
@@ -1017,12 +983,42 @@ struct GridView: View {
                         // Semi-transparent background to dim the grid
                         Color.black.opacity(0.5)
                             .ignoresSafeArea()
+                            .contentShape(Rectangle()) // Ensure the entire background area is tappable
                             .onTapGesture {
+                                // Haptic feedback for tap dismiss
+                                #if os(iOS)
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                                impactFeedback.impactOccurred()
+                                #endif
+                                
                                 withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
                                     showChatOverlay = false
                                     chatOverlayRecipientID = nil
                                 }
                             }
+                            .gesture(
+                                // Enhanced swipe gestures for background dismissal
+                                DragGesture()
+                                    .onEnded { value in
+                                        let verticalMovement = value.translation.height
+                                        let horizontalMovement = value.translation.width
+                                        let minimumSwipeDistance: CGFloat = 80 // Reduced for more responsive dismissal
+                                        
+                                        // Dismiss on any directional swipe
+                                        if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
+                                            // Haptic feedback for swipe dismiss
+                                            #if os(iOS)
+                                            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                            impactFeedback.impactOccurred()
+                                            #endif
+                                            
+                                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                                showChatOverlay = false
+                                                chatOverlayRecipientID = nil
+                                            }
+                                        }
+                                    }
+                            )
                         
                         // Chat card overlay
                         ChatOverlayView(
@@ -1039,28 +1035,6 @@ struct GridView: View {
                             insertion: .scale(scale: 0.8).combined(with: .opacity).combined(with: .move(edge: .bottom)),
                             removal: .scale(scale: 0.8).combined(with: .opacity).combined(with: .move(edge: .bottom))
                         ))
-                        .gesture(
-                            DragGesture()
-                                .onEnded { value in
-                                    let verticalMovement = value.translation.height
-                                    let horizontalMovement = value.translation.width
-                                    let minimumSwipeDistance: CGFloat = 100
-                                    
-                                    // Dismiss on swipe up/down or left/right
-                                    if abs(verticalMovement) > minimumSwipeDistance || abs(horizontalMovement) > minimumSwipeDistance {
-                                        // Haptic feedback for swipe dismiss
-                                        #if os(iOS)
-                                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                                        impactFeedback.impactOccurred()
-                                        #endif
-                                        
-                                        withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
-                                            showChatOverlay = false
-                                            chatOverlayRecipientID = nil
-                                        }
-                                    }
-                                }
-                        )
                     }
                 }
             }

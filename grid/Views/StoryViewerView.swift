@@ -107,6 +107,28 @@ struct StoryViewerView: View {
         }
         .navigationBarHidden(true)
         .statusBarHidden(true)
+        .gesture(
+            // Add swipe gestures for dismissal (up/down only to avoid interfering with story navigation)
+            DragGesture()
+                .onEnded { value in
+                    let verticalMovement = value.translation.height
+                    let horizontalMovement = value.translation.width
+                    let minimumSwipeDistance: CGFloat = 100
+                    
+                    // Only dismiss on significant vertical swipes (up or down)
+                    // Avoid dismissing on horizontal swipes which should be handled by story navigation
+                    if abs(verticalMovement) > minimumSwipeDistance && abs(verticalMovement) > abs(horizontalMovement) {
+                        // Haptic feedback for swipe dismiss
+                        #if os(iOS)
+                        let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                        impactFeedback.impactOccurred()
+                        #endif
+                        
+                        print("StoryViewerView: 👆 Vertical swipe detected - dismissing")
+                        closeViewer()
+                    }
+                }
+        )
         .onAppear {
             print("StoryViewerView: 🎬 onAppear called - Starting setup")
             debugInfo = "onAppear called, setting up..."
