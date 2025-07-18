@@ -1143,28 +1143,14 @@ struct GridNodeView: View {
                 VStack {
                     // Top: Distance, star, encryption, and unread message badges
                     HStack {
-                        // Distance on top left (or "Me" for current user)
+                        // Bio + "Me" for current user, or bio + distance for others
                         if let currentUserDeviceID = viewModel.currentUserProfile?.deviceID,
                            profile.deviceID == currentUserDeviceID {
-                            // "Me" label for current user
-                            Text("Me")
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.8))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            // Bio + "(Me)" for current user
+                            bioMeText(for: profile)
                         } else {
-                            // Distance for other users
-                            if let distanceString = viewModel.getDistanceString(to: profile.deviceID) {
-                                Text(distanceString)
-                                    .font(.system(size: 8, weight: .medium))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.black.opacity(0.6))
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
+                            // Bio + distance for other users
+                            bioDistanceText(for: profile)
                         }
                         
                         // Star indicator 
@@ -1312,6 +1298,48 @@ struct GridNodeView: View {
                 onProfileTapped(userProfile)
             }
         }
+    }
+    
+    private func getBioDistanceText(for profile: UserProfile) -> String {
+        let distanceString = viewModel.getDistanceString(to: profile.deviceID) ?? ""
+        let bioText = profile.bio?.isEmpty == false ? profile.bio! : ""
+        
+        if bioText.isEmpty {
+            return distanceString.isEmpty ? "" : "(\(distanceString))"
+        } else {
+            return distanceString.isEmpty ? bioText : "\(bioText) (\(distanceString))"
+        }
+    }
+    
+    @ViewBuilder
+    private func bioDistanceText(for profile: UserProfile) -> some View {
+        if !getBioDistanceText(for: profile).isEmpty {
+            Text(getBioDistanceText(for: profile))
+                .font(.system(size: 8, weight: .medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .lineLimit(2)
+        }
+    }
+    
+    private func getBioMeText(for profile: UserProfile) -> String {
+        let bioText = profile.bio?.isEmpty == false ? profile.bio! : ""
+        return bioText.isEmpty ? "(Me)" : "\(bioText) (Me)"
+    }
+    
+    @ViewBuilder
+    private func bioMeText(for profile: UserProfile) -> some View {
+        Text(getBioMeText(for: profile))
+            .font(.system(size: 8, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.blue.opacity(0.8))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .lineLimit(2)
     }
     
     private func loadStoriesStatus() {
