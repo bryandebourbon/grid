@@ -312,6 +312,27 @@ struct GridView: View {
                 .padding(.horizontal, 40)
                 .transition(.scale.combined(with: .opacity))
                 .zIndex(1000)
+                .gesture(
+                    DragGesture()
+                        .onEnded { value in
+                            let verticalMovement = value.translation.height
+                            let minimumSwipeDistance: CGFloat = 100
+                            
+                            // Dismiss on swipe up or down
+                            if abs(verticalMovement) > minimumSwipeDistance {
+                                // Haptic feedback for swipe dismiss
+                                #if os(iOS)
+                                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+                                impactFeedback.impactOccurred()
+                                #endif
+                                
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showingBioStoriesOverlay = false
+                                    bioStoriesProfile = nil
+                                }
+                            }
+                        }
+                )
             }
         }
         .animation(.easeInOut(duration: 0.3), value: showingBioStoriesOverlay)
