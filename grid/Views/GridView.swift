@@ -152,6 +152,13 @@ struct GridView: View {
     @State private var showingBioStoriesOverlay = false  // NEW: For bio+stories overlay
     @State private var bioStoriesProfile: UserProfile? = nil  // NEW: Profile for bio+stories overlay
     
+    // Background customization
+    @State var backgroundColor: Color = Color.blue.opacity(0.15) // internal for extension access
+    @State var backgroundImage: Image? = nil
+    @State private var showingColorPicker = false
+    @State private var showingBackgroundPhotoPicker = false
+    @State private var selectedBackgroundPhotoItem: PhotosPickerItem? = nil
+    
     // Computed property for actual photo shape based on stories mode and circular photos setting
     private var shouldUseCircularPhotos: Bool {
         if storiesMode {
@@ -522,6 +529,8 @@ struct GridView: View {
         .refreshable {
             await refreshGrid()
         }
+        // Dynamic background (colour or photo) visible through transparent cell corners
+        .background(gridBackgroundView)
     }
 
     var body: some View {
@@ -603,6 +612,11 @@ struct GridView: View {
                 }
             }
         }
+        // User-selected background (colour or photo)
+        .background(
+            gridBackgroundView
+                .ignoresSafeArea()
+        )
         .animation(.easeInOut(duration: 0.3), value: showingBioStoriesOverlay)
     }
     
@@ -842,6 +856,28 @@ struct GridView: View {
                             }
                         }
                         
+                        // Background customization
+                        Button(action: {
+                            showingColorPicker = true
+                        }) {
+                            Label("Background Color", systemImage: "paintpalette")
+                        }
+                        
+                        Button(action: {
+                            showingBackgroundPhotoPicker = true
+                        }) {
+                            Label("Background Photo", systemImage: "photo")
+                        }
+                        
+                        if backgroundImage != nil {
+                            Button(role: .destructive, action: {
+                                backgroundImage = nil
+                                selectedBackgroundPhotoItem = nil
+                            }) {
+                                Label("Remove Background Photo", systemImage: "photo.slash")
+                            }
+                        }
+                        
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 viewModel.demoService.toggleDemoMode()
@@ -952,6 +988,14 @@ struct GridView: View {
             }
             .sheet(isPresented: $viewModel.showingInterestSearch) { // NEW: Sheet for Interest Search
                 InterestSearchView(viewModel: viewModel)
+            }
+            // Background Color Picker
+            .sheet(isPresented: $showingColorPicker) {
+                BackgroundColorPickerView(selectedColor: $backgroundColor)
+            }
+            // Background Photo Picker
+            .sheet(isPresented: $showingBackgroundPhotoPicker) {
+                BackgroundPhotoPickerView(selectedItem: $selectedBackgroundPhotoItem, backgroundImage: $backgroundImage)
             }
             .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {
                 Button("Delete", role: .destructive) { deleteAccountAction() }
@@ -1123,6 +1167,27 @@ struct GridView: View {
             }
         }
     }
+
+    // Grid background view (colour or photo)
+    @ViewBuilder
+    private var gridBackgroundView: some View {
+        if let img = backgroundImage {
+            GeometryReader { geometry in
+                img
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(
+                        width: max(geometry.size.width, UIScreen.main.bounds.width),
+                        height: max(geometry.size.height, UIScreen.main.bounds.height)
+                    )
+                    .clipped()
+                    .ignoresSafeArea(.all)
+            }
+            .ignoresSafeArea(.all)
+        } else {
+            backgroundColor
+        }
+    }
 }
 
 struct GridNodeView: View {
@@ -1161,7 +1226,10 @@ struct GridNodeView: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity) // Ensure it expands
             .aspectRatio(1, contentMode: .fit)
-            .background(Color.gray.opacity(0.1)) // Background for empty or loading states
+            // When using circular photos, keep the cell background transparent so the coloured/photo
+            // backdrop of the grid remains visible through the corners. Otherwise retain the subtle
+            // gray fill used for square-style grid cells.
+            .background(useCircularPhotos ? Color.clear : Color.gray.opacity(0.1))
             .modifier(DynamicClipShape(useCircular: useCircularPhotos)) // Dynamic shape based on setting
             
             // Stories ring overlay (only in stories mode)
@@ -2779,3 +2847,5 @@ struct DynamicClipShape: ViewModifier {
         }
     }
 }
+
+// Background customization views are defined in BackgroundCustomizationViews.swift
