@@ -2335,9 +2335,8 @@ class GridViewModel: ObservableObject {
             if let savedAlbum = Album(record: savedRecord) {
                 print("GridViewModel: ✅ Album created successfully: \(savedAlbum.id)")
                 
-                // Update local cache and user profile
+                // Update local cache
                 userAlbums[currentProfile.deviceID] = savedAlbum
-                await updateUserProfileWithAlbum(savedAlbum)
                 
                 return AlbumResult.success(savedAlbum)
             } else {
@@ -2433,9 +2432,8 @@ class GridViewModel: ObservableObject {
                         print("GridViewModel: ✅ Successfully pinned story to album")
                         
                         // Update local cache and user profile
-                        Task {
+                        DispatchQueue.main.async {
                             self.userAlbums[currentProfile.deviceID] = savedAlbum
-                            await self.updateUserProfileWithAlbum(savedAlbum)
                         }
                         
                         continuation.resume(returning: PinResult.success())
@@ -2504,9 +2502,8 @@ class GridViewModel: ObservableObject {
                         print("GridViewModel: ✅ Successfully unpinned story from album")
                         
                         // Update local cache and user profile
-                        Task {
+                        DispatchQueue.main.async {
                             self.userAlbums[currentProfile.deviceID] = savedAlbum
-                            await self.updateUserProfileWithAlbum(savedAlbum)
                         }
                         
                         continuation.resume(returning: PinResult.success())
@@ -2576,53 +2573,6 @@ class GridViewModel: ObservableObject {
         }
         
         return await getAlbum(for: currentProfile.deviceID)
-    }
-    
-    /// Update user profile with album information
-    private func updateUserProfileWithAlbum(_ album: Album) async {
-        guard var currentProfile = currentUserProfile else { return }
-        
-        // Update profile with album info
-        currentProfile.updateAlbumInfo(albumID: album.id, previewPhotos: album.previewPhotos)
-        
-        // Save updated profile to CloudKit using CKModifyRecordsOperation for explicit update
-        do {
-            let record = currentProfile.toPublicCKRecord()
-            
-            // Use CKModifyRecordsOperation to handle both create and update
-            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-            operation.savePolicy = .changedKeys // This allows updating existing records
-            operation.qualityOfService = .userInitiated
-            
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                operation.perRecordSaveBlock = { (recordID: CKRecord.ID, result: Result<CKRecord, Error>) in
-                    switch result {
-                    case .success(_):
-                        break // Success handled in completion block
-                    case .failure(let error):
-                        print("GridViewModel: ❌ Error saving individual profile record: \(error.localizedDescription)")
-                    }
-                }
-                
-                operation.modifyRecordsCompletionBlock = { (savedRecords: [CKRecord]?, deletedRecordIDs: [CKRecord.ID]?, error: Error?) in
-                    if let error = error {
-                        print("GridViewModel: ❌ Error updating user profile with album info: \(error.localizedDescription)")
-                        continuation.resume(throwing: error)
-                    } else {
-                        print("GridViewModel: ✅ Updated user profile with album info")
-                        continuation.resume()
-                    }
-                }
-                
-                publicDB.add(operation)
-            }
-            
-            // Update local profile
-            self.currentUserProfile = currentProfile
-            
-        } catch {
-            print("GridViewModel: ❌ Error updating user profile with album info: \(error.localizedDescription)")
-        }
     }
     
     // MARK: - Initialization Helpers
