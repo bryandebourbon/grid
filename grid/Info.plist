@@ -5,14 +5,9 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
-		<string>location</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>The Grid uses your location to show nearby active users and enable proximity-based messaging. Location is only shared when the app is open.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>The Grid uses your location to show nearby active users and enable proximity-based messaging. This allows the app to maintain your presence when running in the background.</string>
-	<key>NSUserTrackingUsageDescription</key>
-	<string>This allows Grid to provide better features, improve performance, and optimize user connections. We use this data to enhance your experience and understand how to make the app better.</string>
+	<string>The Grid uses your location to show nearby active users and enable proximity-based messaging. Location is only used while the app is open.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

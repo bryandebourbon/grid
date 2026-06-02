@@ -27,8 +27,6 @@ import UIKit
 // For now, we'll rely on Swift's module system to find UserProfile.swift
 
 struct ContentView: View {
-    //    @Query private var items: [Item]
-    
     @StateObject private var gridViewModel = GridViewModel()
 
     // Authentication State
@@ -40,6 +38,7 @@ struct ContentView: View {
     @State private var userProfile: UserProfile? = nil
     @State private var showCreateProfileView = false
     @State private var isLoadingProfile = false
+    @State private var profileLoadFailed = false  // Transient load failure (network/server) — offer retry instead of signing out
 
     // Navigation is now handled directly by GridViewModel via its chatRecipientToPresent property
 
@@ -64,6 +63,28 @@ struct ContentView: View {
                 ))
             } else if isLoadingProfile {
                 AnyView(ProgressView("Loading Profile..."))
+            } else if profileLoadFailed {
+                AnyView(VStack(spacing: 16) {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.largeTitle)
+                        .foregroundColor(.secondary)
+                    Text("Couldn't load your profile")
+                        .font(.headline)
+                    Text("Check your connection and try again.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Try Again") {
+                        profileLoadFailed = false
+                        if let userID = appleUserID {
+                            checkUserProfile(userID: userID)
+                        } else {
+                            signOut()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding())
             } else if showCreateProfileView {
                 if let userID = appleUserID {
                     AnyView(CreateProfileView(showCreateProfileView: $showCreateProfileView,
@@ -117,6 +138,7 @@ struct ContentView: View {
         
         print("ContentView: Checking profile for deviceID: \(deviceID) (userID: \(userID))")
         isLoadingProfile = true
+        profileLoadFailed = false
         
         // Check PUBLIC database first (since profiles are now public)
         let publicDB = CKContainer.default().publicCloudDatabase
@@ -154,8 +176,9 @@ struct ContentView: View {
                         self.showCreateProfileView = true
                     } else {
                         print("ContentView: CloudKit error fetching profile for deviceID: \(deviceID). Error: \(actualError.localizedDescription)")
-                        // For genuine network/server issues, maybe retry instead of signing out
-                        self.signOut() // Simple fallback: sign out
+                        // Genuine network/server issue — keep the user signed in and
+                        // offer a retry rather than forcing them back to sign-in.
+                        self.profileLoadFailed = true
                     }
                 } else if let anError = error { 
                     // For first-time devices, "Failed to fetch some records" is normal when no profile exists
@@ -166,7 +189,8 @@ struct ContentView: View {
                         self.showSignInView = false 
                         self.showCreateProfileView = true
                     } else {
-                        self.signOut() // Only sign out for other errors
+                        // Likely transient — offer retry instead of signing out.
+                        self.profileLoadFailed = true
                     }
                 } else if let fetchedRecord = recordsByRecordID?[recordID] {
                     // Record was successfully fetched with assets downloaded
@@ -251,6 +275,7 @@ struct ContentView: View {
         showCreateProfileView = false
         isLoadingProfile = false
         isCheckingCredentials = false
+        profileLoadFailed = false
     }
 
     private func deleteAccount() {
@@ -277,21 +302,6 @@ struct ContentView: View {
             }
         }
     }
-
-    // addItem and deleteItems are from the template, may not be needed for the grid app's core logic
-    // depending on what `Item` represents.
-    //    private func addItem() {
-    //        withAnimation {
-    //            let newItem = Item(timestamp: Date())
-    //            modelContext.insert(newItem)
-    //        }
-    //    }
-    //
-    //    private func deleteItems(offsets: IndexSet) {
-    //        withAnimation {
-    //            offsets.map { items[$0] }.forEach(modelContext.delete)
-    //        }
-    //    }
 
     // NEW: Check for existing Apple ID credentials on app launch
     private func checkExistingCredentials() {
@@ -343,6 +353,9 @@ struct SignInView: View {
     @Binding var showSignInView: Bool
     var onSignInSuccess: (ASAuthorizationAppleIDCredential) -> Void 
 
+    @State private var showingTerms = false
+    @State private var showingPrivacy = false
+
     var body: some View {
         VStack {
             Text("Welcome to Grid")
@@ -370,13 +383,32 @@ struct SignInView: View {
             .signInWithAppleButtonStyle(.black)
             .frame(width: 280, height: 60)
             .padding()
-            
+
+            agreementNotice
+                .padding(.horizontal, 32)
+
             Spacer()
+        }
+        .sheet(isPresented: $showingTerms) { TermsOfUseView() }
+        .sheet(isPresented: $showingPrivacy) { PrivacyPolicyView() }
+    }
+
+    private var agreementNotice: some View {
+        VStack(spacing: 6) {
+            Text("By continuing, you agree to our Terms of Use (EULA) and Privacy Policy. Grid has zero tolerance for objectionable content and abusive behavior.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 16) {
+                Button("Terms of Use") { showingTerms = true }
+                Button("Privacy Policy") { showingPrivacy = true }
+            }
+            .font(.footnote.weight(.semibold))
         }
     }
 }
 
 #Preview {
     ContentView()
-        //        .modelContainer(for: Item.self, inMemory: true)
 }
