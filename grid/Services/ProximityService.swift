@@ -170,18 +170,6 @@ class ProximityService: ObservableObject {
     
     // Get formatted distance string in kilometers (.01km to 99km)
     func formatDistance(_ distance: Double) -> String {
-        let kilometers = distance / 1000.0 // Convert meters to kilometers
-        
-        if kilometers < 0.01 {
-            return ".01km"  // No leading zero, minimum distance
-        } else if kilometers >= 99.0 {
-            return "99km"   // Maximum distance, clean format
-        } else if kilometers < 1.0 {
-            // Format: .05km, .23km, .87km (no leading zero)
-            let formatted = String(format: "%.2fkm", kilometers)
-            return formatted.replacingOccurrences(of: "0.", with: ".")
-        } else {
-            return String(format: "%.0fkm", kilometers)  // 1km, 5km, 25km, 99km
-        }
+        DistanceFormatLogic.format(meters: distance)
     }
 } 

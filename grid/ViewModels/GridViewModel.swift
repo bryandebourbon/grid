@@ -109,6 +109,7 @@ class GridViewModel: ObservableObject {
     private let encryptionProfileService: EncryptionProfileService // Public-key publishing
     private let accountDeletionService: AccountDeletionService // Account record teardown
     private let readReceiptService: ReadReceiptService // Read-receipt persistence
+    private let albumFetchService: AlbumFetchService
     private var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
 
@@ -119,6 +120,7 @@ class GridViewModel: ObservableObject {
          encryptionProfileService: EncryptionProfileService = EncryptionProfileService(),
          accountDeletionService: AccountDeletionService = AccountDeletionService(),
          readReceiptService: ReadReceiptService = ReadReceiptService(),
+         albumFetchService: AlbumFetchService = AlbumFetchService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
@@ -128,6 +130,7 @@ class GridViewModel: ObservableObject {
         self.encryptionProfileService = encryptionProfileService
         self.accountDeletionService = accountDeletionService
         self.readReceiptService = readReceiptService
+        self.albumFetchService = albumFetchService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -364,54 +367,19 @@ class GridViewModel: ObservableObject {
             profilesToDisplay = profiles
         }
         
-        // Separate current user from other profiles
-        var currentUserProfile: UserProfile?
-        var otherProfiles: [UserProfile] = []
-        
-        for profile in profilesToDisplay {
-            if profile.deviceID == currentUserDeviceID {
-                currentUserProfile = profile
-            } else {
-                otherProfiles.append(profile)
-            }
-        }
-        
-        // Filter profiles if showing starred only (skip in demo mode)
-        if showingStarredOnly && !demoService.isDemoMode {
-            otherProfiles = otherProfiles.filter { profile in
-                starredUsers.contains(profile.userID)
-            }
-        }
-        
-        // Filter out blocked users (skip in demo mode)
-        if !demoService.isDemoMode {
-            print("DEBUG: Before filtering - blockedUsers.count = \(blockedUsers.count), usersWhoBlockedMe.count = \(usersWhoBlockedMe.count)")
-            print("DEBUG: blockedUsers = \(blockedUsers)")
-            print("DEBUG: usersWhoBlockedMe = \(usersWhoBlockedMe)")
-            
-            let beforeCount = otherProfiles.count
-            otherProfiles = otherProfiles.filter { profile in
-                let iBlockedThem = blockedUsers.contains(profile.userID)
-                let theyBlockedMe = usersWhoBlockedMe.contains(profile.userID)
-                let shouldFilter = iBlockedThem || theyBlockedMe
-                
-                if shouldFilter {
-                    print("DEBUG: Filtering out user \(profile.userID) - iBlockedThem: \(iBlockedThem), theyBlockedMe: \(theyBlockedMe)")
-                }
-                
-                return !shouldFilter
-            }
-            let afterCount = otherProfiles.count
-            print("DEBUG: After filtering - profiles went from \(beforeCount) to \(afterCount)")
-        }
-        
-        // Filter profiles by selected interests if any are selected
-        if !selectedInterestFilter.isEmpty {
-            otherProfiles = otherProfiles.filter { profile in
-                let sharedInterests = Set(profile.interests).intersection(selectedInterestFilter)
-                return !sharedInterests.isEmpty
-            }
-        }
+        let partitioned = GridProfileFilterLogic.partition(
+            profiles: profilesToDisplay,
+            currentUserDeviceID: currentUserDeviceID
+        )
+        var otherProfiles = GridProfileFilterLogic.applyDisplayFilters(
+            to: partitioned.others,
+            showingStarredOnly: showingStarredOnly,
+            starredUserIDs: starredUsers,
+            blockedUserIDs: blockedUsers,
+            usersWhoBlockedMe: usersWhoBlockedMe,
+            selectedInterestFilter: selectedInterestFilter,
+            isDemoMode: demoService.isDemoMode
+        )
         
         // Place current user first at position (0, 0)
         if let currentProfile = self.currentUserProfile {
@@ -856,15 +824,12 @@ class GridViewModel: ObservableObject {
     // NEW: Get unread message count from a specific device
     func getUnreadMessageCount(from deviceID: String) -> Int {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return 0 }
-        
-        // Count messages that are:
-        // 1. From the specified device TO the current user
-        // 2. Haven't been read yet (not in readReceipts)
-        return messages.filter { message in
-            message.senderDeviceID == deviceID && 
-            message.recipientDeviceID == currentDeviceID && 
-            !readReceipts.contains(message.id)
-        }.count
+        return MessageReadLogic.unreadCount(
+            from: deviceID,
+            currentDeviceID: currentDeviceID,
+            messages: messages,
+            readReceipts: readReceipts
+        )
     }
     
     // NEW: Mark messages as read when opening a chat
@@ -1183,13 +1148,12 @@ class GridViewModel: ObservableObject {
             return (false, "Profile not found")
         }
         
-        // Check if the user is blocked (checks by userID)
-        if isBlocked(deviceID) {
-            return (false, "You have blocked this user")
-        }
-        
-        // Check proximity-based messaging rules
-        return proximityService.canMessage(from: currentProfile, to: targetProfile)
+        let proximity = proximityService.canMessage(from: currentProfile, to: targetProfile)
+        return GridMessagingLogic.canMessage(
+            isBlocked: isBlocked(deviceID),
+            proximityAllowed: proximity.allowed,
+            proximityReason: proximity.reason
+        )
     }
 
     // MARK: - Messaging Methods
@@ -1893,15 +1857,12 @@ class GridViewModel: ObservableObject {
     /// Get count of users that share interests with current user
     func getSharedInterestCount(with userProfile: UserProfile) -> Int {
         guard let myInterests = currentUserProfile?.interests else { return 0 }
-        let sharedInterests = Set(myInterests).intersection(Set(userProfile.interests))
-        return sharedInterests.count
+        return InterestMatchingLogic.sharedCount(myInterests: myInterests, theirInterests: userProfile.interests)
     }
-    
-    /// Get the shared interests between current user and another user
+
     func getSharedInterests(with userProfile: UserProfile) -> [Interest] {
         guard let myInterests = currentUserProfile?.interests else { return [] }
-        let sharedInterests = Set(myInterests).intersection(Set(userProfile.interests))
-        return Array(sharedInterests).sorted { $0.rawValue < $1.rawValue }
+        return InterestMatchingLogic.sharedInterests(myInterests: myInterests, theirInterests: userProfile.interests)
     }
     
     // MARK: - Encryption-Only Mode Methods
@@ -2373,28 +2334,13 @@ class GridViewModel: ObservableObject {
             return cachedAlbum
         }
         
-        print("GridViewModel: 🔍 Fetching album from CloudKit for \(deviceID)")
-        
-        // Fetch from CloudKit
-        let predicate = NSPredicate(format: "ownerDeviceID == %@", deviceID)
-        let query = CKQuery(recordType: "Albums", predicate: predicate)
-        
-        do {
-            let result = try await publicDB.records(matching: query)
-            let records = result.matchResults.compactMap { try? $0.1.get() }
-            
-            if let record = records.first, let album = Album(record: record) {
-                print("GridViewModel: ✅ Found album in CloudKit for \(deviceID)")
-                userAlbums[deviceID] = album
-                return album
-            } else {
-                print("GridViewModel: ❌ No album found in CloudKit for \(deviceID)")
-                return nil
-            }
-        } catch {
-            print("GridViewModel: ❌ Error fetching album from CloudKit: \(error.localizedDescription)")
-            return nil
+        if let album = await albumFetchService.fetchAlbum(ownerDeviceID: deviceID) {
+            print("GridViewModel: ✅ Found album in CloudKit for \(deviceID)")
+            userAlbums[deviceID] = album
+            return album
         }
+        print("GridViewModel: ❌ No album found for \(deviceID)")
+        return nil
     }
     
     /// Check if a story is pinned in current user's album

@@ -216,6 +216,12 @@ struct AlbumTests {
 
 struct GridColumnZoomLogicTests {
 
+    /// Mirrors production formula so expectations are not magic numbers.
+    private func expectedPreviewColumns(base: Int, scale: CGFloat) -> Int {
+        let delta = Int((1.0 - scale) / 0.25)
+        return max(2, min(5, base + delta))
+    }
+
     @Test func doubleTapCyclesThreeTwoFive() {
         #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 3) == 2)
         #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 2) == 5)
@@ -223,12 +229,15 @@ struct GridColumnZoomLogicTests {
         #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 4) == 3)
     }
 
-    @Test func previewColumnsRespectsBounds() {
-        #expect(GridColumnZoomLogic.previewColumns(base: 3, scale: 1.0) == 3)
-        #expect(GridColumnZoomLogic.previewColumns(base: 3, scale: 0.5) == 5)
-        #expect(GridColumnZoomLogic.previewColumns(base: 3, scale: 1.5) == 2)
-        #expect(GridColumnZoomLogic.previewColumns(base: 5, scale: 0.0) == 5)
-        #expect(GridColumnZoomLogic.previewColumns(base: 2, scale: 2.0) == 2)
+    @Test func previewColumnsMatchesPinchFormulaAndClamps() {
+        for (base, scale) in [(3, 1.0), (3, 0.5), (3, 1.5), (5, 0.0), (2, 2.0), (3, 3.0)] as [(Int, CGFloat)] {
+            #expect(GridColumnZoomLogic.previewColumns(base: base, scale: scale) == expectedPreviewColumns(base: base, scale: scale))
+        }
+    }
+
+    @Test func clampNeverExceedsGridBounds() {
+        #expect(GridColumnZoomLogic.clamp(1) == 2)
+        #expect(GridColumnZoomLogic.clamp(99) == 5)
     }
 
     @Test func dragTranslationChangesColumns() {
@@ -322,5 +331,166 @@ struct MessageConversationLogicTests {
         #expect(list.map(\.deviceID) == ["bob", "carol", "alice"])
         #expect(list[0].lastMessage?.id == "2")
         #expect(list[0].messageCount == 1)
+    }
+}
+
+// MARK: - Grid profile filter logic
+
+struct GridProfileFilterLogicTests {
+
+    private func profile(userID: String, deviceID: String, interests: [Interest] = []) -> UserProfile {
+        UserProfile(userID: userID, deviceID: deviceID, deviceName: deviceID, interests: interests)
+    }
+
+    @Test func partitionSeparatesCurrentUser() {
+        let profiles = [
+            profile(userID: "u-me", deviceID: "me"),
+            profile(userID: "u-a", deviceID: "a"),
+        ]
+        let result = GridProfileFilterLogic.partition(profiles: profiles, currentUserDeviceID: "me")
+        #expect(result.currentUser?.deviceID == "me")
+        #expect(result.others.map(\.deviceID) == ["a"])
+    }
+
+    @Test func applyDisplayFiltersRemovesBlockedUsers() {
+        let profiles = [
+            profile(userID: "blocked", deviceID: "b1"),
+            profile(userID: "ok", deviceID: "o1"),
+        ]
+        let filtered = GridProfileFilterLogic.applyDisplayFilters(
+            to: profiles,
+            showingStarredOnly: false,
+            starredUserIDs: [],
+            blockedUserIDs: ["blocked"],
+            usersWhoBlockedMe: [],
+            selectedInterestFilter: [],
+            isDemoMode: false
+        )
+        #expect(filtered.map(\.userID) == ["ok"])
+    }
+
+    @Test func applyDisplayFiltersRemovesUsersWhoBlockedMe() {
+        let profiles = [profile(userID: "hostile", deviceID: "h1")]
+        let filtered = GridProfileFilterLogic.applyDisplayFilters(
+            to: profiles,
+            showingStarredOnly: false,
+            starredUserIDs: [],
+            blockedUserIDs: [],
+            usersWhoBlockedMe: ["hostile"],
+            selectedInterestFilter: [],
+            isDemoMode: false
+        )
+        #expect(filtered.isEmpty)
+    }
+
+    @Test func applyDisplayFiltersStarredBlockAndInterestsCombined() {
+        let profiles = [
+            profile(userID: "star", deviceID: "s1", interests: [.music]),
+            profile(userID: "blocked", deviceID: "b1"),
+            profile(userID: "match", deviceID: "m1", interests: [.foodie]),
+            profile(userID: "nomatch", deviceID: "n1", interests: [.running]),
+        ]
+
+        let filtered = GridProfileFilterLogic.applyDisplayFilters(
+            to: profiles,
+            showingStarredOnly: true,
+            starredUserIDs: ["star", "match"],
+            blockedUserIDs: ["blocked"],
+            usersWhoBlockedMe: [],
+            selectedInterestFilter: [.foodie],
+            isDemoMode: false
+        )
+
+        #expect(filtered.map(\.userID) == ["match"])
+    }
+
+    @Test func demoModeSkipsStarAndBlockFilters() {
+        let profiles = [
+            profile(userID: "blocked", deviceID: "b1"),
+            profile(userID: "other", deviceID: "o1"),
+        ]
+
+        let filtered = GridProfileFilterLogic.applyDisplayFilters(
+            to: profiles,
+            showingStarredOnly: true,
+            starredUserIDs: [],
+            blockedUserIDs: ["blocked"],
+            usersWhoBlockedMe: [],
+            selectedInterestFilter: [],
+            isDemoMode: true
+        )
+
+        #expect(filtered.count == 2)
+    }
+}
+
+// MARK: - Interest matching logic
+
+struct InterestMatchingLogicTests {
+
+    @Test func sharedCountAndSortedList() {
+        let mine: [Interest] = [.music, .foodie, .running]
+        let theirs: [Interest] = [.foodie, .music, .travel]
+        #expect(InterestMatchingLogic.sharedCount(myInterests: mine, theirInterests: theirs) == 2)
+        #expect(InterestMatchingLogic.sharedInterests(myInterests: mine, theirInterests: theirs) == [.foodie, .music])
+    }
+}
+
+// MARK: - Message read logic
+
+struct MessageReadLogicTests {
+
+    @Test func unreadCountExcludesReadReceipts() {
+        let messages = [
+            Message(id: "1", senderDeviceID: "bob", recipientDeviceID: "me", senderUserID: "u1", recipientUserID: "u2", text: "a", status: .received),
+            Message(id: "2", senderDeviceID: "bob", recipientDeviceID: "me", senderUserID: "u1", recipientUserID: "u2", text: "b", status: .received),
+            Message(id: "3", senderDeviceID: "me", recipientDeviceID: "bob", senderUserID: "u2", recipientUserID: "u1", text: "c", status: .sent),
+        ]
+        #expect(MessageReadLogic.unreadCount(from: "bob", currentDeviceID: "me", messages: messages, readReceipts: ["1"]) == 1)
+        #expect(MessageReadLogic.unreadCount(from: "bob", currentDeviceID: "me", messages: messages, readReceipts: ["1", "2"]) == 0)
+        #expect(MessageReadLogic.unreadCount(from: "carol", currentDeviceID: "me", messages: messages, readReceipts: []) == 0)
+    }
+}
+
+// MARK: - Distance format logic
+
+struct DistanceFormatLogicTests {
+
+    @Test func formatsSubKilometerWithoutLeadingZero() {
+        #expect(DistanceFormatLogic.format(meters: 50) == ".05km")
+        #expect(DistanceFormatLogic.format(meters: 230) == ".23km")
+    }
+
+    @Test func clampsVerySmallAndVeryLarge() {
+        #expect(DistanceFormatLogic.format(meters: 1) == ".01km")
+        #expect(DistanceFormatLogic.format(meters: 120_000) == "99km")
+    }
+
+    @Test func formatsWholeKilometers() {
+        #expect(DistanceFormatLogic.format(meters: 5_000) == "5km")
+        #expect(DistanceFormatLogic.format(meters: 25_000) == "25km")
+    }
+}
+
+// MARK: - Grid messaging logic
+
+struct GridMessagingLogicTests {
+
+    @Test func blockedUserCannotMessage() {
+        let result = GridMessagingLogic.canMessage(
+            isBlocked: true,
+            proximityAllowed: true,
+            proximityReason: "Ready to message"
+        )
+        #expect(result.allowed == false)
+        #expect(result.reason == "You have blocked this user")
+    }
+
+    @Test func proximityRulesApplyWhenNotBlocked() {
+        let denied = GridMessagingLogic.canMessage(isBlocked: false, proximityAllowed: false, proximityReason: "Too far")
+        #expect(denied == (false, "Too far"))
+
+        let allowed = GridMessagingLogic.canMessage(isBlocked: false, proximityAllowed: true, proximityReason: "Ready to message")
+        #expect(allowed == (true, "Ready to message"))
     }
 }
