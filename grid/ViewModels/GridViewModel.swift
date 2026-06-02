@@ -105,17 +105,20 @@ class GridViewModel: ObservableObject {
     private var messagingService: MessagingService
     private var locationService: LocationService // NEW: Location tracking
     private var proximityService: ProximityService // NEW: Proximity-based user filtering
+    private let relationshipService: RelationshipService // Star/block persistence
     private var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
 
     init(messagingService: MessagingService = MessagingService(),
          locationService: LocationService = LocationService(),
          proximityService: ProximityService = ProximityService(),
+         relationshipService: RelationshipService = RelationshipService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
         self.locationService = locationService
         self.proximityService = proximityService
+        self.relationshipService = relationshipService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -920,132 +923,17 @@ class GridViewModel: ObservableObject {
         }
     }
     
-    // NEW: Load star/block relationships from CloudKit (both outgoing and incoming blocks)
+    // Load star/block relationships from CloudKit (both outgoing and incoming blocks)
     private func loadStarBlockRelationships(forUserID userID: String, completion: @escaping () -> Void = {}) {
-        print("📥 ========== LOAD STAR/BLOCK RELATIONSHIPS ==========")
-        print("📥 Called for userID: \(userID)")
-        print("📥 blockedUsers BEFORE loading: \(blockedUsers)")
-        print("📥 blockedUsers.count BEFORE loading: \(blockedUsers.count)")
-        
-        let publicDB = CKContainer.default().publicCloudDatabase
-        
-        // Create a dispatch group to wait for both queries
-        let dispatchGroup = DispatchGroup()
-        
-        // Query 1: Get relationships I created (people I starred/blocked)
-        dispatchGroup.enter()
-        let myRelationshipsPredicate = NSPredicate(format: "userID == %@", userID)
-        let myRelationshipsQuery = CKQuery(recordType: "UserRelationships", predicate: myRelationshipsPredicate)
-        
-        print("📥 Starting CloudKit query for MY relationships...")
-        publicDB.perform(myRelationshipsQuery, inZoneWith: nil) { [weak self] records, error in
-            DispatchQueue.main.async {
-                print("📥 CloudKit query for MY relationships completed")
-                print("📥 Current thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
-                print("📥 Records count: \(records?.count ?? 0)")
-                print("📥 Error: \(error?.localizedDescription ?? "none")")
-                
-                guard let self = self else {
-                    print("📥 Self is nil in my relationships completion")
-                    dispatchGroup.leave()
-                    return
-                }
-                
-                if let error = error {
-                    print("📥 ❌ Error loading my star/block relationships: \(error.localizedDescription)")
-                } else if let records = records {
-                    print("📥 ⚠️ CLEARING existing blockedUsers and starredUsers sets")
-                    print("📥 starredUsers before clear: \(self.starredUsers)")
-                    print("📥 blockedUsers before clear: \(self.blockedUsers)")
-                    
-                    // Clear existing and load fresh from CloudKit
-                    self.starredUsers.removeAll()
-                    self.blockedUsers.removeAll()
-                    
-                    print("📥 After clearing - starredUsers: \(self.starredUsers)")
-                    print("📥 After clearing - blockedUsers: \(self.blockedUsers)")
-                    
-                    print("📥 Processing \(records.count) relationship records...")
-                    for (index, record) in records.enumerated() {
-                        if let relationship = UserRelationship(record: record) {
-                            print("📥 Record \(index): \(relationship.userID) -> \(relationship.targetUserID) (\(relationship.actionType.rawValue))")
-                            switch relationship.actionType {
-                            case .star:
-                                self.starredUsers.insert(relationship.targetUserID)
-                                print("📥 ⭐ Added \(relationship.targetUserID) to starredUsers")
-                            case .block:
-                                self.blockedUsers.insert(relationship.targetUserID)
-                                print("📥 🚫 Added \(relationship.targetUserID) to blockedUsers")
-                            case .report:
-                                print("📥 📝 Skipping report record")
-                                break
-                            }
-                        } else {
-                            print("📥 ❌ Failed to parse relationship from record \(index)")
-                        }
-                    }
-                    
-                    print("📥 ✅ Loaded \(self.starredUsers.count) starred users and \(self.blockedUsers.count) blocked users from CloudKit")
-                    print("📥 starredUsers: \(self.starredUsers)")
-                    print("📥 blockedUsers: \(self.blockedUsers)")
-                }
-                
-                dispatchGroup.leave()
-            }
-        }
-        
-        // Query 2: Get relationships where I'm the target (people who blocked me)
-        dispatchGroup.enter()
-        let blockingMePredicate = NSPredicate(format: "targetUserID == %@ AND actionType == %@", userID, "block")
-        let blockingMeQuery = CKQuery(recordType: "UserRelationships", predicate: blockingMePredicate)
-        
-        print("📥 Starting CloudKit query for users who BLOCKED ME...")
-        publicDB.perform(blockingMeQuery, inZoneWith: nil) { [weak self] records, error in
-            DispatchQueue.main.async {
-                print("📥 CloudKit query for users who blocked me completed")
-                print("📥 Records count: \(records?.count ?? 0)")
-                print("📥 Error: \(error?.localizedDescription ?? "none")")
-                
-                guard let self = self else {
-                    print("📥 Self is nil in blocked me completion")
-                    dispatchGroup.leave()
-                    return
-                }
-                
-                if let error = error {
-                    print("📥 ❌ Error loading users who blocked me: \(error.localizedDescription)")
-                } else if let records = records {
-                    print("📥 Clearing usersWhoBlockedMe before reload: \(self.usersWhoBlockedMe)")
-                    // Clear and reload
-                    self.usersWhoBlockedMe.removeAll()
-                    
-                    for (index, record) in records.enumerated() {
-                        if let relationship = UserRelationship(record: record) {
-                            self.usersWhoBlockedMe.insert(relationship.userID)
-                            print("📥 Record \(index): \(relationship.userID) blocked me")
-                        }
-                    }
-                    
-                    print("📥 ✅ Loaded \(self.usersWhoBlockedMe.count) users who have blocked me from CloudKit")
-                    print("📥 usersWhoBlockedMe: \(self.usersWhoBlockedMe)")
-                }
-                
-                dispatchGroup.leave()
-            }
-        }
-        
-        // Wait for both queries to complete
-        dispatchGroup.notify(queue: .main) {
-            print("📥 ========== ALL RELATIONSHIP QUERIES COMPLETED ==========")
-            print("📥 Final blockedUsers: \(self.blockedUsers)")
-            print("📥 Final usersWhoBlockedMe: \(self.usersWhoBlockedMe)")
-            print("📥 Refreshing grid to apply loaded filters")
-            
+        relationshipService.loadRelationships(forUserID: userID) { [weak self] data in
+            guard let self = self else { return }
+            self.starredUsers = data.starred
+            self.blockedUsers = data.blocked
+            self.usersWhoBlockedMe = data.blockedBy
+            print("GridViewModel: loaded \(self.starredUsers.count) starred, \(self.blockedUsers.count) blocked, \(self.usersWhoBlockedMe.count) blocked-by")
+
             // Refresh the grid to apply blocking filters
-            let profiles = self.proximityService.activeNearbyProfiles
-            self.updateGridWithAllProfiles(profiles)
-            
-            // Trigger UI update
+            self.updateGridWithAllProfiles(self.proximityService.activeNearbyProfiles)
             self.objectWillChange.send()
             completion()
         }
@@ -1107,13 +995,13 @@ class GridViewModel: ObservableObject {
         if starredUsers.contains(targetUserID) {
             // Unstar
             starredUsers.remove(targetUserID)
-            deleteStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .star) { success in
+            relationshipService.deleteRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .star) { success in
                 print("Star deletion \(success ? "successful" : "failed") for user: \(targetUserID)")
             }
         } else {
             // Star
             starredUsers.insert(targetUserID)
-            saveStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
+            relationshipService.saveRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
         }
         
         // Refresh the grid if we're in starred-only mode
@@ -1160,7 +1048,7 @@ class GridViewModel: ObservableObject {
             print("🔓 Calling deleteStarBlockRecord for CloudKit deletion...")
             
             // Wait for CloudKit deletion before refreshing
-            deleteStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .block) { [weak self] success in
+            relationshipService.deleteRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .block) { [weak self] success in
                 print("☁️ ========== CLOUDKIT DELETION COMPLETED ==========")
                 print("☁️ deletion success: \(success)")
                 print("☁️ Current thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
@@ -1196,7 +1084,7 @@ class GridViewModel: ObservableObject {
             print("🔒 blockedUsers.count AFTER addition: \(blockedUsers.count)")
             print("🔒 blockedUsers AFTER addition: \(blockedUsers)")
             
-            saveStarBlockRecord(userID: currentUserID, targetUserID: targetUserID, actionType: .block)
+            relationshipService.saveRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .block)
             print("🔒 Blocked user \(targetUserID). Hiding them from grid.")
             
             // For blocking: Just refresh with current cached list (immediate)
@@ -1207,53 +1095,6 @@ class GridViewModel: ObservableObject {
         print("🔄 Calling objectWillChange.send()")
         objectWillChange.send()
         print("🔄 ========== TOGGLE BLOCK END ==========")
-    }
-    
-    // Helper to save star/block record to CloudKit
-    private func saveStarBlockRecord(userID: String, targetUserID: String, actionType: UserRelationship.ActionType) {
-        let relationship = UserRelationship(userID: userID, targetUserID: targetUserID, actionType: actionType)
-        let record = relationship.toCKRecord()
-        
-        let publicDB = CKContainer.default().publicCloudDatabase
-        publicDB.save(record) { savedRecord, error in
-            if let error = error {
-                print("Error saving \(actionType.rawValue) relationship: \(error.localizedDescription)")
-            } else {
-                print("Successfully saved \(actionType.rawValue) relationship for user: \(targetUserID)")
-            }
-        }
-    }
-    
-    // Helper to delete star/block record from CloudKit
-    private func deleteStarBlockRecord(userID: String, targetUserID: String, actionType: UserRelationship.ActionType, completion: @escaping (Bool) -> Void = { _ in }) {
-        let recordName = "\(userID)_\(targetUserID)_\(actionType.rawValue)"
-        let recordID = CKRecord.ID(recordName: recordName)
-        
-        print("🗑️ ========== DELETING CLOUDKIT RECORD ==========")
-        print("🗑️ Record name: \(recordName)")
-        print("🗑️ userID: \(userID)")
-        print("🗑️ targetUserID: \(targetUserID)")
-        print("🗑️ actionType: \(actionType.rawValue)")
-        print("🗑️ Starting CloudKit deletion...")
-        
-        let publicDB = CKContainer.default().publicCloudDatabase
-        publicDB.delete(withRecordID: recordID) { deletedRecordID, error in
-            print("🗑️ CloudKit deletion callback triggered")
-            print("🗑️ Current thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
-            print("🗑️ deletedRecordID: \(deletedRecordID?.recordName ?? "nil")")
-            print("🗑️ error: \(error?.localizedDescription ?? "none")")
-            
-            DispatchQueue.main.async {
-                print("🗑️ Back on main thread for completion")
-                if let error = error {
-                    print("🗑️ ❌ Error deleting \(actionType.rawValue) relationship: \(error.localizedDescription)")
-                    completion(false)
-                } else {
-                    print("🗑️ ✅ Successfully deleted \(actionType.rawValue) relationship for user: \(targetUserID)")
-                    completion(true)
-                }
-            }
-        }
     }
     
     // Helper to get userID from deviceID
@@ -1329,7 +1170,7 @@ class GridViewModel: ObservableObject {
         
         // Delete the blocking record from CloudKit
         print("🔓 Calling deleteStarBlockRecord for CloudKit deletion...")
-        deleteStarBlockRecord(userID: currentUserID, targetUserID: userID, actionType: .block) { [weak self] success in
+        relationshipService.deleteRelationship(userID: currentUserID, targetUserID: userID, actionType: .block) { [weak self] success in
             print("🔓 ========== CLOUDKIT DELETION FOR UNBLOCK COMPLETED ==========")
             print("🔓 deletion success: \(success)")
             
