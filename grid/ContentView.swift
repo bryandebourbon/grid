@@ -205,10 +205,7 @@ struct ContentView: View {
                         // Critical error: Record exists but UserProfile.init(record:) failed.
                         // This should NOT loop back to CreateProfileView if the record is present but malformed or init logic is flawed.
                         print("ContentView: CRITICAL ERROR - Failed to initialize UserProfile from fetched CKRecord for deviceID: \(deviceID). The record data might be incompatible with UserProfile.init(record:). Check model and CloudKit schema.")
-                        // Display a persistent error to the user or sign out to prevent loop.
-                        // For now, signing out.
-                        self.signOut()
-                        // TODO: Consider showing a user-facing alert here.
+                        self.profileLoadFailed = true
                     }
                 } else {
                     // Should not happen: no error, but also no record.

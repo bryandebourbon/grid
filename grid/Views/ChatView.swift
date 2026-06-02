@@ -355,7 +355,6 @@ struct MessageRow: View {
                             Text("Failed")
                                 .font(.caption2)
                                 .foregroundColor(.red)
-                                // TODO: Add tap to retry action here later
                         case .sent, .received: // .received shouldn't happen for isCurrentDeviceSender true, but good to be exhaustive
                             EmptyView() // No indicator for sent or received (unless you want a checkmark for sent)
                         }
