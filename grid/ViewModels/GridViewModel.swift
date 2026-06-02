@@ -86,7 +86,6 @@ class GridViewModel: ObservableObject {
     
     // NEW: Album management properties
     @Published var userAlbums: [String: Album] = [:] // deviceID -> Album
-    private let publicDB = CKContainer.default().publicCloudDatabase
     
     // NEW: Encryption-only messaging properties
     @Published var showingAccountRecreationAlert = false
@@ -109,7 +108,9 @@ class GridViewModel: ObservableObject {
     private let encryptionProfileService: EncryptionProfileService // Public-key publishing
     private let accountDeletionService: AccountDeletionService // Account record teardown
     private let readReceiptService: ReadReceiptService // Read-receipt persistence
-    private let albumFetchService: AlbumFetchService
+    private let albumService: AlbumService
+    private let reportService: ReportService
+    private let gridPopulationService = GridPopulationService()
     private var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
 
@@ -120,7 +121,8 @@ class GridViewModel: ObservableObject {
          encryptionProfileService: EncryptionProfileService = EncryptionProfileService(),
          accountDeletionService: AccountDeletionService = AccountDeletionService(),
          readReceiptService: ReadReceiptService = ReadReceiptService(),
-         albumFetchService: AlbumFetchService = AlbumFetchService(),
+         albumService: AlbumService = AlbumService(),
+         reportService: ReportService = ReportService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
@@ -130,7 +132,8 @@ class GridViewModel: ObservableObject {
         self.encryptionProfileService = encryptionProfileService
         self.accountDeletionService = accountDeletionService
         self.readReceiptService = readReceiptService
-        self.albumFetchService = albumFetchService
+        self.albumService = albumService
+        self.reportService = reportService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -336,71 +339,26 @@ class GridViewModel: ObservableObject {
     
     // Show all users on grid (sorted by distance if location available)
     private func updateGridWithAllProfiles(_ profiles: [UserProfile]) {
-        // Clear the grid first
-        initializeGrid()
-        
-        guard let currentUserDeviceID = currentUserProfile?.deviceID else {
-            // If no current user, just place profiles normally
-            for profile in profiles {
-                placeProfileOnGrid(profile)
-            }
-            print("Updated grid with \(profiles.count) users")
-            objectWillChange.send()
-            return
-        }
-        
-        // Get profiles to display - either real users or demo users
-        var profilesToDisplay: [UserProfile] = []
-        
-        if demoService.isDemoMode {
-            // In demo mode, generate demo users instead of showing real users
-            if let currentLocation = locationService.currentLocation {
-                profilesToDisplay = demoService.generateDemoUsers(near: currentLocation, count: 24) // Fill most of the 5x5 grid
-                print("GridViewModel: Using \(profilesToDisplay.count) demo users for grid")
-            } else {
-                // If no location, create demo users around a default location (San Francisco)
-                let defaultLocation = CLLocation(latitude: 37.7749, longitude: -122.4194)
-                profilesToDisplay = demoService.generateDemoUsers(near: defaultLocation, count: 24)
-                print("GridViewModel: Using \(profilesToDisplay.count) demo users with default location")
-            }
-        } else {
-            profilesToDisplay = profiles
-        }
-        
-        let partitioned = GridProfileFilterLogic.partition(
-            profiles: profilesToDisplay,
-            currentUserDeviceID: currentUserDeviceID
+        let toDisplay = gridPopulationService.profilesToDisplay(
+            nearby: profiles,
+            currentUser: currentUserProfile,
+            demoService: demoService,
+            locationService: locationService
         )
-        var otherProfiles = GridProfileFilterLogic.applyDisplayFilters(
-            to: partitioned.others,
-            showingStarredOnly: showingStarredOnly,
-            starredUserIDs: starredUsers,
-            blockedUserIDs: blockedUsers,
-            usersWhoBlockedMe: usersWhoBlockedMe,
-            selectedInterestFilter: selectedInterestFilter,
-            isDemoMode: demoService.isDemoMode
+        gridPopulationService.layoutProfiles(
+            into: &gridNodes,
+            profiles: toDisplay,
+            currentUser: currentUserProfile,
+            display: GridDisplayState(
+                showingStarredOnly: showingStarredOnly,
+                starredUserIDs: starredUsers,
+                blockedUserIDs: blockedUsers,
+                usersWhoBlockedMe: usersWhoBlockedMe,
+                selectedInterestFilter: selectedInterestFilter,
+                isDemoMode: demoService.isDemoMode
+            ),
+            demoService: demoService
         )
-        
-        // Place current user first at position (0, 0)
-        if let currentProfile = self.currentUserProfile {
-            // Use demo version of current user if demo mode is enabled
-            let profileToPlace = demoService.isDemoMode ? 
-                (demoService.createDemoCurrentUser(from: currentProfile) ?? currentProfile) : 
-                currentProfile
-                
-            gridNodes[0][0].userProfile = profileToPlace
-            print("Placed current user '\(profileToPlace.displayName)' at top-left position (0,0) - Demo mode: \(demoService.isDemoMode)")
-        }
-        
-        // Place other profiles in remaining positions (sorted by distance if location available)
-        for profile in otherProfiles {
-            placeProfileOnGridSkippingPosition(profile, skipX: 0, skipY: 0)
-        }
-        
-        let filterStatus = showingStarredOnly ? " (starred only)" : ""
-        let blockingStatus = demoService.isDemoMode ? " (demo mode)" : " (filtered out \(blockedUsers.count) blocked + \(usersWhoBlockedMe.count) who blocked me)"
-        let modeLabel = demoService.isDemoMode ? "demo users" : "real users"
-        print("Updated grid with \(otherProfiles.count + 1) total \(modeLabel)\(filterStatus)\(blockingStatus) (current user at top-left)")
         objectWillChange.send()
     }
     
@@ -411,33 +369,11 @@ class GridViewModel: ObservableObject {
     }
     
     private func placeProfileOnGrid(_ profile: UserProfile) {
-        // Find the first available spot and place the profile
-        for i in 0..<gridSize {
-            for j in 0..<gridSize {
-                if gridNodes[i][j].userProfile == nil {
-                    gridNodes[i][j].userProfile = profile
-                    return
-                }
-            }
+        guard let slot = GridPlacementLogic.firstEmptySlot(in: gridNodes) else {
+            print("Grid is full! Cannot place device with ID \(profile.deviceID)")
+            return
         }
-        print("Grid is full! Cannot place device with ID \(profile.deviceID)")
-    }
-
-    private func placeProfileOnGridSkippingPosition(_ profile: UserProfile, skipX: Int, skipY: Int) {
-        // Find the first available spot, skipping the specified position
-        for i in 0..<gridSize {
-            for j in 0..<gridSize {
-                // Skip the specified position
-                if i == skipX && j == skipY {
-                    continue
-                }
-                if gridNodes[i][j].userProfile == nil {
-                    gridNodes[i][j].userProfile = profile
-                    return
-                }
-            }
-        }
-        print("Grid is full! Cannot place device with ID \(profile.deviceID)")
+        GridPlacementLogic.place(profile: profile, in: &gridNodes, at: slot.row, col: slot.col)
     }
 
     private func updateUserActivityAndLocation(_ profile: UserProfile) {
@@ -453,27 +389,8 @@ class GridViewModel: ObservableObject {
     
     private func placeCurrentUserOnGrid() {
         guard let profile = currentUserProfile else { return }
-        // Remove current device from any previous position
-        for i in 0..<gridSize {
-            for j in 0..<gridSize {
-                if gridNodes[i][j].userProfile?.deviceID == profile.deviceID {
-                    gridNodes[i][j].userProfile = nil
-                }
-            }
-        }
-        var placed = false
-        outerLoop: for i in 0..<gridSize {
-            for j in 0..<gridSize {
-                if gridNodes[i][j].userProfile == nil {
-                    gridNodes[i][j].userProfile = profile
-                    placed = true
-                    break outerLoop
-                }
-            }
-        }
-        if !placed {
-            print("Grid is full! Cannot place device with ID \(profile.deviceID)")
-        }
+        GridPlacementLogic.removeProfile(deviceID: profile.deviceID, from: &gridNodes)
+        placeProfileOnGrid(profile)
         objectWillChange.send()
     }
     
@@ -486,14 +403,7 @@ class GridViewModel: ObservableObject {
     }
 
     func initializeGrid() {
-        gridNodes = []
-        for i in 0..<gridSize {
-            var row: [GridNode] = []
-            for j in 0..<gridSize {
-                row.append(GridNode(id: UUID(), x: i, y: j, userProfile: nil))
-            }
-            gridNodes.append(row)
-        }
+        gridNodes = GridPlacementLogic.makeEmptyGrid(size: gridSize)
     }
 
     func setCurrentUserProfile(_ profile: UserProfile) {
@@ -1165,118 +1075,29 @@ class GridViewModel: ObservableObject {
 
     // Simplified sendMessage - can message anyone you can see
     func sendMessage(text: String, to recipientDeviceID: String) {
-        guard let senderProfile = currentUserProfile else {
-            print("Error: Current user profile not available to send message.")
-            return
-        }
-        
-        let recipientProfile: UserProfile
-        if recipientDeviceID == senderProfile.deviceID {
-            recipientProfile = senderProfile
-        } else {
-            // Prefer the currently visible grid profile for now. A dedicated
-            // user cache would make this more robust when profile cards are
-            // opened from notifications or stale navigation state.
-            guard let foundProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
-                print("Error: Could not find recipient profile for device \(recipientDeviceID)")
-                return
-            }
-            recipientProfile = foundProfile
-        }
-        
-        // 1. Create optimistic message
-        // The temporaryID will be used to find and update this message upon server response.
-        let temporaryID = UUID().uuidString
-        var optimisticMessage = Message(
-            id: temporaryID, // Use temporary client-generated ID
-            senderDeviceID: senderProfile.deviceID,
-            recipientDeviceID: recipientDeviceID,
-            senderUserID: senderProfile.userID,
-            recipientUserID: recipientProfile.userID, // Make sure recipientProfile.userID is valid
-            text: text,
-            timestamp: Date(), // Client-side timestamp for now
-            status: .sending  // Initial status
-        )
-        
-        // Handle encryption - try to encrypt if profiles are available
-        var canEncrypt = false
-        
-        // For self-messages, use our own public key
-        let targetEncryptionProfile: EncryptionProfile?
-        if recipientDeviceID == senderProfile.deviceID {
-            // Self-message: use our own encryption profile
-            targetEncryptionProfile = encryptionProfiles[senderProfile.deviceID]
-        } else {
-            // Other user: use their encryption profile
-            targetEncryptionProfile = encryptionProfiles[recipientDeviceID]
-        }
-        
-        if let encryptionProfile = targetEncryptionProfile,
-           let encryptedData = CryptoService.shared.encrypt(text: text, withPublicKey: encryptionProfile.publicKey) {
-            // Encryption successful
-            optimisticMessage.isEncrypted = true
-            optimisticMessage.encryptedContent = encryptedData.base64EncodedString()  // Convert to base64 string
-            optimisticMessage.encryptionKeyID = encryptionProfile.id
-            optimisticMessage.text = "[Encrypted Message]" // Placeholder for CloudKit
-            canEncrypt = true
-            print("GridViewModel: Message encrypted for device: \(recipientDeviceID)")
-        } else {
-            // Encryption failed or no profile available - fall back to unencrypted
-            optimisticMessage.isEncrypted = false
-            print("GridViewModel: Warning - No encryption profile available for device: \(recipientDeviceID), sending unencrypted message")
-            print("Available encryption profiles: \(encryptionProfiles.keys)")
-            
-            if recipientDeviceID != senderProfile.deviceID {
-                print("GridViewModel: Recipient may need to recreate their account to enable encryption")
-            }
-        }
-        
-        // 2. Add to local messages array immediately
-        // This should trigger UI update due to @Published
-        self.messages.append(optimisticMessage)
-        self.messages.sort(by: { $0.timestamp < $1.timestamp }) // Keep sorted
-        print("GridViewModel: Optimistically added message (TempID: \(temporaryID)): \(text)")
+        guard let senderProfile = currentUserProfile else { return }
+        guard let recipientProfile = recipientProfile(for: recipientDeviceID, sender: senderProfile) else { return }
 
-        // 3. Send to messaging service
-        // Note: The `message` object sent to `messagingService.sendMessage` might need to be the one
-        // created *without* the temporaryID if the service expects to generate the ID or use CKRecord.ID.
-        // For now, assuming messagingService.sendMessage can handle a Message object that might have a client ID.
-        // Let's re-create it for sending, or ensure `toCKRecord()` uses `id` for `recordName`.
-        // The current `Message.toCKRecord()` uses `self.id` for the recordName, so `optimisticMessage` is fine.
-        
+        let optimisticMessage = EncryptedMessageBuilder.buildTextMessage(
+            text: text,
+            sender: senderProfile,
+            recipientDeviceID: recipientDeviceID,
+            recipient: recipientProfile,
+            encryptionProfiles: encryptionProfiles
+        )
+        let temporaryID = optimisticMessage.id
+        messages.append(optimisticMessage)
+        messages.sort { $0.timestamp < $1.timestamp }
+
         messagingService.sendMessage(optimisticMessage) { [weak self] result in
-            guard let self = self else { return }
-            
-            // Find the optimistic message in our array using its temporaryID
-            guard let optimisticMessageIndex = self.messages.firstIndex(where: { $0.id == temporaryID && $0.status == .sending }) else {
-                print("GridViewModel: Could not find optimistic message (TempID: \(temporaryID)) to update after send attempt. It might have been already updated or removed.")
-                // If the message from subscription arrived faster and replaced it, that's okay.
-                // Or if `savedMessage.id` from success case matches the `temporaryID` initially, that's also okay.
-                // Let's check if a message with the *potential* final ID (if known from savedMessage) exists.
-                if case .success(let savedMessage) = result, self.messages.contains(where: { $0.id == savedMessage.id }) {
-                    print("GridViewModel: Message (ID: \(savedMessage.id)) seems to be already updated by subscription or direct ID match.")
-                }
-                return
-            }
-            
-            switch result {
-            case .success(let savedMessage):
-                // Update the optimistic message with server-confirmed data
-                self.messages[optimisticMessageIndex].id = savedMessage.id // This is CKRecord.ID.recordName
-                self.messages[optimisticMessageIndex].recordID = savedMessage.recordID
-                self.messages[optimisticMessageIndex].timestamp = savedMessage.timestamp // Server authoritative timestamp
-                self.messages[optimisticMessageIndex].status = .sent
-                print("GridViewModel: Optimistic message (TempID: \(temporaryID)) confirmed by server. New ID: \(savedMessage.id), Status: .sent")
-                
-            case .failure(let error):
-                self.messages[optimisticMessageIndex].status = .failed
-                print("GridViewModel: Optimistic message (TempID: \(temporaryID)) failed to send: \(error.localizedDescription). Status: .failed")
-            }
-            
-            // Re-sort after update
-            self.messages.sort(by: { $0.timestamp < $1.timestamp })
-            // self.objectWillChange.send() // If needed
+            guard let self else { return }
+            OptimisticMessageSync.applySendResult(messages: &self.messages, temporaryID: temporaryID, result: result)
         }
+    }
+
+    private func recipientProfile(for recipientDeviceID: String, sender: UserProfile) -> UserProfile? {
+        if recipientDeviceID == sender.deviceID { return sender }
+        return findNode(forDeviceID: recipientDeviceID)?.userProfile
     }
 
     // NEW: Auto-refresh when location is obtained or app state changes
@@ -1312,182 +1133,27 @@ class GridViewModel: ObservableObject {
     }
 
     func sendImageMessage(imageData: Data, to recipientDeviceID: String) {
-        guard let senderProfile = currentUserProfile else {
-            print("Error: Current user profile not available to send image message.")
-            return
-        }
+        guard let senderProfile = currentUserProfile else { return }
+        guard let recipientProfile = recipientProfile(for: recipientDeviceID, sender: senderProfile) else { return }
 
-        let recipientProfile: UserProfile
-        if recipientDeviceID == senderProfile.deviceID {
-            recipientProfile = senderProfile
-        } else {
-            guard let foundProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
-                print("Error: Could not find recipient profile for device \(recipientDeviceID) to send image.")
-                return
-            }
-            recipientProfile = foundProfile
-        }
-
-        // 1. Compress image data for encryption to prevent CloudKit size limits
-        var processedImageData = imageData
-        let maxSizeForEncryption = 400 * 1024 // 400KB limit to leave room for encryption overhead
-        
-        #if canImport(UIKit)
-        if imageData.count > maxSizeForEncryption {
-            print("GridViewModel: Image is \(imageData.count) bytes, compressing for encryption...")
-            if let uiImage = UIImage(data: imageData) {
-                var compressionQuality: CGFloat = 0.8
-                while compressionQuality > 0.1 {
-                    if let compressedData = uiImage.jpegData(compressionQuality: compressionQuality) {
-                        if compressedData.count <= maxSizeForEncryption {
-                            processedImageData = compressedData
-                            print("GridViewModel: Compressed image from \(imageData.count) to \(compressedData.count) bytes (quality: \(compressionQuality))")
-                            break
-                        }
-                    }
-                    compressionQuality -= 0.1
-                }
-                
-                if processedImageData.count > maxSizeForEncryption {
-                    print("GridViewModel: Could not compress image enough for encryption, will fall back to unencrypted")
-                }
-            }
-        }
-        #endif
-
-        // 2. Create optimistic message first (we'll set the asset after determining encryption)
-        let temporaryID = UUID().uuidString
-        var optimisticMessage = Message(
-            id: temporaryID,
-            senderDeviceID: senderProfile.deviceID,
+        let built = EncryptedMessageBuilder.buildImageMessage(
+            imageData: imageData,
+            sender: senderProfile,
             recipientDeviceID: recipientDeviceID,
-            senderUserID: senderProfile.userID,
-            recipientUserID: recipientProfile.userID,
-            text: "", // Empty text for image messages
-            timestamp: Date(),
-            status: .sending
+            recipient: recipientProfile,
+            encryptionProfiles: encryptionProfiles
         )
+        let temporaryID = built.message.id
+        messages.append(built.message)
+        messages.sort { $0.timestamp < $1.timestamp }
 
-        // 2. Handle encryption for image data
-        var imageAsset: CKAsset? = nil
-        var canEncrypt = false
-        
-        // Determine encryption profile to use
-        let targetEncryptionProfile: EncryptionProfile?
-        if recipientDeviceID == senderProfile.deviceID {
-            // Self-message: use our own encryption profile
-            targetEncryptionProfile = encryptionProfiles[senderProfile.deviceID]
-        } else {
-            // Other user: use their encryption profile
-            targetEncryptionProfile = encryptionProfiles[recipientDeviceID]
-        }
-        
-        if let encryptionProfile = targetEncryptionProfile,
-           let encryptedImageData = CryptoService.shared.encryptImage(data: processedImageData, withPublicKey: encryptionProfile.publicKey) {
-            
-            // Check if encrypted + base64 encoded size is reasonable for CloudKit
-            let base64EncodedString = encryptedImageData.base64EncodedString()
-            let maxCloudKitSize = 800 * 1024 // 800KB limit for safety (CloudKit limit is ~1MB)
-            
-            if base64EncodedString.count <= maxCloudKitSize {
-                // Encryption successful and size is acceptable
-                optimisticMessage.isEncrypted = true
-                optimisticMessage.encryptedImageData = base64EncodedString
-                optimisticMessage.encryptionKeyID = encryptionProfile.id
-                optimisticMessage.text = "[Encrypted Image]" // Placeholder for CloudKit
-                canEncrypt = true
-                print("GridViewModel: Image encrypted for device: \(recipientDeviceID) (final size: \(base64EncodedString.count) bytes)")
-                
-                // For encrypted images, we don't create a CKAsset - the encrypted data is stored as a string
-                imageAsset = nil
-            } else {
-                print("GridViewModel: Encrypted image still too large for CloudKit (\(base64EncodedString.count) bytes), falling back to unencrypted")
-                canEncrypt = false
-            }
-        } else {
-            if processedImageData.count > maxSizeForEncryption {
-                print("GridViewModel: Image too large for encryption even after compression, falling back to unencrypted")
-            } else if targetEncryptionProfile == nil {
-                print("GridViewModel: Warning - No encryption profile available for device: \(recipientDeviceID), sending unencrypted image")
-                print("Available encryption profiles: \(encryptionProfiles.keys)")
-            } else {
-                print("GridViewModel: Image encryption failed for device: \(recipientDeviceID), falling back to unencrypted")
-            }
-            canEncrypt = false
-        }
-        
-        if !canEncrypt {
-            // Encryption failed or not possible - fall back to unencrypted CKAsset
-            optimisticMessage.isEncrypted = false
-            
-            if recipientDeviceID != senderProfile.deviceID {
-                print("GridViewModel: Recipient may need to recreate their account to enable image encryption")
-            }
-            
-            // Create CKAsset from unencrypted imageData
-            let tempDir = FileManager.default.temporaryDirectory
-            let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-            do {
-                try imageData.write(to: tempFileURL)
-                imageAsset = CKAsset(fileURL: tempFileURL)
-            } catch {
-                print("Error creating CKAsset for unencrypted image message: \(error.localizedDescription)")
+        messagingService.sendMessage(built.message) { [weak self] result in
+            guard let self else {
+                if let url = built.cleanupURL { try? FileManager.default.removeItem(at: url) }
                 return
             }
-        }
-        
-        // Set the image asset (nil for encrypted, CKAsset for unencrypted)
-        optimisticMessage.imageAsset = imageAsset
-
-        // 3. Add to local messages array immediately
-        self.messages.append(optimisticMessage)
-        self.messages.sort(by: { $0.timestamp < $1.timestamp })
-        print("GridViewModel: Optimistically added \(canEncrypt ? "encrypted" : "unencrypted") image message (TempID: \(temporaryID))")
-
-        // 4. Send to messaging service
-        messagingService.sendMessage(optimisticMessage) { [weak self] result in
-            guard let self = self else {
-                // Clean up temp file if it exists for unencrypted images
-                if let asset = imageAsset, let url = asset.fileURL {
-                    try? FileManager.default.removeItem(at: url)
-                }
-                return
-            }
-
-            guard let optimisticMessageIndex = self.messages.firstIndex(where: { $0.id == temporaryID && $0.status == .sending }) else {
-                print("GridViewModel: Could not find optimistic image message (TempID: \(temporaryID)) to update after send attempt.")
-                // Clean up temp file if it exists
-                if let asset = imageAsset, let url = asset.fileURL {
-                    try? FileManager.default.removeItem(at: url)
-                }
-                return
-            }
-            
-            switch result {
-            case .success(let savedMessage):
-                // Server confirmed, update local message
-                self.messages[optimisticMessageIndex].id = savedMessage.id
-                self.messages[optimisticMessageIndex].recordID = savedMessage.recordID
-                self.messages[optimisticMessageIndex].timestamp = savedMessage.timestamp
-                self.messages[optimisticMessageIndex].status = .sent
-                self.messages[optimisticMessageIndex].imageAsset = savedMessage.imageAsset // Update with server asset
-                print("GridViewModel: Optimistic image message (TempID: \(temporaryID)) confirmed. New ID: \(savedMessage.id)")
-                
-                // Clean up temp file for unencrypted images
-                if let asset = imageAsset, let url = asset.fileURL {
-                    try? FileManager.default.removeItem(at: url)
-                }
-                
-            case .failure(let error):
-                self.messages[optimisticMessageIndex].status = .failed
-                print("GridViewModel: Optimistic image message (TempID: \(temporaryID)) failed to send: \(error.localizedDescription)")
-                
-                // Clean up temp file for unencrypted images
-                if let asset = imageAsset, let url = asset.fileURL {
-                    try? FileManager.default.removeItem(at: url)
-                }
-            }
-            self.messages.sort(by: { $0.timestamp < $1.timestamp })
+            OptimisticMessageSync.applySendResult(messages: &self.messages, temporaryID: temporaryID, result: result)
+            if let url = built.cleanupURL { try? FileManager.default.removeItem(at: url) }
         }
     }
 
@@ -1708,23 +1374,14 @@ class GridViewModel: ObservableObject {
             reportDescription: description
         )
         
-        let record = report.toCKRecord()
-        let publicDB = CKContainer.default().publicCloudDatabase
-        
-        publicDB.save(record) { savedRecord, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    print("Error submitting report: \(error.localizedDescription)")
-                    completion?(.failure(error))
-                } else {
-                    print("Successfully submitted report for user: \(reportedUserID)")
-                    
-                    // Optionally auto-block the reported user
-                    if !self.isBlocked(deviceID) {
-                        self.toggleBlock(for: deviceID)
-                    }
-                    completion?(.success(()))
-                }
+        reportService.submit(report) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                if !self.isBlocked(deviceID) { self.toggleBlock(for: deviceID) }
+                completion?(.success(()))
+            case .failure(let error):
+                completion?(.failure(error))
             }
         }
     }
@@ -2114,233 +1771,64 @@ class GridViewModel: ObservableObject {
     }
     
     // MARK: - Album Management
-    
-    /// Create an album for the current user if they don't have one
+
     func createAlbumIfNeeded() async -> AlbumResult {
         guard let currentProfile = currentUserProfile else {
-            print("GridViewModel: ❌ No current user profile available for album creation")
-            return AlbumResult.failure("No current user profile")
+            return .failure("No current user profile")
         }
-        
-        // Check if user already has an album
-        if let existingAlbum = userAlbums[currentProfile.deviceID] {
-            print("GridViewModel: ✅ User already has an album: \(existingAlbum.id)")
-            return AlbumResult.success(existingAlbum)
+        if let existing = userAlbums[currentProfile.deviceID] {
+            return .success(existing)
         }
-        
-        // Create new album
-        let album = Album(ownerUserID: currentProfile.userID, ownerDeviceID: currentProfile.deviceID)
-        
-        print("GridViewModel: 📝 Creating new album: \(album.id) for user: \(currentProfile.deviceID)")
-        
-        do {
-            let record = album.toCKRecord()
-            let savedRecord = try await publicDB.save(record)
-            
-            if let savedAlbum = Album(record: savedRecord) {
-                print("GridViewModel: ✅ Album created successfully: \(savedAlbum.id)")
-                
-                // Update local cache
-                userAlbums[currentProfile.deviceID] = savedAlbum
-                
-                return AlbumResult.success(savedAlbum)
-            } else {
-                print("GridViewModel: ❌ Failed to create Album from saved record")
-                return AlbumResult.failure("Failed to create album from saved record")
-            }
-        } catch {
-            print("GridViewModel: ❌ Error creating album: \(error.localizedDescription)")
-            return AlbumResult.failure(error.localizedDescription)
+        let result = await albumService.createAlbum(for: currentProfile)
+        if result.success, let album = result.album {
+            userAlbums[currentProfile.deviceID] = album
         }
+        return result
     }
-    
-    /// Pin a story to the current user's album
+
     func pinStoryToAlbum(_ story: Story) async -> PinResult {
         guard let currentProfile = currentUserProfile else {
-            print("GridViewModel: ❌ No current user profile for pinning story")
-            return PinResult.failure("No current user profile")
+            return .failure("No current user profile")
         }
-        
-        // Only allow pinning own stories in Phase 1
         guard story.deviceID == currentProfile.deviceID else {
-            print("GridViewModel: ❌ Cannot pin other users' stories in Phase 1")
-            return PinResult.failure("Cannot pin other users' stories")
+            return .failure("Cannot pin other users' stories")
         }
-        
-        print("GridViewModel: 📌 Attempting to pin story \(story.id) to album")
-        
-        // Ensure user has an album
         let albumResult = await createAlbumIfNeeded()
         guard albumResult.success, var album = albumResult.album else {
-            print("GridViewModel: ❌ Failed to get or create album: \(albumResult.error ?? "Unknown error")")
-            return PinResult.failure("Failed to get or create album")
+            return .failure(albumResult.error ?? "Failed to get or create album")
         }
-        
-        // Check if album is full
-        if !album.hasSpace {
-            print("GridViewModel: ❌ Album is full (\(Album.maxPhotos) photos maximum)")
-            return PinResult.albumFull()
+        let pinResult = albumService.pinStory(story, to: &album)
+        guard pinResult.success else { return pinResult }
+        let saveResult = await albumService.saveAlbum(album)
+        if saveResult.success, let saved = saveResult.album {
+            userAlbums[currentProfile.deviceID] = saved
+            return .success()
         }
-        
-        // Check if story is already pinned
-        if album.isPhotoPinned(storyID: story.id) {
-            print("GridViewModel: ⚠️ Story \(story.id) is already pinned")
-            return PinResult.alreadyPinned()
-        }
-        
-        // Create metadata for the pinned photo
-        let metadata = PhotoMetadata(
-            storyID: story.id,
-            originalStoryDate: story.timestamp,
-            caption: story.caption
-        )
-        
-        // Add photo to album
-        guard let imageAsset = story.imageAsset else {
-            print("GridViewModel: ❌ Story has no image asset to pin")
-            return PinResult.failure("Story has no image asset")
-        }
-        
-        let added = album.addPhoto(asset: imageAsset, metadata: metadata)
-        guard added else {
-            print("GridViewModel: ❌ Failed to add photo to album")
-            return PinResult.failure("Failed to add photo to album")
-        }
-        
-        // Save updated album to CloudKit
-        do {
-            let record = album.toCKRecord()
-            
-            // Use modifyRecords for explicit update operation
-            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-            operation.savePolicy = .changedKeys
-            operation.qualityOfService = .userInitiated
-            
-            var savedRecord: CKRecord?
-            
-            return try await withCheckedThrowingContinuation { continuation in
-                operation.perRecordSaveBlock = { (recordID: CKRecord.ID, result: Result<CKRecord, Error>) in
-                    switch result {
-                    case .success(let record):
-                        savedRecord = record
-                    case .failure(let error):
-                        print("GridViewModel: ❌ Error saving individual record: \(error.localizedDescription)")
-                    }
-                }
-                
-                operation.modifyRecordsCompletionBlock = { (savedRecords: [CKRecord]?, deletedRecordIDs: [CKRecord.ID]?, error: Error?) in
-                    if let error = error {
-                        print("GridViewModel: ❌ Error saving album after pinning: \(error.localizedDescription)")
-                        continuation.resume(returning: PinResult.failure(error.localizedDescription))
-                    } else if let record = savedRecord,
-                              let savedAlbum = Album(record: record) {
-                        print("GridViewModel: ✅ Successfully pinned story to album")
-                        
-                        // Update local cache and user profile
-                        DispatchQueue.main.async {
-                            self.userAlbums[currentProfile.deviceID] = savedAlbum
-                        }
-                        
-                        continuation.resume(returning: PinResult.success())
-                    } else {
-                        print("GridViewModel: ❌ Failed to create Album from saved record after pinning")
-                        continuation.resume(returning: PinResult.failure("Failed to save album changes"))
-                    }
-                }
-                
-                publicDB.add(operation)
-            }
-        } catch {
-            print("GridViewModel: ❌ Error saving album after pinning: \(error.localizedDescription)")
-            return PinResult.failure(error.localizedDescription)
-        }
+        return .failure(saveResult.error ?? "Failed to save album")
     }
-    
-    /// Unpin a story from the current user's album
+
     func unpinStoryFromAlbum(_ story: Story) async -> PinResult {
         guard let currentProfile = currentUserProfile else {
-            print("GridViewModel: ❌ No current user profile for unpinning story")
-            return PinResult.failure("No current user profile")
+            return .failure("No current user profile")
         }
-        
         guard var album = userAlbums[currentProfile.deviceID] else {
-            print("GridViewModel: ❌ No album found for current user")
-            return PinResult.failure("No album found")
+            return .failure("No album found")
         }
-        
-        print("GridViewModel: 📌 Attempting to unpin story \(story.id) from album")
-        
-        // Remove photo from album
-        let removed = album.removePhoto(storyID: story.id)
-        guard removed else {
-            print("GridViewModel: ⚠️ Story \(story.id) was not pinned in album")
-            return PinResult.failure("Story not found in album")
+        let unpinResult = albumService.unpinStory(story, from: &album)
+        guard unpinResult.success else { return unpinResult }
+        let saveResult = await albumService.saveAlbum(album)
+        if saveResult.success, let saved = saveResult.album {
+            userAlbums[currentProfile.deviceID] = saved
+            return .success()
         }
-        
-        // Save updated album to CloudKit
-        do {
-            let record = album.toCKRecord()
-            
-            // Use modifyRecords for explicit update operation
-            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-            operation.savePolicy = .changedKeys
-            operation.qualityOfService = .userInitiated
-            
-            var savedRecord: CKRecord?
-            
-            return try await withCheckedThrowingContinuation { continuation in
-                operation.perRecordSaveBlock = { (recordID: CKRecord.ID, result: Result<CKRecord, Error>) in
-                    switch result {
-                    case .success(let record):
-                        savedRecord = record
-                    case .failure(let error):
-                        print("GridViewModel: ❌ Error saving individual record: \(error.localizedDescription)")
-                    }
-                }
-                
-                operation.modifyRecordsCompletionBlock = { (savedRecords: [CKRecord]?, deletedRecordIDs: [CKRecord.ID]?, error: Error?) in
-                    if let error = error {
-                        print("GridViewModel: ❌ Error saving album after unpinning: \(error.localizedDescription)")
-                        continuation.resume(returning: PinResult.failure(error.localizedDescription))
-                    } else if let record = savedRecord,
-                              let savedAlbum = Album(record: record) {
-                        print("GridViewModel: ✅ Successfully unpinned story from album")
-                        
-                        // Update local cache and user profile
-                        DispatchQueue.main.async {
-                            self.userAlbums[currentProfile.deviceID] = savedAlbum
-                        }
-                        
-                        continuation.resume(returning: PinResult.success())
-                    } else {
-                        print("GridViewModel: ❌ Failed to create Album from saved record after unpinning")
-                        continuation.resume(returning: PinResult.failure("Failed to save album changes"))
-                    }
-                }
-                
-                publicDB.add(operation)
-            }
-        } catch {
-            print("GridViewModel: ❌ Error saving album after unpinning: \(error.localizedDescription)")
-            return PinResult.failure(error.localizedDescription)
-        }
+        return .failure(saveResult.error ?? "Failed to save album")
     }
-    
-    /// Get album for a specific user
+
     func getAlbum(for deviceID: String) async -> Album? {
-        // Check local cache first
-        if let cachedAlbum = userAlbums[deviceID] {
-            print("GridViewModel: ✅ Found album in cache for \(deviceID)")
-            return cachedAlbum
-        }
-        
-        if let album = await albumFetchService.fetchAlbum(ownerDeviceID: deviceID) {
-            print("GridViewModel: ✅ Found album in CloudKit for \(deviceID)")
-            userAlbums[deviceID] = album
-            return album
-        }
-        print("GridViewModel: ❌ No album found for \(deviceID)")
-        return nil
+        if let cached = userAlbums[deviceID] { return cached }
+        guard let album = await albumService.fetchAlbum(ownerDeviceID: deviceID) else { return nil }
+        userAlbums[deviceID] = album
+        return album
     }
     
     /// Check if a story is pinned in current user's album
