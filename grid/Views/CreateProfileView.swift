@@ -347,7 +347,6 @@ struct CreateProfileView: View {
                 deviceID: deviceID,
                 deviceName: deviceName,
                 profileImage: profileImageAsset,
-                additionalPhotos: nil, // No additional photos - single photo only
                 bio: nil,
                 interests: Array(selectedInterests)
             )

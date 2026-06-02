@@ -290,25 +290,6 @@ struct BioStoriesOverlayView: View {
                     .background(Color.blue)
                     .cornerRadius(12)
                 }
-                
-                // Pay button (placeholder for future functionality)
-                Button(action: {
-                    // TODO: Implement pay functionality
-                    print("Pay button tapped - functionality to be implemented")
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "dollarsign.circle.fill")
-                            .font(.title3)
-                        Text("Pay")
-                            .font(.body)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.green)
-                    .cornerRadius(12)
-                }
             }
             .padding()
             .background(Color(.systemBackground))
