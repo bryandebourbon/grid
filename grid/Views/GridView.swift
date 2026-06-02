@@ -100,7 +100,7 @@ struct GridView: View {
             print("GridView: 👤 Current user tapped their own story")
             
             // Check if current user has active stories
-            let hasStories = viewModel.hasActiveStories()
+            let hasStories = viewModel.storiesService.hasActiveStories(for: profile.deviceID)
             print("GridView: 📊 Current user has active stories: \(hasStories)")
             
             if !hasStories {
@@ -217,7 +217,7 @@ struct GridView: View {
         .animation(.easeInOut(duration: 0.3), value: showingBioStoriesOverlay)
     }
     
-    private var mainGridView: some View {
+    var mainGridView: some View {
         NavigationView {
             VStack(spacing: 0) {
                 // Filter indicators
@@ -684,7 +684,7 @@ struct GridView: View {
     }
     
     @MainActor
-    private func refreshGrid() async {
+    func refreshGrid() async {
         print("GridView: Refreshing grid via pull-to-refresh")
         
         // Call the viewModel's refresh method
@@ -700,7 +700,7 @@ struct GridView: View {
 
     // Grid background view (colour or photo)
     @ViewBuilder
-    private var gridBackgroundView: some View {
+    var gridBackgroundView: some View {
         if let img = backgroundImage {
             GeometryReader { geometry in
                 img
