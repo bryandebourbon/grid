@@ -8,6 +8,7 @@
 import Testing
 import Foundation
 import CryptoKit
+import CloudKit
 @testable import grid
 
 /// Exercises the keychain-free ECIES envelope primitives directly, using
@@ -126,5 +127,87 @@ struct ContentModerationTests {
         let service = ContentModerationService()
         let longBio = String(repeating: "a", count: 600)
         #expect(service.isBioAppropriate(longBio).isAppropriate == false)
+    }
+}
+
+/// Exercises the pure `Album` model logic (pin cap, dedupe, removal, and
+/// CKRecord round-tripping) without touching CloudKit.
+struct AlbumTests {
+
+    /// A throwaway local CKAsset backed by a temp file (no network needed).
+    private func makeAsset() throws -> CKAsset {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data([0x01, 0x02, 0x03]).write(to: url)
+        return CKAsset(fileURL: url)
+    }
+
+    private func makeMetadata(storyID: String) -> PhotoMetadata {
+        PhotoMetadata(storyID: storyID, originalStoryDate: Date(), caption: nil)
+    }
+
+    @Test func newAlbumIsEmptyWithSpace() {
+        let album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
+        #expect(album.photosCount == 0)
+        #expect(album.hasSpace)
+    }
+
+    @Test func addPhotoPinsStory() throws {
+        var album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
+        let added = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s1"))
+        #expect(added)
+        #expect(album.photosCount == 1)
+        #expect(album.isPhotoPinned(storyID: "s1"))
+    }
+
+    @Test func cannotPinSameStoryTwice() throws {
+        var album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
+        _ = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s1"))
+        let again = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s1"))
+        #expect(again == false)
+        #expect(album.photosCount == 1)
+    }
+
+    @Test func enforcesMaxOfThree() throws {
+        #expect(Album.maxPhotos == 3)
+        var album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
+        for i in 0..<Album.maxPhotos {
+            #expect(album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s\(i)")))
+        }
+        #expect(album.photosCount == 3)
+        #expect(album.hasSpace == false)
+
+        // A fourth pin must be rejected and leave the album unchanged.
+        let overflow = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "extra"))
+        #expect(overflow == false)
+        #expect(album.photosCount == 3)
+    }
+
+    @Test func removePhotoKeepsAssetsAndMetadataInSync() throws {
+        var album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
+        _ = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s1"))
+        _ = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s2"))
+
+        let removed = album.removePhoto(storyID: "s1")
+        #expect(removed)
+        #expect(album.photosCount == 1)
+        #expect(album.pinnedPhotos.count == album.photoMetadata.count)
+        #expect(album.isPhotoPinned(storyID: "s1") == false)
+        #expect(album.isPhotoPinned(storyID: "s2"))
+    }
+
+    @Test func removingMissingStoryReturnsFalse() {
+        var album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
+        #expect(album.removePhoto(storyID: "nope") == false)
+    }
+
+    @Test func recordRoundTripPreservesMetadata() throws {
+        var album = Album(ownerUserID: "u1", ownerDeviceID: "d1", title: "My Album")
+        _ = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s1"))
+
+        let restored = try #require(Album(record: album.toCKRecord()))
+        #expect(restored.ownerDeviceID == "d1")
+        #expect(restored.title == "My Album")
+        #expect(restored.photoMetadata.count == 1)
+        #expect(restored.photoMetadata.first?.storyID == "s1")
     }
 }
