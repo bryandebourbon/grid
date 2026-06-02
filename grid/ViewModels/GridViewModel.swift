@@ -108,6 +108,7 @@ class GridViewModel: ObservableObject {
     private let relationshipService: RelationshipService // Star/block persistence
     private let encryptionProfileService: EncryptionProfileService // Public-key publishing
     private let accountDeletionService: AccountDeletionService // Account record teardown
+    private let readReceiptService: ReadReceiptService // Read-receipt persistence
     private var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
 
@@ -117,6 +118,7 @@ class GridViewModel: ObservableObject {
          relationshipService: RelationshipService = RelationshipService(),
          encryptionProfileService: EncryptionProfileService = EncryptionProfileService(),
          accountDeletionService: AccountDeletionService = AccountDeletionService(),
+         readReceiptService: ReadReceiptService = ReadReceiptService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
@@ -125,6 +127,7 @@ class GridViewModel: ObservableObject {
         self.relationshipService = relationshipService
         self.encryptionProfileService = encryptionProfileService
         self.accountDeletionService = accountDeletionService
+        self.readReceiptService = readReceiptService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -890,7 +893,6 @@ class GridViewModel: ObservableObject {
     func markMessagesAsRead(from deviceID: String) {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return }
         
-        let publicDB = CKContainer.default().publicCloudDatabase
         var newReadReceipts: [ReadReceipt] = []
         
         // Find all unread messages from this device
@@ -911,22 +913,8 @@ class GridViewModel: ObservableObject {
         // Trigger UI update immediately
         objectWillChange.send()
         
-        // Save read receipts to CloudKit
-        if !newReadReceipts.isEmpty {
-            print("Creating \(newReadReceipts.count) read receipts in CloudKit")
-            
-            let records = newReadReceipts.map { $0.toCKRecord() }
-            let operation = CKModifyRecordsOperation(recordsToSave: records, recordIDsToDelete: nil)
-            
-            operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
-                if let error = error {
-                    print("Error saving read receipts to CloudKit: \(error.localizedDescription)")
-                } else {
-                    print("Successfully saved \(savedRecords?.count ?? 0) read receipts to CloudKit")
-                }
-            }
-            publicDB.add(operation)
-        }
+        // Persist the new receipts
+        readReceiptService.saveReceipts(newReadReceipts)
     }
     
     // Load star/block relationships from CloudKit (both outgoing and incoming blocks)
@@ -945,51 +933,26 @@ class GridViewModel: ObservableObject {
         }
     }
     
-    // NEW: Load read receipts from CloudKit
+    // Load read receipts from CloudKit
     private func loadReadReceipts(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
-        let publicDB = CKContainer.default().publicCloudDatabase
-        let predicate = NSPredicate(format: "deviceID == %@", deviceID)
-        let query = CKQuery(recordType: "ReadReceipts", predicate: predicate)
-        
-        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
-            DispatchQueue.main.async {
-                guard let self = self else { 
-                    completion()
-                    return 
-                }
-                
-                if let error = error {
-                    print("Error loading read receipts: \(error.localizedDescription)")
-                    completion()
-                    return
-                }
-                
-                if let records = records {
-                    // Clear existing and load fresh from CloudKit
-                    self.readReceipts.removeAll()
-                    
-                    for record in records {
-                        if let receipt = ReadReceipt(record: record) {
-                            self.readReceipts.insert(receipt.messageID)
-                        }
-                    }
-                    
-                    print("Loaded \(self.readReceipts.count) read receipts from CloudKit")
-                    
-                    // Update message statuses based on read receipts
-                    for index in self.messages.indices {
-                        if self.readReceipts.contains(self.messages[index].id) &&
-                           self.messages[index].recipientDeviceID == deviceID {
-                            self.messages[index].status = .sent
-                        }
-                    }
-                    
-                    // Trigger UI update
-                    self.objectWillChange.send()
-                }
-                
+        readReceiptService.loadReceipts(forDeviceID: deviceID) { [weak self] messageIDs in
+            guard let self = self else {
                 completion()
+                return
             }
+            self.readReceipts = messageIDs
+            print("GridViewModel: loaded \(self.readReceipts.count) read receipts")
+
+            // Update message statuses based on read receipts
+            for index in self.messages.indices {
+                if self.readReceipts.contains(self.messages[index].id) &&
+                   self.messages[index].recipientDeviceID == deviceID {
+                    self.messages[index].status = .sent
+                }
+            }
+
+            self.objectWillChange.send()
+            completion()
         }
     }
     
