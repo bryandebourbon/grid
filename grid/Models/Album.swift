@@ -32,7 +32,7 @@ struct Album: Identifiable {
     var recordID: CKRecord.ID?
     
     // Constants
-    static let maxPhotos = 10
+    static let maxPhotos = 3
     
     // Computed properties
     var photosCount: Int {
@@ -41,10 +41,6 @@ struct Album: Identifiable {
     
     var hasSpace: Bool {
         return photosCount < Album.maxPhotos
-    }
-    
-    var previewPhotos: [CKAsset] {
-        return Array(pinnedPhotos.prefix(4)) // First 4 for preview
     }
     
     // MARK: - Initializers
