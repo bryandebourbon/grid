@@ -452,6 +452,24 @@ struct MessageReadLogicTests {
     }
 }
 
+// MARK: - Grid placement logic
+
+struct GridPlacementLogicTests {
+
+    @Test func placesInFirstEmptySlotSkippingOrigin() {
+        var grid = GridPlacementLogic.makeEmptyGrid(size: 3)
+        let profile = UserProfile(userID: "u", deviceID: "d", deviceName: "n")
+        guard let slot = GridPlacementLogic.firstEmptySlot(in: grid, skipping: (0, 0)) else {
+            Issue.record("expected slot")
+            return
+        }
+        #expect(slot.row == 0 && slot.col == 1)
+        GridPlacementLogic.place(profile: profile, in: &grid, at: slot.row, col: slot.col)
+        #expect(grid[0][1].userProfile?.deviceID == "d")
+        #expect(grid[0][0].userProfile == nil)
+    }
+}
+
 // MARK: - Distance format logic
 
 struct DistanceFormatLogicTests {
