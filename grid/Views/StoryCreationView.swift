@@ -194,10 +194,13 @@ struct StoryCreationView: View {
         
         Task {
             do {
-                try await viewModel.uploadStory(imageData: imageData, caption: caption.isEmpty ? nil : caption)
-                
-                // Refresh stories after successful upload
-                await viewModel.refreshStories()
+                guard let profile = viewModel.currentUserProfile else { return }
+                try await viewModel.storiesService.uploadStoryAndRefresh(
+                    imageData: imageData,
+                    caption: caption.isEmpty ? nil : caption,
+                    userID: profile.userID,
+                    deviceID: profile.deviceID
+                )
                 
                 await MainActor.run {
                     // Success - dismiss

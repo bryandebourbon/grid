@@ -50,7 +50,7 @@ struct GridNodeView: View {
             if storiesMode, let profile = node.userProfile {
                 GeometryReader { geometry in
                     let size = min(geometry.size.width, geometry.size.height)
-                    let hasStories = viewModel.hasActiveStories(for: profile.deviceID)
+                    let hasStories = viewModel.storiesService.hasActiveStories(for: profile.deviceID)
                     let isCurrentUser = profile.deviceID == viewModel.currentUserProfile?.deviceID
                     
                     StoriesRingView(
@@ -296,7 +296,11 @@ struct GridNodeView: View {
         }
         
         Task {
-            let unviewed = await viewModel.hasUnviewedStories(for: profile.deviceID)
+            guard let viewerID = viewModel.currentUserProfile?.deviceID else { return }
+            let unviewed = await viewModel.storiesService.hasUnviewedStories(
+                for: profile.deviceID,
+                viewerDeviceID: viewerID
+            )
             await MainActor.run {
                 hasUnviewedStories = unviewed
             }

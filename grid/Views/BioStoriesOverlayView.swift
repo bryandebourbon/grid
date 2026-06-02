@@ -339,7 +339,14 @@ struct BioStoriesOverlayView: View {
         }
         
         do {
-            let result = await viewModel.getStoriesForDevice(userProfile.deviceID)
+            guard let viewerDeviceID = viewModel.currentUserProfile?.deviceID else {
+                await MainActor.run { isLoading = false }
+                return
+            }
+            let result = await viewModel.storiesService.getStoriesForDevice(
+                userProfile.deviceID,
+                viewerDeviceID: viewerDeviceID
+            )
             
             await MainActor.run {
                 self.stories = result.stories.sorted { $0.timestamp > $1.timestamp }
@@ -422,7 +429,12 @@ struct BioStoriesOverlayView: View {
         guard let currentStory = currentStory else { return }
         
         Task {
-            await viewModel.viewStory(currentStory)
+            guard let viewer = viewModel.currentUserProfile else { return }
+            await viewModel.storiesService.recordStoryView(
+                storyID: currentStory.id,
+                viewerUserID: viewer.userID,
+                viewerDeviceID: viewer.deviceID
+            )
         }
     }
     
@@ -446,7 +458,11 @@ struct BioStoriesOverlayView: View {
     /// Refresh stories after unpinning to remove expired stories that are no longer protected by pins
     private func refreshStoriesAfterUnpin(unpinnedStoryID: String) async {
         // Reload stories from CloudKit (which automatically filters expired ones)
-        let result = await viewModel.getStoriesForDevice(userProfile.deviceID)
+        guard let viewerDeviceID = viewModel.currentUserProfile?.deviceID else { return }
+        let result = await viewModel.storiesService.getStoriesForDevice(
+            userProfile.deviceID,
+            viewerDeviceID: viewerDeviceID
+        )
         
         await MainActor.run {
             let filteredStories = result.stories.sorted { $0.timestamp > $1.timestamp }
@@ -532,125 +548,6 @@ struct BioStoriesOverlayView: View {
                 }
                 showingPinAlert = true
             }
-        }
-    }
-}
-
-// MARK: - Story Thumbnail View
-
-struct StoryThumbnailView: View {
-    let story: Story
-    let isSelected: Bool
-    let isPinned: Bool
-    let isCurrentUser: Bool
-    let onTapped: () -> Void
-    let onLongPress: (Story) -> Void
-    
-    @StateObject private var thumbnailImageLoader = ImageLoader()
-    
-    var body: some View {
-        ZStack {
-            // Thumbnail image
-            Group {
-                if thumbnailImageLoader.isLoading {
-                    ProgressView()
-                        .frame(width: 60, height: 80)
-                } else if let image = thumbnailImageLoader.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 60, height: 80)
-                        .clipped()
-                } else {
-                    // Placeholder
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 60, height: 80)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.title3)
-                                .foregroundColor(.gray)
-                        )
-                }
-            }
-            .cornerRadius(8)
-            
-            // Selection border
-            if isSelected {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.blue, lineWidth: 3)
-                    .frame(width: 60, height: 80)
-            }
-            
-            // Caption and pin indicators
-            VStack {
-                // Pin indicator at top right
-                if isPinned {
-                    HStack {
-                        Spacer()
-                        Image(systemName: "pin.fill")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .background(
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 18, height: 18)
-                            )
-                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                            .padding(4)
-                    }
-                }
-                
-                Spacer()
-                
-                // Caption indicator at bottom right
-                if let caption = story.caption, !caption.isEmpty {
-                    HStack {
-                        Spacer()
-                        Image(systemName: "text.bubble.fill")
-                            .font(.caption2)
-                            .foregroundColor(.white)
-                            .background(
-                                Circle()
-                                    .fill(Color.black.opacity(0.6))
-                                    .frame(width: 16, height: 16)
-                            )
-                            .padding(4)
-                    }
-                }
-            }
-        }
-        .onTapGesture {
-            print("StoryThumbnailView: 👆 Tap gesture detected on story \(story.id)")
-            onTapped()
-        }
-        .onLongPressGesture {
-            print("StoryThumbnailView: 🔥 Long press detected on story \(story.id)")
-            print("StoryThumbnailView: 👤 isCurrentUser: \(isCurrentUser)")
-            print("StoryThumbnailView: 📌 isPinned: \(isPinned)")
-            
-            // Only allow pinning for current user's own stories in Phase 1
-            if isCurrentUser {
-                print("StoryThumbnailView: ✅ Current user - proceeding with pin action")
-                
-                // Haptic feedback
-                #if os(iOS)
-                let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                impactFeedback.impactOccurred()
-                print("StoryThumbnailView: 📳 Haptic feedback triggered")
-                #endif
-                
-                onLongPress(story)
-            } else {
-                print("StoryThumbnailView: ❌ Not current user - ignoring long press")
-            }
-        }
-        .onAppear {
-            thumbnailImageLoader.loadImage(from: story.imageAsset)
-            print("StoryThumbnailView: 📱 Thumbnail appeared for story \(story.id)")
-            print("StoryThumbnailView: 👤 isCurrentUser: \(isCurrentUser)")
-            print("StoryThumbnailView: 📌 isPinned: \(isPinned)")
-            print("StoryThumbnailView: ✅ isSelected: \(isSelected)")
         }
     }
 }
