@@ -153,7 +153,6 @@ struct ContentView: View {
             "deviceName",
             "bio",
             "interests",
-            "additionalPhotos",
             "latitude",
             "longitude",
             "lastActiveTimestamp",
@@ -242,18 +241,6 @@ struct ContentView: View {
         return deviceID
     }
     
-    // Helper method to clear old device ID preferences if needed for migration
-    private func clearOldDeviceIDPreferences() {
-        // Remove any old device ID keys that might conflict
-        let oldKeys = UserDefaults.standard.dictionaryRepresentation().keys.filter { 
-            $0.hasPrefix("deviceID_") && !$0.hasPrefix("consistentDeviceID_") 
-        }
-        for key in oldKeys {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-        print("Cleared \(oldKeys.count) old device ID preferences")
-    }
-
     private func signOut() {
         // Clear stored credentials
         clearStoredCredentials()

@@ -11,7 +11,6 @@ struct UserProfile: Codable {
     var deviceID: String            // Unique identifier for each device
     var deviceName: String          // Human-readable device name
     var profileImage: CKAsset?      // For the profile photo (optional)
-    var additionalPhotos: [CKAsset]? // Up to 10 additional photos
     var bio: String?                // User's biography or about me text
     var interests: [Interest]       // NEW: User's selected interests
     
@@ -51,7 +50,6 @@ struct UserProfile: Codable {
          deviceID: String, 
          deviceName: String, 
          profileImage: CKAsset? = nil,
-         additionalPhotos: [CKAsset]? = nil,
          bio: String? = nil,
          interests: [Interest] = [],
          albumID: String? = nil,
@@ -66,7 +64,6 @@ struct UserProfile: Codable {
         self.deviceName = deviceName
         self.recordID = CKRecord.ID(recordName: deviceID) // Use deviceID as the unique record identifier
         self.profileImage = profileImage
-        self.additionalPhotos = additionalPhotos
         self.bio = bio
         self.interests = interests
         self.albumID = albumID
@@ -87,7 +84,6 @@ struct UserProfile: Codable {
         self.recordID = CKRecord.ID(recordName: self.deviceID)
         // CKAssets are not decoded here; they are populated from CKRecord
         self.profileImage = nil
-        self.additionalPhotos = nil
         self.bio = try container.decodeIfPresent(String.self, forKey: .bio)
         self.interests = try container.decodeIfPresent([Interest].self, forKey: .interests) ?? []
         self.albumID = try container.decodeIfPresent(String.self, forKey: .albumID)
@@ -134,7 +130,6 @@ struct UserProfile: Codable {
         self.userID = userID
         self.deviceName = record["deviceName"] as? String ?? "Unknown Device"
         self.profileImage = record["profileImage"] as? CKAsset
-        self.additionalPhotos = record["additionalPhotos"] as? [CKAsset]
         self.latitude = record["latitude"] as? Double
         self.longitude = record["longitude"] as? Double
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
@@ -178,12 +173,6 @@ struct UserProfile: Codable {
             record["profileImage"] = imageAsset
         } else {
             record["profileImage"] = nil
-        }
-        
-        if let photos = self.additionalPhotos {
-            record["additionalPhotos"] = photos
-        } else {
-            record["additionalPhotos"] = nil // Explicitly set to nil if no additional photos
         }
         
         if let albumPhotos = self.albumPreviewPhotos {

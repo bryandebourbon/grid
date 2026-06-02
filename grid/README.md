@@ -21,7 +21,6 @@ The app requires the following record types in your CloudKit Public Database:
 - `deviceID` (String, Queryable, Sortable) 
 - `deviceName` (String)
 - `profileImage` (Asset)
-- `additionalPhotos` (List<Asset>)
 - `bio` (String)
 - `interests` (List<String>)
 - `latitude` (Double)
@@ -47,14 +46,6 @@ The app requires the following record types in your CloudKit Public Database:
 - `actionType` (String, Queryable) // "star", "block", "report"
 - `timestamp` (Date/Time)
 
-### ConnectionRequests **NEW**
-- `senderUserID` (String, Queryable)
-- `recipientUserID` (String, Queryable)
-- `senderDeviceID` (String, Queryable)
-- `recipientDeviceID` (String, Queryable)
-- `status` (String, Queryable) // "pending", "accepted", "declined", "blocked"
-- `timestamp` (Date/Time, Queryable, Sortable)
-
 ### ReadReceipts
 - `deviceID` (String, Queryable)
 - `messageID` (String, Queryable)
@@ -73,20 +64,6 @@ The app requires the following record types in your CloudKit Public Database:
 - `reportReason` (String)
 - `reportDescription` (String)
 - `timestamp` (Date/Time)
-
-## Connection System
-
-The app now features a tiered connection system:
-
-1. **Unconnected Users**: Can see profiles but cannot message. Must send connection request first.
-2. **Pending Requests**: Show as green notification badges on grid cells and in toolbar.
-3. **Connected Users**: Can message each other freely.
-
-### Connection Flow:
-1. User taps on unconnected person → Profile shows "Invite to Connect" button
-2. Recipient gets notification (green badge) and can Accept/Decline
-3. Once accepted, both users can message each other
-4. "Connected Only" filter button shows only connected users
 
 ## Setup Instructions
 

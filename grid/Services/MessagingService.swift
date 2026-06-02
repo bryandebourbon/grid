@@ -225,18 +225,6 @@ class MessagingService: ObservableObject {
         }
     }
     
-    // Original handler for when a notification simply arrives (e.g., app in foreground, or for background processing)
-    // This one should NOT trigger navigation, only data fetch.
-    func handlePushNotificationPayload(_ userInfo: [AnyHashable : Any]) {
-        if let notification = CKNotification(fromRemoteNotificationDictionary: userInfo) as? CKQueryNotification,
-           notification.subscriptionID?.starts(with: "new-messages-for-device-") == true,
-           let recordID = notification.recordID {
-            
-            print("Push notification PAYLOAD HANDLER for message. RecordID: \(recordID.recordName)")
-            fetchMessage(withRecordID: recordID, currentDeviceID: nil) // Fetches and sends to newMessageReceived publisher
-        }
-    }
-    
     private func fetchMessage(withRecordID recordID: CKRecord.ID, currentDeviceID: String?) {
         publicDB.fetch(withRecordID: recordID) { record, error in
             DispatchQueue.main.async {

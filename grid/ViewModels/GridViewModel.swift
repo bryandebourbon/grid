@@ -49,7 +49,6 @@ class GridViewModel: ObservableObject {
     @Published var currentChatRecipientDeviceID: String? // Device ID of who the current chat is with
     @Published var selfChatNewMessageText: String = "" // For SelfChatView input
     @Published var locationPermissionStatus: String = "Location permission not requested"
-    @Published var chatRecipientToPresent: ChatRecipient?
     @Published var pendingChatNavigationDeviceID: String? = nil // For deferred navigation
     @Published var selectedUserProfileForReport: ProfileCardUser? = nil // For report dialog
     @Published var showingStarredOnly: Bool = false { // Toggle for showing only starred users
@@ -104,20 +103,17 @@ class GridViewModel: ObservableObject {
     private var usersWhoBlockedMe: Set<String> = [] // Set of userIDs who have blocked me
 
     private var messagingService: MessagingService
-    private var gridService: GridService // For public grid management (legacy)
     private var locationService: LocationService // NEW: Location tracking
     private var proximityService: ProximityService // NEW: Proximity-based user filtering
     private var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
 
     init(messagingService: MessagingService = MessagingService(),
-         gridService: GridService = GridService(),
          locationService: LocationService = LocationService(),
          proximityService: ProximityService = ProximityService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
-        self.gridService = gridService
         self.locationService = locationService
         self.proximityService = proximityService
         self.currentUserProfile = initialProfile
@@ -271,7 +267,6 @@ class GridViewModel: ObservableObject {
                 if self.currentUserProfile != nil {
                     // Profile is available, proceed with navigation
                     self.selectChatPartner(partnerDeviceID: senderDeviceID) 
-                    self.chatRecipientToPresent = ChatRecipient(id: senderDeviceID) 
                 } else {
                     // Profile not yet available, store for deferred navigation
                     print("GridViewModel: Current user profile not available. Deferring navigation for senderDeviceID: \(senderDeviceID)")
@@ -521,20 +516,6 @@ class GridViewModel: ObservableObject {
         }
     }
 
-    func updateCurrentUsername(newUsername: String) {
-        // This method might need re-evaluation as UserProfile uses deviceName instead of username
-        // For now, it could update the deviceName if needed
-        guard let profile = currentUserProfile else {
-            print("Cannot update, currentUserProfile is nil.")
-            return
-        }
-        // Note: You might want to add a separate username field or modify deviceName
-        print("Username update called. Note: Consider adding a separate username field or updating deviceName.")
-        updateUserActivityAndLocation(profile)
-        placeCurrentUserOnGrid()
-        print("Current user profile updated and saved to public grid.")
-    }
-    
     func setCurrentUserProfile(_ profile: UserProfile) {
         self.currentUserProfile = profile
         updateUserActivityAndLocation(profile) // NEW: Use activity-based saving
@@ -592,7 +573,6 @@ class GridViewModel: ObservableObject {
         if let pendingDeviceID = pendingChatNavigationDeviceID {
             print("GridViewModel: Handling deferred navigation to chat with deviceID: \(pendingDeviceID)")
             selectChatPartner(partnerDeviceID: pendingDeviceID)
-            chatRecipientToPresent = ChatRecipient(id: pendingDeviceID)
             pendingChatNavigationDeviceID = nil // Clear after handling
         }
     }
@@ -1676,44 +1656,6 @@ class GridViewModel: ObservableObject {
         }
     }
 
-    // Function to process PhotosPickerItems for additional photos
-
-    
-
-    
-    // Method to clean up duplicate userID records
-    // REMOVING THIS METHOD as ProximityService.cleanupDuplicateUserIDs was removed
-    /*
-    func cleanupDuplicateUserIDs() {
-        print("GridViewModel: Initiating cleanup of duplicate userID records...")
-        
-        proximityService.cleanupDuplicateUserIDs { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success():
-                    print("GridViewModel: Successfully completed duplicate userID cleanup")
-                    // After cleanup, refresh the grid to get clean data
-                    self?.refreshPublicGrid()
-                case .failure(let error):
-                    print("GridViewModel: Duplicate cleanup failed: \(error.localizedDescription)")
-                    // Continue anyway - the app should still work
-                    self?.refreshPublicGrid()
-                }
-            }
-        }
-    }
-    */
-    
-    // Enhanced app startup with cleanup
-    func handleAppStartupWithCleanup() {
-        print("GridViewModel: Starting app with duplicate cleanup...")
-        
-        // First, clean up any duplicate records
-        // cleanupDuplicateUserIDs()
-    }
-
-
-
     func sendImageMessage(imageData: Data, to recipientDeviceID: String) {
         guard let senderProfile = currentUserProfile else {
             print("Error: Current user profile not available to send image message.")
@@ -2146,58 +2088,6 @@ class GridViewModel: ObservableObject {
 
     // MARK: - Encryption Mode Support
     
-    private func enableEncryptionMode() {
-        print("GridViewModel: Enabling encryption mode...")
-        
-        // Check if keys exist
-        hasEncryptionKeys = CryptoService.shared.hasEncryptionKeys()
-        
-        if !hasEncryptionKeys {
-            // Generate new keys
-            if let (publicKey, _) = CryptoService.shared.generateKeyPair() {
-                hasEncryptionKeys = true
-                
-                // Create and save encryption profile
-                guard let deviceID = currentUserProfile?.deviceID else { return }
-                let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey)
-                
-                // Add to local cache immediately
-                encryptionProfiles[deviceID] = encryptionProfile
-                
-                saveEncryptionProfile(encryptionProfile)
-            }
-        } else {
-            // Keys exist, ensure our profile is published
-            guard let deviceID = currentUserProfile?.deviceID,
-                  let publicKey = CryptoService.shared.getPublicKey() else { return }
-            let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey)
-            
-            // Add to local cache immediately
-            encryptionProfiles[deviceID] = encryptionProfile
-            
-            saveEncryptionProfile(encryptionProfile)
-        }
-        
-        // Load encryption profiles of other devices
-        loadEncryptionProfiles()
-        
-        // Filter grid to show only encryption-enabled devices
-        refreshGridForEncryptionMode()
-    }
-    
-    private func disableEncryptionMode() {
-        print("GridViewModel: Disabling encryption mode...")
-        
-        // Update our encryption profile to show disabled
-        guard let deviceID = currentUserProfile?.deviceID,
-              let publicKey = CryptoService.shared.getPublicKey() else { return }
-        let encryptionProfile = EncryptionProfile(deviceID: deviceID, publicKey: publicKey, isEncryptionEnabled: false)
-        saveEncryptionProfile(encryptionProfile)
-        
-        // Refresh grid to show all devices again
-        autoRefreshGrid()
-    }
-    
     private func saveEncryptionProfile(_ profile: EncryptionProfile) {
         let publicDB = CKContainer.default().publicCloudDatabase
         let record = profile.toCKRecord()
@@ -2251,72 +2141,6 @@ class GridViewModel: ObservableObject {
                 completion()
             }
         }
-    }
-    
-    // NEW: Load encryption profiles on-demand for specific device IDs
-    private func loadEncryptionProfilesOnDemand(for deviceIDs: [String], completion: @escaping (Bool) -> Void) {
-        let publicDB = CKContainer.default().publicCloudDatabase
-        
-        // Create record IDs for the specific devices we need
-        let recordIDs = deviceIDs.map { CKRecord.ID(recordName: "encryption_\($0)") }
-        
-        let fetchOperation = CKFetchRecordsOperation(recordIDs: recordIDs)
-        fetchOperation.fetchRecordsCompletionBlock = { [weak self] recordsByRecordID, error in
-            DispatchQueue.main.async {
-                guard let self = self else { 
-                    completion(false)
-                    return 
-                }
-                
-                if let error = error {
-                    print("Error loading encryption profiles on-demand: \(error.localizedDescription)")
-                    
-                    // Check for partial failures (some profiles found, some not)
-                    if let ckError = error as? CKError, ckError.code == .partialFailure {
-                        if let partialErrors = ckError.partialErrorsByItemID {
-                            var foundProfiles = 0
-                            
-                            // Process any successfully fetched profiles
-                            recordsByRecordID?.forEach { (recordID, record) in
-                                if let profile = EncryptionProfile(record: record) {
-                                    self.encryptionProfiles[profile.id] = profile
-                                    foundProfiles += 1
-                                    print("Loaded encryption profile for device: \(profile.id)")
-                                }
-                            }
-                            
-                            // Check if we got the profiles we need
-                            let hasAllNeeded = deviceIDs.allSatisfy { deviceID in
-                                self.encryptionProfiles[deviceID] != nil
-                            }
-                            
-                            print("On-demand load: found \(foundProfiles) profiles, need all: \(hasAllNeeded)")
-                            completion(hasAllNeeded)
-                        } else {
-                            completion(false)
-                        }
-                    } else {
-                        completion(false)
-                    }
-                    return
-                }
-                
-                // Success case - process all fetched profiles
-                var loadedCount = 0
-                recordsByRecordID?.forEach { (recordID, record) in
-                    if let profile = EncryptionProfile(record: record) {
-                        self.encryptionProfiles[profile.id] = profile
-                        loadedCount += 1
-                        print("Loaded encryption profile for device: \(profile.id)")
-                    }
-                }
-                
-                print("Successfully loaded \(loadedCount) encryption profiles on-demand")
-                completion(loadedCount > 0)
-            }
-        }
-        
-        publicDB.add(fetchOperation)
     }
     
     private func refreshGridForEncryptionMode() {
@@ -2518,14 +2342,6 @@ class GridViewModel: ObservableObject {
             "reason": reason.rawValue,
             "has_description": description != nil
         ])
-    }
-    
-    /// Get content moderation summary for admin purposes
-    func getContentModerationSummary() -> [String: Any] {
-        return [
-            "content_filtering_active": true,
-            "privacy_policy_version": "1.0"
-        ]
     }
     
     // MARK: - Interest Filter Methods
@@ -3084,21 +2900,6 @@ class GridViewModel: ObservableObject {
         }
         
         return await getAlbum(for: currentProfile.deviceID)
-    }
-    
-    /// Load albums for all nearby users (for preview display)
-    func loadNearbyUsersAlbums() async {
-        print("GridViewModel: 🔄 Loading albums for nearby users")
-        
-        let nearbyDeviceIDs = proximityService.activeNearbyProfiles.map { $0.deviceID }
-        
-        for deviceID in nearbyDeviceIDs {
-            if userAlbums[deviceID] == nil {
-                _ = await getAlbum(for: deviceID)
-            }
-        }
-        
-        print("GridViewModel: ✅ Finished loading albums for nearby users")
     }
     
     /// Update user profile with album information
