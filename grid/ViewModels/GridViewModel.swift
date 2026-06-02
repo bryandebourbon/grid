@@ -106,6 +106,8 @@ class GridViewModel: ObservableObject {
     private var locationService: LocationService // NEW: Location tracking
     private var proximityService: ProximityService // NEW: Proximity-based user filtering
     private let relationshipService: RelationshipService // Star/block persistence
+    private let encryptionProfileService: EncryptionProfileService // Public-key publishing
+    private let accountDeletionService: AccountDeletionService // Account record teardown
     private var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
 
@@ -113,12 +115,16 @@ class GridViewModel: ObservableObject {
          locationService: LocationService = LocationService(),
          proximityService: ProximityService = ProximityService(),
          relationshipService: RelationshipService = RelationshipService(),
+         encryptionProfileService: EncryptionProfileService = EncryptionProfileService(),
+         accountDeletionService: AccountDeletionService = AccountDeletionService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
         self.locationService = locationService
         self.proximityService = proximityService
         self.relationshipService = relationshipService
+        self.encryptionProfileService = encryptionProfileService
+        self.accountDeletionService = accountDeletionService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -1685,147 +1691,15 @@ class GridViewModel: ObservableObject {
         }
 
         print("GridViewModel: Starting full account deletion for userID: \(userIDToDelete)")
-        let publicDB = CKContainer.default().publicCloudDatabase
-        let dispatchGroup = DispatchGroup()
-        var encounteredError: Error? = nil
-
-        // 1. Delete UserProfile records (user owns these)
-        dispatchGroup.enter()
-        let userProfilePredicate = NSPredicate(format: "userID == %@", userIDToDelete)
-        let userProfileQuery = CKQuery(recordType: "UserProfiles", predicate: userProfilePredicate)
-        
-        fetchAndDeleteRecords(database: publicDB, query: userProfileQuery, recordTypeForLog: "UserProfiles") { error in
-            if let error = error {
-                print("GridViewModel: Error deleting UserProfile records: \(error.localizedDescription)")
-                encounteredError = encounteredError ?? error // Keep the first error
+        accountDeletionService.deleteAllRecords(
+            forUserID: userIDToDelete,
+            deviceID: currentUserProfile?.deviceID ?? ""
+        ) { error in
+            if error == nil {
+                print("GridViewModel: Successfully deleted all user-owned records for userID: \(userIDToDelete)")
             }
-            dispatchGroup.leave()
+            completion(error)
         }
-
-        // 2. Delete sent Messages (user owns these)
-        dispatchGroup.enter()
-        let sentMessagesPredicate = NSPredicate(format: "senderUserID == %@", userIDToDelete)
-        let sentMessagesQuery = CKQuery(recordType: "Messages", predicate: sentMessagesPredicate)
-        
-        fetchAndDeleteRecords(database: publicDB, query: sentMessagesQuery, recordTypeForLog: "Sent Messages") { error in
-            if let error = error {
-                print("GridViewModel: Error deleting sent Message records: \(error.localizedDescription)")
-                encounteredError = encounteredError ?? error
-            }
-            dispatchGroup.leave()
-        }
-
-        // 3. Delete UserRelationship records (star/block records user created)
-        dispatchGroup.enter()
-        let userRelationshipPredicate = NSPredicate(format: "userID == %@", userIDToDelete)
-        let userRelationshipQuery = CKQuery(recordType: "UserRelationships", predicate: userRelationshipPredicate)
-        
-        fetchAndDeleteRecords(database: publicDB, query: userRelationshipQuery, recordTypeForLog: "UserRelationships") { error in
-            if let error = error {
-                print("GridViewModel: Error deleting UserRelationship records: \(error.localizedDescription)")
-                encounteredError = encounteredError ?? error
-            }
-            dispatchGroup.leave()
-        }
-
-        // 4. Delete EncryptionProfile records (user owns these)
-        dispatchGroup.enter()
-        let encryptionProfilePredicate = NSPredicate(format: "deviceID == %@", currentUserProfile?.deviceID ?? "")
-        let encryptionProfileQuery = CKQuery(recordType: "EncryptionProfiles", predicate: encryptionProfilePredicate)
-        
-        fetchAndDeleteRecords(database: publicDB, query: encryptionProfileQuery, recordTypeForLog: "EncryptionProfiles") { error in
-            if let error = error {
-                print("GridViewModel: Error deleting EncryptionProfile records: \(error.localizedDescription)")
-                encounteredError = encounteredError ?? error
-            }
-            dispatchGroup.leave()
-        }
-
-        // NOTE: We do NOT delete received messages because the user doesn't own those CloudKit records.
-        // Received messages are owned by their senders and can only be deleted by them.
-        // This prevents the "WRITE operation not permitted" error.
-
-        // Notify when all deletion tasks are complete
-        dispatchGroup.notify(queue: .main) {
-            if encounteredError == nil {
-                print("GridViewModel: Successfully deleted all user-owned records associated with userID: \(userIDToDelete)")
-            }
-            completion(encounteredError)
-        }
-    }
-
-    private func fetchAndDeleteRecords(database: CKDatabase, query: CKQuery, recordTypeForLog: String, completion: @escaping (Error?) -> Void) {
-        var recordIDsToDelete: [CKRecord.ID] = []
-        var cursor: CKQueryOperation.Cursor? = nil // Initialize cursor to nil
-
-        func fetchNextBatch() {
-            let operation: CKQueryOperation
-            if let currentCursor = cursor {
-                operation = CKQueryOperation(cursor: currentCursor)
-            } else {
-                operation = CKQueryOperation(query: query)
-            }
-            operation.resultsLimit = CKQueryOperation.maximumResults // Fetch max allowed
-
-            operation.recordFetchedBlock = { record in
-                recordIDsToDelete.append(record.recordID)
-            }
-
-            operation.queryCompletionBlock = { [weak self] opCursor, error in
-                if let error = error {
-                    print("GridViewModel: Error fetching \(recordTypeForLog) for deletion: \(error.localizedDescription)")
-                    completion(error)
-                    return
-                }
-                cursor = opCursor
-                if opCursor != nil {
-                    // More records to fetch
-                    fetchNextBatch()
-                } else {
-                    // All records fetched, proceed to delete
-                    self?.deleteRecords(database: database, recordIDs: recordIDsToDelete, recordTypeForLog: recordTypeForLog, completion: completion)
-                }
-            }
-            database.add(operation)
-        }
-        fetchNextBatch() // Start fetching the first batch
-    }
-
-    private func deleteRecords(database: CKDatabase, recordIDs: [CKRecord.ID], recordTypeForLog: String, completion: @escaping (Error?) -> Void) {
-        if recordIDs.isEmpty {
-            print("GridViewModel: No \(recordTypeForLog) records found to delete.")
-            completion(nil)
-            return
-        }
-
-        print("GridViewModel: Attempting to delete \(recordIDs.count) \(recordTypeForLog) records.")
-        let operation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: recordIDs)
-        operation.isAtomic = false // Try to delete as many as possible, even if some fail
-
-        operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
-            if let error = error {
-                print("GridViewModel: Error during batch deletion of \(recordTypeForLog): \(error.localizedDescription)")
-                // Check for partial failures
-                if let ckError = error as? CKError, ckError.code == .partialFailure {
-                    if let partialErrors = ckError.partialErrorsByItemID {
-                        for (key, partialError) in partialErrors {
-                            if let recordID = key as? CKRecord.ID {
-                                print("GridViewModel: Error deleting record \(recordID.recordName): \(partialError.localizedDescription)")
-                            } else {
-                                print("GridViewModel: Error deleting a record (ID not CKRecord.ID): \(partialError.localizedDescription)")
-                            }
-                        }
-                    }
-                    // Even with partial failure, we might consider the overall operation as 'handled'
-                    // depending on how critical individual deletions are. For now, pass the main error.
-                }
-                completion(error)
-            } else {
-                print("GridViewModel: Successfully deleted \(deletedRecordIDs?.count ?? 0) \(recordTypeForLog) records.")
-                completion(nil)
-            }
-        }
-        database.add(operation)
     }
 
     func updateUserProfileBio(bio: String, completion: @escaping (Bool) -> Void) {
@@ -1929,58 +1803,19 @@ class GridViewModel: ObservableObject {
 
     // MARK: - Encryption Mode Support
     
-    private func saveEncryptionProfile(_ profile: EncryptionProfile) {
-        let publicDB = CKContainer.default().publicCloudDatabase
-        let record = profile.toCKRecord()
-        
-        // Use CKModifyRecordsOperation to handle both create and update
-        let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-        operation.savePolicy = .changedKeys // This allows updating existing records
-        
-        operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    print("Error saving encryption profile: \(error.localizedDescription)")
-                } else {
-                    print("Successfully saved/updated encryption profile for device: \(profile.id)")
-                }
-            }
-        }
-        
-        publicDB.add(operation)
-    }
-    
     private func loadEncryptionProfiles(completion: @escaping () -> Void = {}) {
-        let publicDB = CKContainer.default().publicCloudDatabase
-        let predicate = NSPredicate(format: "isEncryptionEnabled == 1")  // Use Int64 value
-        let query = CKQuery(recordType: "EncryptionProfiles", predicate: predicate)
-        
-        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
-            DispatchQueue.main.async {
-                guard let self = self else { 
-                    completion()
-                    return 
-                }
-                
-                if let error = error {
-                    print("Error loading encryption profiles: \(error.localizedDescription)")
-                    completion()
-                    return
-                }
-                
-                // Don't clear existing profiles, just update/add new ones
-                var loadedCount = 0
-                records?.forEach { record in
-                    if let profile = EncryptionProfile(record: record) {
-                        self.encryptionProfiles[profile.id] = profile
-                        loadedCount += 1
-                    }
-                }
-                
-                print("Loaded \(loadedCount) encryption profiles during initialization")
-                self.refreshGridForEncryptionMode()
+        encryptionProfileService.loadEnabledProfiles { [weak self] profiles in
+            guard let self = self else {
                 completion()
+                return
             }
+            // Merge into the existing cache rather than replacing it.
+            for profile in profiles {
+                self.encryptionProfiles[profile.id] = profile
+            }
+            print("GridViewModel: loaded \(profiles.count) encryption profiles")
+            self.refreshGridForEncryptionMode()
+            completion()
         }
     }
     
@@ -2246,7 +2081,7 @@ class GridViewModel: ObservableObject {
                 // Add to local cache immediately
                 encryptionProfiles[deviceID] = encryptionProfile
                 
-                saveEncryptionProfile(encryptionProfile)
+                encryptionProfileService.save(encryptionProfile)
             }
         } else {
             // Keys exist, ensure our profile is published
@@ -2257,7 +2092,7 @@ class GridViewModel: ObservableObject {
             // Add to local cache immediately
             encryptionProfiles[deviceID] = encryptionProfile
             
-            saveEncryptionProfile(encryptionProfile)
+            encryptionProfileService.save(encryptionProfile)
         }
         
         // Note: loadEncryptionProfiles() is now called explicitly in the initialization sequence
