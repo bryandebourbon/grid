@@ -13,7 +13,7 @@ enum GridColumnZoomLogic {
         doubleTapCycle[current] ?? 3
     }
 
-    /// Pinch preview: scale < 1 zooms in (fewer columns), scale > 1 zooms out.
+    /// Pinch preview: scale below 1 increases column count (more cells); scale above 1 decreases it, clamped to 2…5.
     static func previewColumns(base: Int, scale: CGFloat) -> Int {
         let scaleThreshold: CGFloat = 0.25
         let columnDelta = Int((1.0 - scale) / scaleThreshold)
