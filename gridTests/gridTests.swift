@@ -211,3 +211,116 @@ struct AlbumTests {
         #expect(restored.photoMetadata.first?.storyID == "s1")
     }
 }
+
+// MARK: - Grid column zoom logic
+
+struct GridColumnZoomLogicTests {
+
+    @Test func doubleTapCyclesThreeTwoFive() {
+        #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 3) == 2)
+        #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 2) == 5)
+        #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 5) == 3)
+        #expect(GridColumnZoomLogic.nextDoubleTapTarget(from: 4) == 3)
+    }
+
+    @Test func previewColumnsRespectsBounds() {
+        #expect(GridColumnZoomLogic.previewColumns(base: 3, scale: 1.0) == 3)
+        #expect(GridColumnZoomLogic.previewColumns(base: 3, scale: 0.5) == 5)
+        #expect(GridColumnZoomLogic.previewColumns(base: 3, scale: 1.5) == 2)
+        #expect(GridColumnZoomLogic.previewColumns(base: 5, scale: 0.0) == 5)
+        #expect(GridColumnZoomLogic.previewColumns(base: 2, scale: 2.0) == 2)
+    }
+
+    @Test func dragTranslationChangesColumns() {
+        #expect(GridColumnZoomLogic.columnsAfterDrag(base: 3, verticalTranslation: -100) == 4)
+        #expect(GridColumnZoomLogic.columnsAfterDrag(base: 3, verticalTranslation: 100) == 2)
+        #expect(GridColumnZoomLogic.columnsAfterDrag(base: 2, verticalTranslation: -500) == 5)
+    }
+
+    @Test func fastSwipeIgnored() {
+        #expect(GridColumnZoomLogic.shouldIgnoreDrag(velocity: 401))
+        #expect(!GridColumnZoomLogic.shouldIgnoreDrag(velocity: 400))
+    }
+}
+
+// MARK: - Message conversation logic
+
+struct MessageConversationLogicTests {
+
+    private func message(
+        id: String,
+        from sender: String,
+        to recipient: String,
+        text: String,
+        at timestamp: Date
+    ) -> Message {
+        Message(
+            id: id,
+            senderDeviceID: sender,
+            recipientDeviceID: recipient,
+            senderUserID: "u-\(sender)",
+            recipientUserID: "u-\(recipient)",
+            text: text,
+            timestamp: timestamp,
+            status: .sent
+        )
+    }
+
+    @Test func messagesFiltersAndSortsThread() {
+        let t0 = Date(timeIntervalSince1970: 100)
+        let t1 = Date(timeIntervalSince1970: 200)
+        let t2 = Date(timeIntervalSince1970: 300)
+        let all = [
+            message(id: "a", from: "me", to: "bob", text: "hi", at: t1),
+            message(id: "b", from: "carol", to: "me", text: "?", at: t2),
+            message(id: "c", from: "me", to: "bob", text: "later", at: t0),
+            message(id: "d", from: "me", to: "dave", text: "other", at: t1),
+        ]
+
+        let thread = MessageConversationLogic.messages(
+            inConversationWith: "bob",
+            currentDeviceID: "me",
+            from: all
+        )
+
+        #expect(thread.map(\.id) == ["c", "a"])
+    }
+
+    @Test func conversationListUsesMyNotesForSelfThread() {
+        let t0 = Date(timeIntervalSince1970: 100)
+        let messages = [
+            message(id: "n", from: "me", to: "me", text: "note", at: t0),
+        ]
+
+        let list = MessageConversationLogic.conversationList(
+            currentDeviceID: "me",
+            messages: messages,
+            displayNameLookup: { _ in "Should Not Use" }
+        )
+
+        #expect(list.count == 1)
+        #expect(list[0].displayName == "My Notes")
+        #expect(list[0].deviceID == "me")
+        #expect(list[0].messageCount == 1)
+    }
+
+    @Test func conversationListSortsByMostRecentLastMessage() {
+        let old = Date(timeIntervalSince1970: 100)
+        let recent = Date(timeIntervalSince1970: 500)
+        let messages = [
+            message(id: "1", from: "me", to: "alice", text: "a", at: old),
+            message(id: "2", from: "bob", to: "me", text: "b", at: recent),
+            message(id: "3", from: "me", to: "carol", text: "c", at: Date(timeIntervalSince1970: 200)),
+        ]
+
+        let list = MessageConversationLogic.conversationList(
+            currentDeviceID: "me",
+            messages: messages,
+            displayNameLookup: { id in "User \(id)" }
+        )
+
+        #expect(list.map(\.deviceID) == ["bob", "carol", "alice"])
+        #expect(list[0].lastMessage?.id == "2")
+        #expect(list[0].messageCount == 1)
+    }
+}

@@ -20,16 +20,10 @@ final class GridColumnZoom {
     private(set) var lastTapTime = Date()
     private var dragStartTime = Date()
 
-    let minColumns = 2
-    let maxColumns = 5
-
     var scrollDisabled: Bool { isScaling || isDragging }
 
     func previewColumns(for scale: CGFloat) -> Int {
-        let scaleThreshold: CGFloat = 0.25
-        let columnDelta = Int((1.0 - scale) / scaleThreshold)
-        let previewCols = baseColumns + columnDelta
-        return max(minColumns, min(maxColumns, previewCols))
+        GridColumnZoomLogic.previewColumns(base: baseColumns, scale: scale)
     }
 
     func recordSingleTap() {
@@ -51,13 +45,7 @@ final class GridColumnZoom {
 
         lastTapTime = Date()
 
-        let current = gridColumns
-        let target: Int
-        switch current {
-        case 3: target = 2
-        case 2: target = 5
-        default: target = 3
-        }
+        let target = GridColumnZoomLogic.nextDoubleTapTarget(from: gridColumns)
 
         haptic(.medium)
         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
@@ -76,12 +64,12 @@ final class GridColumnZoom {
         let distance = hypot(dragValue.translation.width, dragValue.translation.height)
         let velocity = timeSinceStart > 0 ? distance / timeSinceStart : 0
 
-        if velocity > 400 { return }
+        if GridColumnZoomLogic.shouldIgnoreDrag(velocity: velocity) { return }
 
-        let sensitivity: CGFloat = 100
-        let verticalDelta = -dragValue.translation.height
-        let columnChange = Int(verticalDelta / sensitivity)
-        let newColumns = max(minColumns, min(maxColumns, baseColumns + columnChange))
+        let newColumns = GridColumnZoomLogic.columnsAfterDrag(
+            base: baseColumns,
+            verticalTranslation: dragValue.translation.height
+        )
 
         if newColumns != gridColumns {
             haptic(.light)

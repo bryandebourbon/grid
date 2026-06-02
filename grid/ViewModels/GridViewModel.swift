@@ -152,7 +152,7 @@ class GridViewModel: ObservableObject {
                     guard let self = self else { return }
                     
                     // Load story views to restore viewed/unviewed state
-                    self.loadStoryViews(forDeviceID: profile.deviceID) { [weak self] in
+                    self.storiesService.loadStoryViewsForViewer(deviceID: profile.deviceID) { [weak self] in
                         guard let self = self else { return }
                         
                         // Load current user's album to restore pin state
@@ -553,7 +553,7 @@ class GridViewModel: ObservableObject {
                 
                 // Load story views to restore viewed/unviewed state
                 print("GridViewModel: Loading story views...")
-                self.loadStoryViews(forDeviceID: profile.deviceID) { [weak self] in
+                self.storiesService.loadStoryViewsForViewer(deviceID: profile.deviceID) { [weak self] in
                     guard let self = self else { return }
                     
                     // Load current user's album to restore pin state
@@ -631,51 +631,29 @@ class GridViewModel: ObservableObject {
     // NEW: Get messages for a specific conversation (already loaded)
     func getMessagesForConversation(with deviceID: String) -> [Message] {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return [] }
-        
-        return messages.filter { message in
-            (message.senderDeviceID == currentDeviceID && message.recipientDeviceID == deviceID) ||
-            (message.senderDeviceID == deviceID && message.recipientDeviceID == currentDeviceID)
-        }.sorted(by: { $0.timestamp < $1.timestamp })
+        return MessageConversationLogic.messages(
+            inConversationWith: deviceID,
+            currentDeviceID: currentDeviceID,
+            from: messages
+        )
     }
-    
-    // NEW: Get conversation list with last message preview
+
     func getConversationList() -> [(deviceID: String, displayName: String, lastMessage: Message?, messageCount: Int)] {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return [] }
-        
-        // Group messages by conversation partner
-        let conversations = Dictionary(grouping: messages) { message in
-            message.senderDeviceID == currentDeviceID ? message.recipientDeviceID : message.senderDeviceID
-        }
-        
-        return conversations.compactMap { (otherDeviceID, conversationMessages) in
-            let sortedMessages = conversationMessages.sorted(by: { $0.timestamp < $1.timestamp })
-            let lastMessage = sortedMessages.last
-            
-            // Get display name from grid if available
-            var displayName = "Device \(String(otherDeviceID.prefix(8)))"
-            if otherDeviceID == currentDeviceID {
-                displayName = "My Notes"
-            } else {
-                // Look for the device in the grid
-                for row in gridNodes {
-                    for node in row {
-                        if let profile = node.userProfile, profile.deviceID == otherDeviceID {
-                            displayName = profile.displayName
-                            break
-                        }
-                    }
+        return MessageConversationLogic.conversationList(
+            currentDeviceID: currentDeviceID,
+            messages: messages,
+            displayNameLookup: { [weak self] otherDeviceID in
+                guard let self = self else {
+                    return "Device \(String(otherDeviceID.prefix(8)))"
                 }
+                if let profile = self.findNode(forDeviceID: otherDeviceID)?.userProfile {
+                    return profile.displayName
+                }
+                return "Device \(String(otherDeviceID.prefix(8)))"
             }
-            
-            return (deviceID: otherDeviceID, displayName: displayName, lastMessage: lastMessage, messageCount: conversationMessages.count)
-        }.sorted { conversation1, conversation2 in
-            // Sort by last message timestamp, most recent first
-            guard let date1 = conversation1.lastMessage?.timestamp,
-                  let date2 = conversation2.lastMessage?.timestamp else {
-                return conversation1.lastMessage != nil && conversation2.lastMessage == nil
-            }
-            return date1 > date2
-        }
+        )
+        .map { ($0.deviceID, $0.displayName, $0.lastMessage, $0.messageCount) }
     }
     
     // LEGACY: Keep for backwards compatibility
@@ -2442,53 +2420,7 @@ class GridViewModel: ObservableObject {
     }
     
     // MARK: - Initialization Helpers
-    
-    /// Load story views from CloudKit on app startup
-    private func loadStoryViews(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
-        print("GridViewModel: 📖 Loading story views for device: \(deviceID)")
-        
-        let publicDB = CKContainer.default().publicCloudDatabase
-        let predicate = NSPredicate(format: "viewerDeviceID == %@", deviceID)
-        let query = CKQuery(recordType: "StoryViews", predicate: predicate)
-        
-        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
-            DispatchQueue.main.async {
-                guard let self = self else {
-                    completion()
-                    return
-                }
-                
-                if let error = error {
-                    print("GridViewModel: ❌ Error loading story views: \(error.localizedDescription)")
-                    completion()
-                    return
-                }
-                
-                var loadedViews: [String: [StoryView]] = [:]
-                var totalViewsLoaded = 0
-                
-                records?.forEach { record in
-                    if let storyView = StoryView(record: record) {
-                        if loadedViews[storyView.storyID] == nil {
-                            loadedViews[storyView.storyID] = []
-                        }
-                        loadedViews[storyView.storyID]?.append(storyView)
-                        totalViewsLoaded += 1
-                    }
-                }
-                
-                // Update the stories service with loaded views
-                Task { @MainActor in
-                    for (storyID, views) in loadedViews {
-                        self.storiesService.storyViews[storyID] = views
-                    }
-                    print("GridViewModel: ✅ Loaded \(totalViewsLoaded) story views for \(loadedViews.keys.count) stories")
-                    completion()
-                }
-            }
-        }
-    }
-    
+
     /// Load current user's album from CloudKit on app startup
     private func loadCurrentUserAlbum(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
         print("GridViewModel: 📁 Loading album for device: \(deviceID)")
