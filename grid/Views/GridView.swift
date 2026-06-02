@@ -878,6 +878,9 @@ struct GridView: View {
                             }
                         }
                         
+                        #if DEBUG
+                        // Demo mode is a development/screenshot-only feature and is
+                        // compiled out of release builds.
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 viewModel.demoService.toggleDemoMode()
@@ -909,6 +912,7 @@ struct GridView: View {
                                 Label("Shuffle Photos", systemImage: "shuffle")
                             }
                         }
+                        #endif
                         
                         Divider()
                         
@@ -922,10 +926,6 @@ struct GridView: View {
                         
                         Button(action: { viewModel.showingPrivacyPolicy = true }) {
                             Label("Privacy Policy", systemImage: "hand.raised.fill")
-                        }
-                        
-                        Button(action: { viewModel.showingTrackingPermission = true }) {
-                            Label("Tracking Settings", systemImage: "chart.line.uptrend.xyaxis")
                         }
                         
                         Button(action: signOutAction) {
@@ -982,9 +982,6 @@ struct GridView: View {
             }
             .sheet(isPresented: $showingStoryCreation) {  // NEW: Sheet for Story Creation
                 StoryCreationView(viewModel: viewModel)
-            }
-            .sheet(isPresented: $viewModel.showingTrackingPermission) {  // NEW: Sheet for Tracking Permission
-                TrackingPermissionView(privacyService: viewModel.privacyService)
             }
             .sheet(isPresented: $viewModel.showingInterestSearch) { // NEW: Sheet for Interest Search
                 InterestSearchView(viewModel: viewModel)

@@ -23,12 +23,20 @@ final class gridUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
+    func testLaunchShowsSignInOrContent() throws {
         // UI tests must launch the application that they test.
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        // On a fresh install with no stored credentials the app resolves to the
+        // welcome / Sign in with Apple screen. Allow time for the async
+        // credential-state check to complete.
+        let welcome = app.staticTexts["Welcome to Grid"]
+        let appeared = welcome.waitForExistence(timeout: 15)
+
+        // If credentials happen to exist the app proceeds past sign-in; either
+        // way the app must not have crashed and should be running.
+        XCTAssertTrue(appeared || app.state == .runningForeground)
     }
 
     @MainActor

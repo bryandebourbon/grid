@@ -99,8 +99,15 @@ class DemoService: ObservableObject {
     private var demoUsers: [UserProfile] = []
     
     init() {
+        #if DEBUG
+        // Demo mode is a development/screenshot-only feature. It injects
+        // fabricated users into the grid and must never be reachable in
+        // release builds (App Store Guideline 2.3 — accurate metadata).
         self.isDemoMode = UserDefaults.standard.bool(forKey: "isDemoMode")
         loadDemoPhotos()
+        #else
+        self.isDemoMode = false
+        #endif
     }
     
     private func loadDemoPhotos() {

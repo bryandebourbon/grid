@@ -77,7 +77,6 @@ class GridViewModel: ObservableObject {
     // NEW: Privacy and content moderation services
     @Published var privacyService = PrivacyService()
     @Published var contentModerationService = ContentModerationService()
-    @Published var showingTrackingPermission = false
     @Published var showingPrivacyPolicy = false
     
     // NEW: Demo service for promotional screenshots
@@ -172,11 +171,6 @@ class GridViewModel: ObservableObject {
         
         // Request location permission on init
         locationService.requestLocationPermission()
-        
-        // Request tracking permission after a short delay (better UX)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            self.requestTrackingPermissionIfNeeded()
-        }
     }
     
     private func setupMessagingHandlers() {
@@ -2420,13 +2414,6 @@ class GridViewModel: ObservableObject {
     
     // MARK: - Privacy and Content Moderation Methods
     
-    /// Request tracking permission if not already determined
-    private func requestTrackingPermissionIfNeeded() {
-        if privacyService.trackingAuthorizationStatus == .notDetermined {
-            showingTrackingPermission = true
-        }
-    }
-    
     /// Send message with content filtering
     func sendMessageWithModeration(text: String, to recipientDeviceID: String, isEncrypted: Bool = false) {
         // First check content appropriateness
@@ -2517,10 +2504,8 @@ class GridViewModel: ObservableObject {
     /// Get content moderation summary for admin purposes
     func getContentModerationSummary() -> [String: Any] {
         return [
-            "tracking_enabled": privacyService.canTrackUser(),
             "content_filtering_active": true,
-            "privacy_policy_version": "1.0",
-            "att_status": privacyService.trackingAuthorizationStatus.rawValue
+            "privacy_policy_version": "1.0"
         ]
     }
     

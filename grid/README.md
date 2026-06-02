@@ -105,9 +105,19 @@ The app includes built-in content moderation for:
 - Report system for inappropriate content
 - Automatic content filtering
 
-## Encryption Mode
+## Encryption
 
-Users can enable encryption mode to:
-- Exchange encrypted messages with other encryption-enabled users
-- Filter grid to show only encryption-capable users
-- Secure private conversations end-to-end 
+All messaging is encrypted by default:
+- Each device generates a long-term **Curve25519** key-agreement key pair. The
+  private key is stored in the Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`);
+  the public key is published via the `EncryptionProfiles` record type.
+- Message content is encrypted with a random AES-256-GCM content key. That key
+  is wrapped (ephemeral ECDH + HKDF-SHA256 + AES-GCM) to **both** the recipient
+  and the sender, so each party can read the conversation while no one else can.
+- Only encryption-capable users appear on the grid.
+
+**Privacy note:** message *content* and images are encrypted end-to-end, but
+message *metadata* (sender/recipient device IDs and timestamps) is currently
+stored in the CloudKit **public** database. Moving conversation records to a
+per-user private/shared CloudKit zone (via `CKShare`) is tracked as a follow-up
+to also protect metadata. 
