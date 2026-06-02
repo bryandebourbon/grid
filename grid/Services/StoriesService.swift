@@ -248,6 +248,41 @@ class StoriesService: ObservableObject {
         }
     }
     
+    /// Load all story views recorded by this viewer (app startup / profile restore).
+    func loadStoryViewsForViewer(deviceID: String, completion: @escaping () -> Void = {}) {
+        let predicate = NSPredicate(format: "viewerDeviceID == %@", deviceID)
+        let query = CKQuery(recordType: "StoryViews", predicate: predicate)
+
+        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
+            Task { @MainActor in
+                guard let self else {
+                    completion()
+                    return
+                }
+
+                if let error {
+                    print("StoriesService: Error loading story views: \(error.localizedDescription)")
+                    completion()
+                    return
+                }
+
+                var loaded: [String: [StoryView]] = [:]
+                var total = 0
+                records?.forEach { record in
+                    guard let view = StoryView(record: record) else { return }
+                    loaded[view.storyID, default: []].append(view)
+                    total += 1
+                }
+
+                for (storyID, views) in loaded {
+                    self.storyViews[storyID] = views
+                }
+                print("StoriesService: Loaded \(total) story views for \(loaded.keys.count) stories")
+                completion()
+            }
+        }
+    }
+
     /// Fetch story views for a specific story
     func fetchStoryViews(for storyID: String) async -> [StoryView] {
         let predicate = NSPredicate(format: "storyID == %@", storyID)
