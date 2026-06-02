@@ -982,88 +982,28 @@ class GridViewModel: ObservableObject {
         objectWillChange.send()
     }
     
-    // NEW: Block/unblock a user
     func toggleBlock(for deviceID: String) {
-        print("🔄 ========== TOGGLE BLOCK START ==========")
-        print("🔄 Called for deviceID: \(deviceID)")
-        
         guard let currentUserID = currentUserProfile?.userID,
-              let targetUserID = getUserID(forDeviceID: deviceID) else { 
-            print("❌ Failed to get currentUserID or targetUserID")
-            print("❌ currentUserID: \(currentUserProfile?.userID ?? "nil")")
-            print("❌ targetUserID: \(getUserID(forDeviceID: deviceID) ?? "nil")")
-            return 
-        }
-        
-        print("🔄 currentUserID: \(currentUserID)")
-        print("🔄 targetUserID: \(targetUserID)")
-        
-        let wasBlocked = blockedUsers.contains(targetUserID)
-        print("🔄 wasBlocked: \(wasBlocked)")
-        print("🔄 blockedUsers.count BEFORE: \(blockedUsers.count)")
-        print("🔄 blockedUsers BEFORE: \(blockedUsers)")
-        
-        if wasBlocked {
-            // Unblock
-            print("🔓 ========== UNBLOCKING USER ==========")
-            print("🔓 About to remove \(targetUserID) from local blockedUsers set")
-            
-            let removedUser = blockedUsers.remove(targetUserID)
-            print("🔓 blockedUsers.remove() result: \(removedUser != nil ? "SUCCESS" : "FAILED")")
-            print("🔓 blockedUsers.count AFTER removal: \(blockedUsers.count)")
-            print("🔓 blockedUsers AFTER removal: \(blockedUsers)")
-            print("🔓 blockedUsers.contains(\(targetUserID)): \(blockedUsers.contains(targetUserID))")
-            
-            print("🔓 Calling deleteStarBlockRecord for CloudKit deletion...")
-            
-            // Wait for CloudKit deletion before refreshing
+              let targetUserID = getUserID(forDeviceID: deviceID) else { return }
+
+        if blockedUsers.contains(targetUserID) {
+            blockedUsers.remove(targetUserID)
             relationshipService.deleteRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .block) { [weak self] success in
-                print("☁️ ========== CLOUDKIT DELETION COMPLETED ==========")
-                print("☁️ deletion success: \(success)")
-                print("☁️ Current thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
-                
-                guard let self = self else { 
-                    print("☁️ Self is nil in completion")
-                    return 
-                }
-                
+                guard let self = self else { return }
                 DispatchQueue.main.async {
-                    print("☁️ Back on main thread")
-                    print("☁️ blockedUsers.count in completion: \(self.blockedUsers.count)")
-                    print("☁️ blockedUsers in completion: \(self.blockedUsers)")
-                    print("☁️ blockedUsers.contains(\(targetUserID)) in completion: \(self.blockedUsers.contains(targetUserID))")
-                    
-                    if success {
-                        print("☁️ ✅ CloudKit deletion successful. Refreshing grid WITHOUT reloading relationships.")
-                        self.refreshGridWithCurrentState()
-                    } else {
-                        print("☁️ ❌ CloudKit deletion failed. Re-adding user to blocked set.")
+                    if !success {
                         self.blockedUsers.insert(targetUserID)
-                        print("☁️ blockedUsers after re-adding: \(self.blockedUsers)")
-                        self.refreshGridWithCurrentState()
                     }
+                    self.refreshGridWithCurrentState()
                 }
             }
         } else {
-            // Block
-            print("🔒 ========== BLOCKING USER ==========")
-            print("🔒 About to add \(targetUserID) to local blockedUsers set")
-            
             blockedUsers.insert(targetUserID)
-            print("🔒 blockedUsers.count AFTER addition: \(blockedUsers.count)")
-            print("🔒 blockedUsers AFTER addition: \(blockedUsers)")
-            
             relationshipService.saveRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .block)
-            print("🔒 Blocked user \(targetUserID). Hiding them from grid.")
-            
-            // For blocking: Just refresh with current cached list (immediate)
-            let profiles = proximityService.activeNearbyProfiles
-            updateGridWithAllProfiles(profiles)
+            updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         }
-        
-        print("🔄 Calling objectWillChange.send()")
+
         objectWillChange.send()
-        print("🔄 ========== TOGGLE BLOCK END ==========")
     }
     
     // Helper to get userID from deviceID
@@ -1113,56 +1053,19 @@ class GridViewModel: ObservableObject {
         return blockedUsers
     }
     
-    // NEW: Unblock a user by userID (for BlockedUsersView)
     func unblockUser(userID: String) {
-        print("🔓 ========== UNBLOCK USER BY USERID ==========")
-        print("🔓 Called for userID: \(userID)")
-        
-        guard let currentUserID = currentUserProfile?.userID else { 
-            print("🔓 ❌ No current user profile")
-            return 
-        }
-        
-        print("🔓 currentUserID: \(currentUserID)")
-        print("🔓 blockedUsers BEFORE: \(blockedUsers)")
-        print("🔓 blockedUsers.contains(\(userID)): \(blockedUsers.contains(userID))")
-        
-        guard blockedUsers.contains(userID) else {
-            print("🔓 ❌ User \(userID) is not in blocked list")
-            return
-        }
-        
-        // Remove from local blocked set
-        let removedUser = blockedUsers.remove(userID)
-        print("🔓 Removed user from local set: \(removedUser != nil)")
-        print("🔓 blockedUsers AFTER removal: \(blockedUsers)")
-        
-        // Delete the blocking record from CloudKit
-        print("🔓 Calling deleteStarBlockRecord for CloudKit deletion...")
+        guard let currentUserID = currentUserProfile?.userID,
+              blockedUsers.contains(userID) else { return }
+
+        blockedUsers.remove(userID)
         relationshipService.deleteRelationship(userID: currentUserID, targetUserID: userID, actionType: .block) { [weak self] success in
-            print("🔓 ========== CLOUDKIT DELETION FOR UNBLOCK COMPLETED ==========")
-            print("🔓 deletion success: \(success)")
-            
-            guard let self = self else { 
-                print("🔓 Self is nil in completion")
-                return 
-            }
-            
+            guard let self = self else { return }
             DispatchQueue.main.async {
-                print("🔓 Back on main thread after unblock deletion")
-                print("🔓 blockedUsers in completion: \(self.blockedUsers)")
-                
                 if success {
-                    print("🔓 ✅ CloudKit deletion successful. Refreshing grid.")
-                    // Force a complete refresh to get the unblocked user back
                     self.forceRefreshGrid()
                 } else {
-                    print("🔓 ❌ CloudKit deletion failed. Re-adding user to blocked set.")
                     self.blockedUsers.insert(userID)
-                    print("🔓 blockedUsers after re-adding: \(self.blockedUsers)")
                 }
-                
-                // Trigger UI update
                 self.objectWillChange.send()
             }
         }
