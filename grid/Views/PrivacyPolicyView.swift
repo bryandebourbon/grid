@@ -46,14 +46,14 @@ struct PrivacyPolicyView: View {
                                 Group {
                                     Text("**Location Data:**")
                                         .font(.headline)
-                                    Text("• Precise location coordinates (when permission granted)\n• Location history for proximity matching\n• Device location for user discovery")
+                                    Text("• Current precise location coordinates while the app is open and permission is granted\n• Current device location for nearby-user discovery\n• No background location tracking or location-history archive")
                                         .font(.body)
                                 }
                                 
                                 Group {
                                     Text("**Usage Data:**")
                                         .font(.headline)
-                                    Text("• Messages sent and received\n• User interactions (stars, blocks, reports)\n• App usage analytics\n• Device information")
+                                    Text("• Messages sent and received\n• User interactions (stars, blocks, reports)\n• Device information needed for account and CloudKit operation\n• No IDFA collection or cross-app tracking")
                                         .font(.body)
                                 }
                             }
@@ -70,7 +70,7 @@ struct PrivacyPolicyView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("• **Core Functionality:** To provide location-based user discovery and messaging")
                                 Text("• **Safety:** To moderate content and ensure community safety")
-                                Text("• **Improvement:** To enhance app performance and user experience")
+                                Text("• **Improvement:** To diagnose issues and improve app reliability")
                                 Text("• **Communication:** To send notifications about app activity")
                                 Text("• **Legal Compliance:** To comply with applicable laws and regulations")
                             }
@@ -109,20 +109,9 @@ struct PrivacyPolicyView: View {
                                 .font(.title2)
                                 .fontWeight(.semibold)
                             
-                            Text("This app requests permission before tracking your activity across other companies' apps and websites. We use tracking for:")
-                                .font(.body)
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("• Improving app performance and features")
-                                Text("• Understanding user engagement")
-                                Text("• Providing relevant content")
-                            }
-                            .font(.body)
-                            
-                            Text("You can withdraw tracking consent at any time in iOS Settings > Privacy & Security > Tracking.")
+                            Text("Grid does not track your activity across other companies' apps or websites, does not collect the IDFA, and does not request App Tracking Transparency permission.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .padding(.top, 4)
                         }
                         
                         Divider()
@@ -134,9 +123,9 @@ struct PrivacyPolicyView: View {
                                 .fontWeight(.semibold)
                             
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("• **Encryption:** Messages can be end-to-end encrypted")
+                                Text("• **Encryption:** Message content and images are encrypted end-to-end by default")
                                 Text("• **Apple CloudKit:** Secure cloud storage with Apple's infrastructure")
-                                Text("• **Access Controls:** Role-based access to user data")
+                                Text("• **Metadata:** Message sender/recipient identifiers and timestamps are currently stored in CloudKit public records while shared-zone metadata protection is being built")
                                 Text("• **Regular Updates:** Security patches and improvements")
                             }
                             .font(.body)
@@ -155,7 +144,7 @@ struct PrivacyPolicyView: View {
                                 Text("• **Correction:** Update incorrect information")
                                 Text("• **Deletion:** Delete your account and data")
                                 Text("• **Portability:** Export your data")
-                                Text("• **Opt-out:** Disable location sharing or tracking")
+                                Text("• **Opt-out:** Disable location sharing in iOS Settings")
                             }
                             .font(.body)
                         }
@@ -171,8 +160,8 @@ struct PrivacyPolicyView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("• **Account Data:** Retained while account is active")
                                 Text("• **Messages:** Stored until deleted by user")
-                                Text("• **Location Data:** Recent locations for proximity matching")
-                                Text("• **Analytics:** Aggregated data may be retained longer")
+                                Text("• **Location Data:** Current location is updated for proximity matching while the app is open")
+                                Text("• **Diagnostics:** Local debug logs are disabled in release builds")
                                 Text("• **Safety Data:** Reports and moderation data retained for safety")
                             }
                             .font(.body)

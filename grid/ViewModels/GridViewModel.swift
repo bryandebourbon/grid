@@ -1539,11 +1539,11 @@ class GridViewModel: ObservableObject {
         if recipientDeviceID == senderProfile.deviceID {
             recipientProfile = senderProfile
         } else {
-            // TODO: This should ideally come from a more reliable source than just gridNodes,
-            // perhaps a dedicated user cache if available, or ensure gridNodes is always up-to-date.
+            // Prefer the currently visible grid profile for now. A dedicated
+            // user cache would make this more robust when profile cards are
+            // opened from notifications or stale navigation state.
             guard let foundProfile = findNode(forDeviceID: recipientDeviceID)?.userProfile else {
                 print("Error: Could not find recipient profile for device \(recipientDeviceID)")
-                // OPTIONAL: Create a temporary message with .failed status or inform user.
                 return
             }
             recipientProfile = foundProfile
@@ -1636,7 +1636,6 @@ class GridViewModel: ObservableObject {
             case .failure(let error):
                 self.messages[optimisticMessageIndex].status = .failed
                 print("GridViewModel: Optimistic message (TempID: \(temporaryID)) failed to send: \(error.localizedDescription). Status: .failed")
-                // TODO: Implement retry logic or user notification
             }
             
             // Re-sort after update
@@ -2376,10 +2375,20 @@ class GridViewModel: ObservableObject {
     }
 
     // NEW: Report a user for inappropriate content
-    func reportUser(deviceID: String, reason: Report.ReportReason, description: String? = nil) {
+    func reportUser(
+        deviceID: String,
+        reason: Report.ReportReason,
+        description: String? = nil,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
         guard let currentUserID = currentUserProfile?.userID,
               let reportedUserID = getUserID(forDeviceID: deviceID) else { 
             print("Error: Missing user IDs for report")
+            completion?(.failure(NSError(
+                domain: "GridViewModel",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not identify the reported user."]
+            )))
             return 
         }
         
@@ -2398,15 +2407,15 @@ class GridViewModel: ObservableObject {
             DispatchQueue.main.async {
                 if let error = error {
                     print("Error submitting report: \(error.localizedDescription)")
-                    // TODO: Show user an error alert
+                    completion?(.failure(error))
                 } else {
                     print("Successfully submitted report for user: \(reportedUserID)")
-                    // TODO: Show user a success alert
                     
                     // Optionally auto-block the reported user
                     if !self.isBlocked(deviceID) {
                         self.toggleBlock(for: deviceID)
                     }
+                    completion?(.success(()))
                 }
             }
         }
@@ -2429,7 +2438,7 @@ class GridViewModel: ObservableObject {
         // Note: encryption is handled automatically since all messaging is now encrypted by default
         sendMessage(text: text, to: recipientDeviceID)
         
-        // Track the event for analytics (if user has consented)
+        // Local no-op hook unless a privacy-compliant analytics provider is added.
         privacyService.trackEvent("message_sent", parameters: [
             "recipient_type": recipientDeviceID == currentUserProfile?.deviceID ? "self" : "other",
             "is_encrypted": isEncrypted,
@@ -2481,18 +2490,28 @@ class GridViewModel: ObservableObject {
     }
     
     /// Report user with automatic content analysis
-    func reportUserWithAnalysis(deviceID: String, reason: Report.ReportReason, description: String? = nil) {
+    func reportUserWithAnalysis(
+        deviceID: String,
+        reason: Report.ReportReason,
+        description: String? = nil,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
         // If there's a description, analyze it for appropriateness
         if let desc = description, !desc.isEmpty {
             let moderationResult = contentModerationService.isTextAppropriate(desc)
             if !moderationResult.isAppropriate {
                 print("Report description blocked by content filter")
+                completion?(.failure(NSError(
+                    domain: "GridViewModel",
+                    code: -2,
+                    userInfo: [NSLocalizedDescriptionKey: moderationResult.reason ?? "Report description was blocked by the content filter."]
+                )))
                 return
             }
         }
         
         // Submit the report
-        reportUser(deviceID: deviceID, reason: reason, description: description)
+        reportUser(deviceID: deviceID, reason: reason, description: description, completion: completion)
         
         // Track the event
         privacyService.trackEvent("user_reported", parameters: [

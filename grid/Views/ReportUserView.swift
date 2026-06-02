@@ -103,15 +103,15 @@ struct ReportUserView: View {
             deviceID: userProfile.deviceID,
             reason: selectedReason,
             description: additionalDetails.isEmpty ? nil : additionalDetails
-        )
-        
-        // Wait a moment for the report to be submitted
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        ) { result in
             isSubmitting = false
-            
-            // For now, always show success
-            // In a real app, you'd check the result from reportUser
-            showSuccessAlert = true
+            switch result {
+            case .success:
+                showSuccessAlert = true
+            case .failure(let error):
+                errorMessage = error.localizedDescription
+                showErrorAlert = true
+            }
         }
     }
 }
