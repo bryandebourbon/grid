@@ -26,8 +26,8 @@ struct GridView: View {
     @State private var bioStoriesProfile: UserProfile? = nil  // NEW: Profile for bio+stories overlay
     
     // Background customization
-    @State var backgroundColor: Color = Color.blue.opacity(0.15) // internal for extension access
-    @State var backgroundImage: Image? = nil
+    @State private var backgroundColor: Color = Color.blue.opacity(0.15)
+    @State private var backgroundImage: Image? = nil
     @State private var showingColorPicker = false
     @State private var showingBackgroundPhotoPicker = false
     @State private var selectedBackgroundPhotoItem: PhotosPickerItem? = nil
@@ -159,7 +159,7 @@ struct GridView: View {
             await refreshGrid()
         }
         // Dynamic background (colour or photo) visible through transparent cell corners
-        .background(gridBackgroundView)
+        .background(GridBackgroundView(backgroundColor: backgroundColor, backgroundImage: backgroundImage))
     }
 
     var body: some View {
@@ -211,7 +211,7 @@ struct GridView: View {
         }
         // User-selected background (colour or photo)
         .background(
-            gridBackgroundView
+            GridBackgroundView(backgroundColor: backgroundColor, backgroundImage: backgroundImage)
                 .ignoresSafeArea()
         )
         .animation(.easeInOut(duration: 0.3), value: showingBioStoriesOverlay)
@@ -258,47 +258,8 @@ struct GridView: View {
                     .padding(.vertical, 8)
                 }
                 
-                // Comprehensive interests filter pills
                 if showInterestsFilter {
-                    VStack(spacing: 8) {
-                        HStack {
-                            Text("Browse All Interests")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("Tap to filter")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal)
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                // Search button as first element
-                                SearchInterestsButton {
-                                    viewModel.showingInterestSearch = true
-                                }
-                                
-                                // Show all interests as pills
-                                ForEach(Interest.allCases) { interest in
-                                    InterestPillButton(
-                                        interest: interest,
-                                        isSelected: viewModel.selectedInterestFilter.contains(interest),
-                                        isUserInterest: viewModel.currentUserProfile?.interests.contains(interest) ?? false
-                                    ) {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            viewModel.toggleInterestFilter(interest)
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6).opacity(0.5))
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    GridInterestBrowseSection(viewModel: viewModel)
                 }
                 
                 if let profile = viewModel.currentUserProfile {
@@ -698,26 +659,6 @@ struct GridView: View {
         }
     }
 
-    // Grid background view (colour or photo)
-    @ViewBuilder
-    var gridBackgroundView: some View {
-        if let img = backgroundImage {
-            GeometryReader { geometry in
-                img
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(
-                        width: max(geometry.size.width, UIScreen.main.bounds.width),
-                        height: max(geometry.size.height, UIScreen.main.bounds.height)
-                    )
-                    .clipped()
-                    .ignoresSafeArea(.all)
-            }
-            .ignoresSafeArea(.all)
-        } else {
-            backgroundColor
-        }
-    }
 }
 
 #if DEBUG

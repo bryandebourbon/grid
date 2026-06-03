@@ -281,6 +281,53 @@ struct DistanceFormatLogicTests {
 
 // MARK: - Grid messaging logic
 
+// MARK: - Profile display name logic
+
+struct ProfileDisplayNameLogicTests {
+
+    private func gridWithPeer(deviceID: String, deviceName: String) -> [[GridNode]] {
+        var grid = GridPlacementLogic.makeEmptyGrid(size: 3)
+        let profile = UserProfile(userID: "user-\(deviceID)", deviceID: deviceID, deviceName: deviceName)
+        GridPlacementLogic.place(profile: profile, in: &grid, at: 0, col: 1)
+        return grid
+    }
+
+    @Test func selfChatUsesMyNotes() {
+        let title = ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: "me-device",
+            currentDeviceID: "me-device",
+            gridNodes: []
+        )
+        #expect(title == "My Notes")
+    }
+
+    @Test func usesProfileDisplayNameWhenOnGrid() {
+        let grid = gridWithPeer(deviceID: "bob-device", deviceName: "Bob Phone")
+        let title = ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: "bob-device",
+            currentDeviceID: "me-device",
+            gridNodes: grid
+        )
+        #expect(title == "Bob Phone (user-bob...)")
+    }
+
+    @Test func fallsBackToDevicePrefixWhenMissing() {
+        let title = ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: "abcdefgh-xyz",
+            currentDeviceID: "me-device",
+            gridNodes: GridPlacementLogic.makeEmptyGrid(size: 2)
+        )
+        #expect(title == "Device abcdefgh")
+    }
+
+    @Test func findsProfileInGrid() {
+        let grid = gridWithPeer(deviceID: "d1", deviceName: "Test")
+        let found = ProfileDisplayNameLogic.profile(forDeviceID: "d1", in: grid)
+        #expect(found?.deviceID == "d1")
+        #expect(ProfileDisplayNameLogic.profile(forDeviceID: "missing", in: grid) == nil)
+    }
+}
+
 struct GridMessagingLogicTests {
 
     @Test func blockedUserCannotMessage() {

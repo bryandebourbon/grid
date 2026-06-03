@@ -245,17 +245,6 @@ extension GridViewModel {
         return !selectedInterestFilter.isEmpty
     }
     
-    /// Get count of users that share interests with current user
-    func getSharedInterestCount(with userProfile: UserProfile) -> Int {
-        guard let myInterests = currentUserProfile?.interests else { return 0 }
-        return InterestMatchingLogic.sharedCount(myInterests: myInterests, theirInterests: userProfile.interests)
-    }
-
-    func getSharedInterests(with userProfile: UserProfile) -> [Interest] {
-        guard let myInterests = currentUserProfile?.interests else { return [] }
-        return InterestMatchingLogic.sharedInterests(myInterests: myInterests, theirInterests: userProfile.interests)
-    }
-    
     // MARK: - Encryption-Only Mode Methods
     
     /// Enable encryption for all messaging (called automatically on init)

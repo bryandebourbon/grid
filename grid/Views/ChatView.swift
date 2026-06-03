@@ -196,21 +196,11 @@ struct ChatView: View {
         // No need to manually refresh - the message will appear when CloudKit confirms it
     }
     
-    // Helper to get a display name for the recipient device
     private func recipientDisplayName() -> String {
-        // Check if this is a self-chat first
-        if recipientDeviceID == currentDeviceID {
-            return "My Notes"
-        }
-        
-        // Find the recipient's profile to get their display name
-        for row in viewModel.gridNodes {
-            for node in row {
-                if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
-                    return profile.displayName
-                }
-            }
-        }
-        return "Device \(String(recipientDeviceID.prefix(8)))"
+        ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: recipientDeviceID,
+            currentDeviceID: currentDeviceID,
+            gridNodes: viewModel.gridNodes
+        )
     }
 }
