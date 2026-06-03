@@ -187,12 +187,6 @@ extension GridViewModel {
             relationshipService.saveRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
         }
         
-        // Refresh the grid if we're in starred-only mode
-        if showingStarredOnly {
-            let profiles = proximityService.activeNearbyProfiles
-            updateGridWithAllProfiles(profiles)
-        }
-        
         objectWillChange.send()
     }
     

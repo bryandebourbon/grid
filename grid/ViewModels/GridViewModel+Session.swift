@@ -30,7 +30,6 @@ extension GridViewModel {
                             guard let self = self else { return }
 
                             self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
-                            self.checkForUnencryptedMessages()
 
                             Task {
                                 await self.storiesService.refreshStories()

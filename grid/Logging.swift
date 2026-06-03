@@ -1,19 +1,21 @@
 import Foundation
+import os
 
 /// Release-safe logging shim.
 ///
-/// This module-scoped `print` shadows the Swift standard library's global
-/// `print` for every unqualified `print(...)` call within the app target. In
-/// **release** builds it compiles to a no-op, so verbose debug logging — which
-/// throughout this app includes device IDs, CloudKit record names, user IDs,
-/// and message metadata — never reaches the production device console. In
-/// **debug** builds it forwards to `Swift.print` unchanged.
-///
-/// This is a pragmatic, zero-risk way to keep PII and noise out of production
-/// logs without rewriting hundreds of existing call sites. New code that needs
-/// structured, queryable logging should prefer `os.Logger` directly (see
-/// `CryptoService`/`PrivacyService`). If you ever need stdout output in a
-/// release build, call `Swift.print(...)` explicitly.
+/// Unqualified `print(...)` in the app target is a no-op in release builds (see below).
+/// Prefer `AppLog` categories for structured debug logging at important lifecycle points.
+enum AppLog {
+    static let subsystem = "com.bryandebourbon.grid"
+
+    static let session = Logger(subsystem: subsystem, category: "session")
+    static let grid = Logger(subsystem: subsystem, category: "grid")
+    static let messaging = Logger(subsystem: subsystem, category: "messaging")
+    static let stories = Logger(subsystem: subsystem, category: "stories")
+    static let album = Logger(subsystem: subsystem, category: "album")
+    static let proximity = Logger(subsystem: subsystem, category: "proximity")
+}
+
 @inline(__always)
 func print(_ items: Any..., separator: String = " ", terminator: String = "\n") {
     #if DEBUG

@@ -57,6 +57,8 @@ struct ProfileCardView: View {
                             .font(.title)
                             .frame(maxWidth: .infinity, alignment: .center)
 
+                        ProfilePinnedStoriesRow(viewModel: viewModel, userProfile: userProfile)
+
                         // Main photo editing (only for current user)
                         if isCurrentUserProfile {
                             Button("Edit Photo") {

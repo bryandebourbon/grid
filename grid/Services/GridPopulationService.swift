@@ -3,37 +3,23 @@ import CoreLocation
 
 /// Builds the list of profiles to render and applies grid display filters.
 struct GridDisplayState {
-    var showingStarredOnly: Bool
-    var starredUserIDs: Set<String>
     var blockedUserIDs: Set<String>
     var usersWhoBlockedMe: Set<String>
     var selectedInterestFilter: Set<Interest>
-    var isDemoMode: Bool
 }
 
 @MainActor
 final class GridPopulationService {
 
-    func profilesToDisplay(
-        nearby: [UserProfile],
-        currentUser: UserProfile?,
-        demoService: DemoService,
-        locationService: LocationService
-    ) -> [UserProfile] {
-        guard demoService.isDemoMode else { return nearby }
-        if let location = locationService.currentLocation {
-            return demoService.generateDemoUsers(near: location, count: 24)
-        }
-        let defaultLocation = CLLocation(latitude: 37.7749, longitude: -122.4194)
-        return demoService.generateDemoUsers(near: defaultLocation, count: 24)
+    func profilesToDisplay(nearby: [UserProfile]) -> [UserProfile] {
+        nearby
     }
 
     func layoutProfiles(
         into grid: inout [[GridNode]],
         profiles: [UserProfile],
         currentUser: UserProfile?,
-        display: GridDisplayState,
-        demoService: DemoService
+        display: GridDisplayState
     ) {
         grid = GridPlacementLogic.makeEmptyGrid()
         guard let currentDeviceID = currentUser?.deviceID else {
@@ -47,19 +33,13 @@ final class GridPopulationService {
         )
         let others = GridProfileFilterLogic.applyDisplayFilters(
             to: partitioned.others,
-            showingStarredOnly: display.showingStarredOnly,
-            starredUserIDs: display.starredUserIDs,
             blockedUserIDs: display.blockedUserIDs,
             usersWhoBlockedMe: display.usersWhoBlockedMe,
-            selectedInterestFilter: display.selectedInterestFilter,
-            isDemoMode: display.isDemoMode
+            selectedInterestFilter: display.selectedInterestFilter
         )
 
         if let current = currentUser {
-            let toPlace = demoService.isDemoMode
-                ? (demoService.createDemoCurrentUser(from: current) ?? current)
-                : current
-            GridPlacementLogic.place(profile: toPlace, in: &grid, at: 0, col: 0)
+            GridPlacementLogic.place(profile: current, in: &grid, at: 0, col: 0)
         }
 
         for profile in others {

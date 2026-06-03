@@ -283,28 +283,6 @@ extension GridViewModel {
         // Note: loadEncryptionProfiles() is now called explicitly in the initialization sequence
     }
     
-    /// Check for unencrypted messages that would require account recreation
-    func checkForUnencryptedMessages() {
-        guard let currentDeviceID = currentUserProfile?.deviceID else { return }
-        
-        // Check if user has any unencrypted messages
-        hasUnencryptedMessages = messages.contains { message in
-            !message.isEncrypted && (message.senderDeviceID == currentDeviceID || message.recipientDeviceID == currentDeviceID)
-        }
-        
-        if hasUnencryptedMessages {
-            print("GridViewModel: User has unencrypted messages - account recreation required")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.showingAccountRecreationAlert = true
-            }
-        }
-    }
-    
-    /// Check if user needs to recreate account due to unencrypted messages
-    func requiresAccountRecreation() -> Bool {
-        return hasUnencryptedMessages
-    }
-
     // Check if there are unread messages (all messages are now encrypted)
     func hasUnreadMessages() -> Bool {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
