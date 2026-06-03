@@ -1,6 +1,6 @@
 import Foundation
 
-/// Pure profile filtering for grid display (starred, block, interest filters).
+/// Pure profile filtering for grid display (block, interest filters).
 enum GridProfileFilterLogic {
 
     static func partition(
@@ -21,23 +21,14 @@ enum GridProfileFilterLogic {
 
     static func applyDisplayFilters(
         to others: [UserProfile],
-        showingStarredOnly: Bool,
-        starredUserIDs: Set<String>,
         blockedUserIDs: Set<String>,
         usersWhoBlockedMe: Set<String>,
-        selectedInterestFilter: Set<Interest>,
-        isDemoMode: Bool
+        selectedInterestFilter: Set<Interest>
     ) -> [UserProfile] {
         var result = others
 
-        if showingStarredOnly && !isDemoMode {
-            result = result.filter { starredUserIDs.contains($0.userID) }
-        }
-
-        if !isDemoMode {
-            result = result.filter { profile in
-                !blockedUserIDs.contains(profile.userID) && !usersWhoBlockedMe.contains(profile.userID)
-            }
+        result = result.filter { profile in
+            !blockedUserIDs.contains(profile.userID) && !usersWhoBlockedMe.contains(profile.userID)
         }
 
         if !selectedInterestFilter.isEmpty {

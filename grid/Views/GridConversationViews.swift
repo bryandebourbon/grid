@@ -45,12 +45,12 @@ struct ConversationsListView: View {
                     }
                 }
             }
-            .navigationTitle("Conversations")
+            .navigationTitle("Chats")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { dismiss() }) {
+                        Label("Close", systemImage: "xmark.circle.fill")
                     }
                 }
             }

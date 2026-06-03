@@ -2,30 +2,27 @@ import SwiftUI
 import PhotosUI
 
 struct ChatView: View {
-    @ObservedObject var viewModel: GridViewModel // Use GridViewModel directly or a dedicated ChatViewModel
-    let recipientDeviceID: String // The device ID of the device being chatted with (can be self for notes)
-    
+    @ObservedObject var viewModel: GridViewModel
+    let recipientDeviceID: String
+
     @State private var newMessageText: String = ""
-    @State private var selectedPhotoItem: PhotosPickerItem? = nil // For the new photo picker
-    @State private var showPhotoPicker = false // To present the picker
-    @State private var fullScreenImage: FullScreenImageData? = nil // For full-screen image display
-    @FocusState private var isTextFieldFocused: Bool // NEW: For automatic keyboard focus
-    
-    // Add dismiss environment for closing the sheet
+    @State private var selectedPhotoItem: PhotosPickerItem? = nil
+    @State private var showPhotoPicker = false
+    @State private var fullScreenImage: FullScreenImageData? = nil
+    @FocusState private var isTextFieldFocused: Bool
+
     @Environment(\.dismiss) var dismiss
-    
+
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
     }
-    
-    // Use preloaded messages from GridViewModel - instant access!
+
     private var chatMessages: [Message] {
-        return viewModel.getMessagesForConversation(with: recipientDeviceID)
+        viewModel.getMessagesForConversation(with: recipientDeviceID)
     }
-    
+
     var body: some View {
-        VStack {
-            // Message display area
+        VStack(spacing: 0) {
             ScrollViewReader { scrollViewProxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -45,100 +42,75 @@ struct ChatView: View {
                         } else {
                             ForEach(chatMessages) { message in
                                 MessageRow(
-                                    message: message, 
+                                    message: message,
                                     isCurrentDeviceSender: message.senderDeviceID == currentDeviceID,
                                     onImageTap: { imageData in
                                         fullScreenImage = imageData
                                     }
                                 )
-                                    .id(message.id) // For ScrollViewReader
-                                    .environmentObject(viewModel)
+                                .id(message.id)
+                                .environmentObject(viewModel)
                             }
                         }
                     }
                     .padding()
                 }
-                .onChange(of: chatMessages.count) { _ in // Auto-scroll to new message
+                .onChange(of: chatMessages.count) { _ in
                     scrollToBottom(scrollViewProxy)
                 }
                 .onAppear {
                     scrollToBottom(scrollViewProxy)
                 }
             }
-            
-            // Message input area
-            HStack {
-                // Button to open PhotosPicker
+
+            HStack(alignment: .bottom, spacing: 4) {
                 Button(action: { showPhotoPicker = true }) {
                     Image(systemName: "photo.on.rectangle")
-                        .padding(.leading)
+                        .padding(.leading, 8)
                 }
                 .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
                 .onChange(of: selectedPhotoItem) { newItem in
                     Task {
-                        if let item = newItem {
-                            // Load data and send image message
-                            if let data = try? await item.loadTransferable(type: Data.self) {
-                                viewModel.sendImageMessage(imageData: data, to: recipientDeviceID)
-                                selectedPhotoItem = nil // Reset picker after sending
-                            } else {
-                                print("ChatView: Failed to load image data from PhotosPickerItem")
-                                selectedPhotoItem = nil // Reset picker
-                                // Optionally show an error to the user
-                            }
+                        if let item = newItem,
+                           let data = try? await item.loadTransferable(type: Data.self) {
+                            viewModel.sendImageMessage(imageData: data, to: recipientDeviceID)
+                            selectedPhotoItem = nil
+                        } else {
+                            selectedPhotoItem = nil
                         }
                     }
                 }
 
-                TextField("Enter message...", text: $newMessageText)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .padding(.leading)
-                    .focused($isTextFieldFocused) // NEW: Connect to focus state
-                    .onSubmit {
-                        if !newMessageText.isEmpty {
-                            sendMessage()
-                        }
-                    }
-                
-                Button(action: {
-                    if !newMessageText.isEmpty {
-                        let messageToSend = newMessageText
-                        newMessageText = "" // Clear input immediately for better UX
-                        
-                        // Use content-filtered message sending
-                        // Note: encryption mode is handled internally by GridViewModel based on isEncryptionMode
-                        viewModel.sendMessageWithModeration(text: messageToSend, to: recipientDeviceID)
-                        
-                        // Keep focus on text field for continued typing
-                        isTextFieldFocused = true
-                    }
-                }) {
-                    Image(systemName: "paperplane.fill")
-                        .padding(.trailing)
-                        .foregroundColor(newMessageText.isEmpty ? .gray : .blue)
-                }
-                .disabled(newMessageText.isEmpty || currentDeviceID == nil)
+                ChatMessageComposer(
+                    text: $newMessageText,
+                    isFocused: $isTextFieldFocused,
+                    onSend: sendMessage
+                )
             }
-            .padding()
+            .background(Color(.systemBackground))
         }
         .navigationTitle(recipientDeviceID == currentDeviceID ? "My Notes" : "Chat with \(recipientDisplayName())")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button(action: { dismiss() }) {
+                    Label("Close", systemImage: "xmark.circle.fill")
+                }
+            }
             if recipientDeviceID != currentDeviceID {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
                         Button(action: {
-                            // First dismiss the chat sheet, then show report
                             dismiss()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                // Find the recipient's profile
-                                for row in viewModel.gridNodes {
-                                    for node in row {
-                                        if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
-                                            viewModel.selectedUserProfileForReport = ProfileCardUser(id: recipientDeviceID, userProfile: profile)
-                                            return
-                                        }
-                                    }
+                                if let profile = ProfileDisplayNameLogic.profile(
+                                    forDeviceID: recipientDeviceID,
+                                    in: viewModel.gridNodes
+                                ) {
+                                    viewModel.selectedUserProfileForReport = ProfileCardUser(
+                                        id: recipientDeviceID,
+                                        userProfile: profile
+                                    )
                                 }
                             }
                         }) {
@@ -151,28 +123,22 @@ struct ChatView: View {
             }
         }
         .onAppear {
-            // When the view appears, ensure the viewModel knows which device we're chatting with.
             viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
-            print("ChatView: Opened chat with \(recipientDeviceID), \(chatMessages.count) messages ready instantly!")
-            
-            // Mark all messages from this device as read
             viewModel.markMessagesAsRead(from: recipientDeviceID)
-            
-            // NEW: Automatically focus the text field to bring up keyboard
+            AppLog.messaging.debug("Opened chat thread")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isTextFieldFocused = true
             }
         }
         .overlay {
-            // Full-screen image viewer
             if let imageData = fullScreenImage {
                 FullScreenImageView(imageData: imageData) {
-                    fullScreenImage = nil // Close the full-screen view
+                    fullScreenImage = nil
                 }
             }
         }
     }
-    
+
     private func scrollToBottom(_ scrollViewProxy: ScrollViewProxy) {
         if let lastMessage = chatMessages.last {
             withAnimation(.easeInOut(duration: 0.3)) {
@@ -180,22 +146,15 @@ struct ChatView: View {
             }
         }
     }
-    
+
     private func sendMessage() {
-        guard !newMessageText.isEmpty, let currentDeviceID = currentDeviceID else { return }
-        let messageText = newMessageText
-        newMessageText = "" // Clear input field immediately
-        
-        print("ChatView: Sending message instantly (no wait): \(messageText)")
-        viewModel.sendMessage(text: messageText, to: recipientDeviceID)
-        
-        // Keep focus on text field for continued typing
+        let trimmed = newMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, currentDeviceID != nil else { return }
+        newMessageText = ""
+        viewModel.sendMessageWithModeration(text: trimmed, to: recipientDeviceID)
         isTextFieldFocused = true
-        
-        // Messages are automatically updated via the real-time subscription
-        // No need to manually refresh - the message will appear when CloudKit confirms it
     }
-    
+
     private func recipientDisplayName() -> String {
         ProfileDisplayNameLogic.chatTitle(
             recipientDeviceID: recipientDeviceID,

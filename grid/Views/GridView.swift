@@ -16,8 +16,6 @@ struct GridView: View {
     @State private var showingSettingsMenu = false
     @State private var showingContactInfo = false  // NEW: For contact info
     @State private var showingBlockedUsers = false  // NEW: For blocked users view
-    @State private var showInterestsOnGrid = false  // NEW: Toggle for showing interests on grid cells (off by default)
-    @State private var showInterestsFilter = true  // NEW: Toggle for showing interests filter section (on by default)
     @State private var storiesMode = UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false  // NEW: Stories mode (default: off)
     @State private var useCircularPhotos = UserDefaults.standard.object(forKey: "circularPhotos") as? Bool ?? true  // NEW: Circular photos (default: on)
     @State private var zoom = GridColumnZoom()
@@ -130,7 +128,6 @@ struct GridView: View {
                     GridNodeView(
                         node: node,
                         viewModel: viewModel,
-                        showInterests: showInterestsOnGrid,
                         useCircularPhotos: shouldUseCircularPhotos,
                         storiesMode: storiesMode,
                         onProfileTapped: handleProfileTapped,
@@ -143,7 +140,6 @@ struct GridView: View {
                         insertion: .scale.combined(with: .opacity),
                         removal: .scale.combined(with: .opacity)
                     ))
-                    .animation(.easeInOut(duration: 0.3), value: viewModel.showingStarredOnly)
                 }
             }
             .padding()
@@ -220,20 +216,9 @@ struct GridView: View {
     var mainGridView: some View {
         NavigationView {
             VStack(spacing: 0) {
-                // Filter indicators
-                if viewModel.showingStarredOnly || !viewModel.selectedInterestFilter.isEmpty {
+                if !viewModel.selectedInterestFilter.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            if viewModel.showingStarredOnly {
-                                FilterChip(
-                                    text: "Starred",
-                                    icon: "star.fill",
-                                    color: .yellow
-                                ) {
-                                    viewModel.showingStarredOnly = false
-                                }
-                            }
-                            
                             ForEach(Array(viewModel.selectedInterestFilter), id: \.self) { interest in
                                 FilterChip(
                                     text: interest.rawValue,
@@ -258,9 +243,7 @@ struct GridView: View {
                     .padding(.vertical, 8)
                 }
                 
-                if showInterestsFilter {
-                    GridInterestBrowseSection(viewModel: viewModel)
-                }
+                GridInterestBrowseSection(viewModel: viewModel)
                 
                 if let profile = viewModel.currentUserProfile {
                     // Grid supports multiple zoom gestures (like Maps):
@@ -276,15 +259,7 @@ struct GridView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationTitle("")
             .onAppear {
-                // Auto-refresh when grid appears
                 viewModel.handleGridAppeared()
-                
-                // Inform user about new zoom gestures
-                print("🔍 Grid Zoom Gestures Available:")
-                print("   • Pinch to zoom in/out")
-                print("   • Double-tap for quick zoom (cycles: 3→2→5→3 columns)")
-                print("   • Long press (0.3s) + drag up/down for continuous zoom (IMPROVED: faster response)")
-                print("   • Fast swipes will scroll normally (not zoom)")
             }
             .onDisappear {
                 // Clean up any pending single tap timer
@@ -293,41 +268,10 @@ struct GridView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    HStack(spacing: 16) {
-                        // Interest filter toggle button (moved to leftmost position)
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                showInterestsFilter.toggle()
-                            }
-                        }) {
-                            ZStack(alignment: .topTrailing) {
-                                Image(systemName: showInterestsFilter ? "heart.fill" : "heart")
-                                    .font(.body)
-                                    .foregroundColor(showInterestsFilter ? .pink : .primary)
-                                
-                                // Show count badge if filters are active
-                                if !viewModel.selectedInterestFilter.isEmpty {
-                                    Text("\(viewModel.selectedInterestFilter.count)")
-                                        .font(.caption2)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.white)
-                                        .frame(width: 16, height: 16)
-                                        .background(Circle().fill(Color.pink))
-                                        .offset(x: 8, y: -8)
-                                }
-                            }
-                        }
-                        
-                        // Star filter button
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                viewModel.showingStarredOnly.toggle()
-                            }
-                        }) {
-                            Image(systemName: viewModel.showingStarredOnly ? "star.fill" : "star")
-                                .font(.body)
-                                .foregroundColor(viewModel.showingStarredOnly ? .yellow : .primary)
-                        }
+                    Button(action: { showingConversationsList = true }) {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                            .font(.body)
+                            .accessibilityLabel("Conversations")
                     }
                 }
                 
@@ -345,10 +289,6 @@ struct GridView: View {
                         }
                         
                         Menu {
-                        Button(action: { showingConversationsList = true }) {
-                            Label("Conversations", systemImage: "message")
-                        }
-                        
                         Button(action: {
                             if let myDeviceID = viewModel.currentUserProfile?.deviceID {
                                 withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
@@ -380,16 +320,6 @@ struct GridView: View {
                         }
                         
                         Divider()
-                        
-                        // Display Settings Section
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                showInterestsOnGrid.toggle()
-                            }
-                        }) {
-                            Label(showInterestsOnGrid ? "Hide Interest Emojis" : "Show Interest Emojis", 
-                                  systemImage: showInterestsOnGrid ? "tag.fill" : "tag")
-                        }
                         
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -435,44 +365,6 @@ struct GridView: View {
                                 Label("Remove Background Photo", systemImage: "photo.slash")
                             }
                         }
-                        
-                        #if DEBUG
-                        // Demo mode is a development/screenshot-only feature and is
-                        // compiled out of release builds.
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                viewModel.demoService.toggleDemoMode()
-                                // Refresh the grid to show demo users or real users
-                                viewModel.refreshPublicGrid()
-                            }
-                        }) {
-                            Label(viewModel.demoService.isDemoMode ? "Exit Demo Mode" : "Demo Mode", 
-                                  systemImage: viewModel.demoService.isDemoMode ? "person.3.fill" : "person.3")
-                        }
-                        
-                        // Debug button for demo mode (only show when demo mode is enabled)
-                        if viewModel.demoService.isDemoMode {
-                            Button(action: {
-                                print("GridView: Manually reloading demo photos...")
-                                viewModel.demoService.reloadDemoPhotos()
-                                // Refresh the grid after reloading photos
-                                viewModel.refreshPublicGrid()
-                            }) {
-                                Label("Reload Demo Photos", systemImage: "arrow.clockwise")
-                            }
-                            
-                            Button(action: {
-                                print("GridView: Shuffling demo photos...")
-                                viewModel.demoService.shufflePhotos()
-                                // Refresh the grid to show reshuffled photos
-                                viewModel.refreshPublicGrid()
-                            }) {
-                                Label("Shuffle Photos", systemImage: "shuffle")
-                            }
-                        }
-                        #endif
-                        
-                        Divider()
                         
                         Button(action: { showingBlockedUsers = true }) {
                             Label("Blocked Users", systemImage: "hand.raised.slash")
@@ -558,14 +450,6 @@ struct GridView: View {
             } message: {
                 Text("Are you sure you want to delete your account? This action cannot be undone.")
             }
-            .alert("Account Recreation Required", isPresented: $viewModel.showingAccountRecreationAlert) {
-                Button("Delete Account", role: .destructive) { 
-                    deleteAccountAction() 
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("Your account contains unencrypted messages. For security, all messaging is now encrypted. Please delete your account and create a new one to continue using the app with full encryption.")
-            }
         }
         .navigationViewStyle(StackNavigationViewStyle()) // Force single column navigation on iPad
         .overlay(
@@ -646,8 +530,6 @@ struct GridView: View {
     
     @MainActor
     func refreshGrid() async {
-        print("GridView: Refreshing grid via pull-to-refresh")
-        
         // Call the viewModel's refresh method
         viewModel.refreshPublicGrid()
         

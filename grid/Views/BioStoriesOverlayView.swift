@@ -17,14 +17,6 @@ struct BioStoriesOverlayView: View {
     @State private var storyTimer: Timer?
     private let storyDuration: TimeInterval = 5.0
     
-    // Pin action feedback
-    @State private var showingPinAlert = false
-    @State private var pinAlertMessage = ""
-    @State private var pinAlertTitle = ""
-    
-    // Track pinned stories to avoid repeated method calls
-    @State private var pinnedStories: Set<String> = []
-    
     private var isCurrentUser: Bool {
         return viewModel.currentUserProfile?.deviceID == userProfile.deviceID
     }
@@ -79,31 +71,20 @@ struct BioStoriesOverlayView: View {
                 }
                 
                 Spacer()
-                
-                // Action buttons
-                HStack(spacing: 16) {
-                    // Star button (only for other users)
-                    if !isCurrentUser {
-                        Button(action: {
-                            viewModel.toggleStar(for: userProfile.deviceID)
-                        }) {
-                            Image(systemName: viewModel.isStarred(userProfile.deviceID) ? "star.fill" : "star")
-                                .font(.title3)
-                                .foregroundColor(viewModel.isStarred(userProfile.deviceID) ? .yellow : .gray)
-                        }
-                    }
-                    
-                    // Close button
-                    Button(action: onClose) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.gray)
-                    }
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.gray)
                 }
             }
             .padding()
             .background(Color(.systemBackground))
-            
+
+            ProfilePinnedStoriesRow(viewModel: viewModel, userProfile: userProfile)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+
             // Stories section
             if isLoading {
                 VStack(spacing: 12) {
@@ -243,21 +224,10 @@ struct BioStoriesOverlayView: View {
                                 StoryThumbnailView(
                                     story: story,
                                     isSelected: index == currentStoryIndex,
-                                    isPinned: pinnedStories.contains(story.id),
-                                    isCurrentUser: isCurrentUser,
                                     onTapped: {
-                                        print("BioStoriesOverlayView: 👆 Story thumbnail tapped: \(story.id)")
-                                        // Jump to selected story
                                         withAnimation(.easeInOut(duration: 0.3)) {
-                                            markCurrentStoryAsViewed() // Mark current as viewed before switching
+                                            markCurrentStoryAsViewed()
                                             currentStoryIndex = index
-                                        }
-                                    },
-                                    onLongPress: { story in
-                                        print("BioStoriesOverlayView: 🔥 Story thumbnail long-pressed: \(story.id)")
-                                        // Handle pin/unpin action
-                                        Task {
-                                            await handlePinAction(for: story)
                                         }
                                     }
                                 )
@@ -301,11 +271,6 @@ struct BioStoriesOverlayView: View {
         .onAppear {
             profileImageLoader.loadImage(from: userProfile.profileImage)
             setupStoryViewing()
-            
-            // Load pinned stories for current user
-            Task {
-                await loadPinnedStories()
-            }
         }
         .onDisappear {
             cleanupStoryViewing()
@@ -313,11 +278,6 @@ struct BioStoriesOverlayView: View {
         .onChange(of: currentStoryIndex) { _ in
             loadCurrentStoryImage()
             restartStoryTimer()
-        }
-        .alert(pinAlertTitle, isPresented: $showingPinAlert) {
-            Button("OK") { }
-        } message: {
-            Text(pinAlertMessage)
         }
     }
     
@@ -433,110 +393,6 @@ struct BioStoriesOverlayView: View {
         }
     }
     
-    /// Load pinned stories for current user
-    private func loadPinnedStories() async {
-        guard isCurrentUser else { return }
-        
-        // Create album if needed first
-        await viewModel.createAlbumIfNeeded()
-        
-        // Get current user's album
-        if let currentProfile = viewModel.currentUserProfile,
-           let album = await viewModel.getAlbum(for: currentProfile.deviceID) {
-            let pinnedStoryIDs = Set(album.photoMetadata.map { $0.storyID })
-            await MainActor.run {
-                pinnedStories = pinnedStoryIDs
-            }
-        }
-    }
-    
-    /// Refresh stories after unpinning to remove expired stories that are no longer protected by pins
-    private func refreshStoriesAfterUnpin(unpinnedStoryID: String) async {
-        guard let filteredStories = await fetchSortedStories() else { return }
-
-        await MainActor.run {
-            let storyStillExists = filteredStories.contains { $0.id == unpinnedStoryID }
-            
-            if !storyStillExists {
-                print("BioStoriesOverlayView: 🗑️ Unpinned story \(unpinnedStoryID) was expired and removed from view")
-            }
-            
-            // Update stories list
-            self.stories = filteredStories
-            
-            // If we removed the current story and it was the last one, go to previous
-            if currentStoryIndex >= stories.count && currentStoryIndex > 0 {
-                currentStoryIndex = stories.count - 1
-            }
-            
-            // If no stories left, close the overlay
-            if stories.isEmpty {
-                print("BioStoriesOverlayView: 📪 No stories remaining after unpin, closing overlay")
-                onClose()
-            } else {
-                // Reload current story image
-                loadCurrentStoryImage()
-                restartStoryTimer()
-            }
-        }
-    }
-    
-    /// Handle pin/unpin action for a story
-    /// - For unpinned stories: Pins them to the user's album (permanent storage)
-    /// - For pinned stories: Unpins them from album (will disappear if expired)
-    private func handlePinAction(for story: Story) async {
-        print("BioStoriesOverlayView: 📌 handlePinAction called for story \(story.id)")
-        
-        let isPinned = pinnedStories.contains(story.id)
-        print("BioStoriesOverlayView: 📌 Story is currently pinned: \(isPinned)")
-        
-        if isPinned {
-            // Unpin the story
-            print("BioStoriesOverlayView: 📌 Unpinning story \(story.id)")
-            let result = await viewModel.unpinStoryFromAlbum(story)
-            
-            await MainActor.run {
-                if result.success {
-                    pinAlertTitle = "Unpinned!"
-                    pinAlertMessage = "Story removed from your album."
-                    // Update local state
-                    pinnedStories.remove(story.id)
-                    
-                    // Refresh stories to check if unpinned expired stories should disappear
-                    Task {
-                        await refreshStoriesAfterUnpin(unpinnedStoryID: story.id)
-                    }
-                } else {
-                    pinAlertTitle = "Error"
-                    pinAlertMessage = result.error ?? "Failed to unpin story."
-                }
-                showingPinAlert = true
-            }
-        } else {
-            // Pin the story
-            print("BioStoriesOverlayView: 📌 Pinning story \(story.id)")
-            let result = await viewModel.pinStoryToAlbum(story)
-            
-            await MainActor.run {
-                if result.success {
-                    pinAlertTitle = "Pinned!"
-                    pinAlertMessage = "Story added to your album."
-                    // Update local state
-                    pinnedStories.insert(story.id)
-                } else if result.albumFull {
-                    pinAlertTitle = "Album Full"
-                    pinAlertMessage = "Your album can only hold \(Album.maxPhotos) photos. Remove some to add more."
-                } else if result.alreadyPinned {
-                    pinAlertTitle = "Already Pinned"
-                    pinAlertMessage = "This story is already in your album."
-                } else {
-                    pinAlertTitle = "Error"
-                    pinAlertMessage = result.error ?? "Failed to pin story."
-                }
-                showingPinAlert = true
-            }
-        }
-    }
 }
 
 struct BioStoriesOverlayView_Previews: PreviewProvider {

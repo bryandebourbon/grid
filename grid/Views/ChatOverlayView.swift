@@ -92,7 +92,7 @@ struct ChatOverlayView: View {
         .onAppear {
             // When the view appears, ensure the viewModel knows which device we're chatting with
             viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
-            print("ChatOverlayView: Opened chat with \(recipientDeviceID)")
+            AppLog.messaging.debug("Opened chat overlay")
             
             // Mark all messages from this device as read
             viewModel.markMessagesAsRead(from: recipientDeviceID)

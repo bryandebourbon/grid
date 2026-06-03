@@ -46,21 +46,26 @@ extension GridViewModel {
         return .failure(saveResult.error ?? "Failed to save album")
     }
 
-    func unpinStoryFromAlbum(_ story: Story) async -> PinResult {
+    func unpinStoryIDFromAlbum(_ storyID: String) async -> PinResult {
         guard let currentProfile = currentUserProfile else {
             return .failure("No current user profile")
         }
         guard var album = userAlbums[currentProfile.deviceID] else {
             return .failure("No album found")
         }
-        let unpinResult = albumService.unpinStory(story, from: &album)
-        guard unpinResult.success else { return unpinResult }
+        guard album.removePhoto(storyID: storyID) else {
+            return .failure("Story not found in album")
+        }
         let saveResult = await albumService.saveAlbum(album)
         if saveResult.success, let saved = saveResult.album {
             userAlbums[currentProfile.deviceID] = saved
             return .success()
         }
         return .failure(saveResult.error ?? "Failed to save album")
+    }
+
+    func unpinStoryFromAlbum(_ story: Story) async -> PinResult {
+        await unpinStoryIDFromAlbum(story.id)
     }
 
     func getAlbum(for deviceID: String) async -> Album? {
@@ -96,13 +101,11 @@ extension GridViewModel {
 
     /// Load current user's album from CloudKit on app startup
     func loadCurrentUserAlbum(forDeviceID deviceID: String, completion: @escaping () -> Void = {}) {
-        print("GridViewModel: 📁 Loading album for device: \(deviceID)")
-        
         Task {
             if let album = await getAlbum(for: deviceID) {
-                print("GridViewModel: ✅ Loaded album \(album.id) with \(album.photosCount) photos")
+                AppLog.album.debug("Loaded album with \(album.photosCount, privacy: .public) pinned photos")
             } else {
-                print("GridViewModel: ℹ️ No album found for device: \(deviceID)")
+                AppLog.album.debug("No album for device")
             }
             
             await MainActor.run {

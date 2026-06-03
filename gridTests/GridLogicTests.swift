@@ -148,12 +148,9 @@ struct GridProfileFilterLogicTests {
         ]
         let filtered = GridProfileFilterLogic.applyDisplayFilters(
             to: profiles,
-            showingStarredOnly: false,
-            starredUserIDs: [],
             blockedUserIDs: ["blocked"],
             usersWhoBlockedMe: [],
-            selectedInterestFilter: [],
-            isDemoMode: false
+            selectedInterestFilter: []
         )
         #expect(filtered.map(\.userID) == ["ok"])
     }
@@ -162,17 +159,14 @@ struct GridProfileFilterLogicTests {
         let profiles = [profile(userID: "hostile", deviceID: "h1")]
         let filtered = GridProfileFilterLogic.applyDisplayFilters(
             to: profiles,
-            showingStarredOnly: false,
-            starredUserIDs: [],
             blockedUserIDs: [],
             usersWhoBlockedMe: ["hostile"],
-            selectedInterestFilter: [],
-            isDemoMode: false
+            selectedInterestFilter: []
         )
         #expect(filtered.isEmpty)
     }
 
-    @Test func applyDisplayFiltersStarredBlockAndInterestsCombined() {
+    @Test func applyDisplayFiltersBlockAndInterestsCombined() {
         let profiles = [
             profile(userID: "star", deviceID: "s1", interests: [.music]),
             profile(userID: "blocked", deviceID: "b1"),
@@ -182,34 +176,12 @@ struct GridProfileFilterLogicTests {
 
         let filtered = GridProfileFilterLogic.applyDisplayFilters(
             to: profiles,
-            showingStarredOnly: true,
-            starredUserIDs: ["star", "match"],
             blockedUserIDs: ["blocked"],
             usersWhoBlockedMe: [],
-            selectedInterestFilter: [.foodie],
-            isDemoMode: false
+            selectedInterestFilter: [.foodie]
         )
 
         #expect(filtered.map(\.userID) == ["match"])
-    }
-
-    @Test func demoModeSkipsStarAndBlockFilters() {
-        let profiles = [
-            profile(userID: "blocked", deviceID: "b1"),
-            profile(userID: "other", deviceID: "o1"),
-        ]
-
-        let filtered = GridProfileFilterLogic.applyDisplayFilters(
-            to: profiles,
-            showingStarredOnly: true,
-            starredUserIDs: [],
-            blockedUserIDs: ["blocked"],
-            usersWhoBlockedMe: [],
-            selectedInterestFilter: [],
-            isDemoMode: true
-        )
-
-        #expect(filtered.count == 2)
     }
 }
 

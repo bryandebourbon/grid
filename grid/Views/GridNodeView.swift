@@ -7,7 +7,6 @@ import UIKit
 struct GridNodeView: View {
     let node: GridNode
     let viewModel: GridViewModel
-    let showInterests: Bool
     let useCircularPhotos: Bool
     let storiesMode: Bool
     let onProfileTapped: (UserProfile) -> Void // For long press or single tap (when not in stories mode)
@@ -121,39 +120,6 @@ struct GridNodeView: View {
                             Spacer()
                         }
                         .padding(.horizontal, 4)
-                        
-                        // Interests emojis at the very bottom
-                        if showInterests && !profile.interests.isEmpty {
-                            GeometryReader { geometry in
-                                let cellWidth = geometry.size.width
-                                let emojiSize: CGFloat = max(8, min(12, cellWidth / 10)) // Responsive emoji size
-                                let maxEmojis = max(3, Int(cellWidth / (emojiSize + 2))) // More emojis for larger cells
-                                
-                                HStack(spacing: 1) {
-                                    ForEach(Array(profile.interests.prefix(maxEmojis).enumerated()), id: \.offset) { index, interest in
-                                        Text(interest.emoji)
-                                            .font(.system(size: emojiSize))
-                                            .opacity(0.9)
-                                    }
-                                    
-                                    // Show "+X" if there are more interests
-                                    if profile.interests.count > maxEmojis {
-                                        Text("+\(profile.interests.count - maxEmojis)")
-                                            .font(.system(size: emojiSize - 1, weight: .medium))
-                                            .foregroundColor(.white)
-                                            .opacity(0.8)
-                                    }
-                                    
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(Color.black.opacity(0.3))
-                                )
-                            }
-                            .frame(height: 16)
-                        }
                     }
                     .padding(.bottom, 4)
                 }
