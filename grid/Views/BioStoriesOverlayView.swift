@@ -334,35 +334,30 @@ struct BioStoriesOverlayView: View {
     }
     
     private func loadStories() async {
+        await MainActor.run { isLoading = true }
+
+        guard let sorted = await fetchSortedStories() else {
+            await MainActor.run { isLoading = false }
+            return
+        }
+
         await MainActor.run {
-            isLoading = true
-        }
-        
-        do {
-            guard let viewerDeviceID = viewModel.currentUserProfile?.deviceID else {
-                await MainActor.run { isLoading = false }
-                return
-            }
-            let result = await viewModel.storiesService.getStoriesForDevice(
-                userProfile.deviceID,
-                viewerDeviceID: viewerDeviceID
-            )
-            
-            await MainActor.run {
-                self.stories = result.stories.sorted { $0.timestamp > $1.timestamp }
-                self.isLoading = false
-                
-                if !stories.isEmpty {
-                    loadCurrentStoryImage()
-                    startStoryTimer()
-                }
-            }
-        } catch {
-            await MainActor.run {
-                print("BioStoriesOverlayView: Error loading stories: \(error)")
-                isLoading = false
+            stories = sorted
+            isLoading = false
+            if !stories.isEmpty {
+                loadCurrentStoryImage()
+                startStoryTimer()
             }
         }
+    }
+
+    private func fetchSortedStories() async -> [Story]? {
+        guard let viewerDeviceID = viewModel.currentUserProfile?.deviceID else { return nil }
+        let result = await viewModel.storiesService.getStoriesForDevice(
+            userProfile.deviceID,
+            viewerDeviceID: viewerDeviceID
+        )
+        return result.stories.sorted { $0.timestamp > $1.timestamp }
     }
     
     private func loadCurrentStoryImage() {
@@ -457,17 +452,9 @@ struct BioStoriesOverlayView: View {
     
     /// Refresh stories after unpinning to remove expired stories that are no longer protected by pins
     private func refreshStoriesAfterUnpin(unpinnedStoryID: String) async {
-        // Reload stories from CloudKit (which automatically filters expired ones)
-        guard let viewerDeviceID = viewModel.currentUserProfile?.deviceID else { return }
-        let result = await viewModel.storiesService.getStoriesForDevice(
-            userProfile.deviceID,
-            viewerDeviceID: viewerDeviceID
-        )
-        
+        guard let filteredStories = await fetchSortedStories() else { return }
+
         await MainActor.run {
-            let filteredStories = result.stories.sorted { $0.timestamp > $1.timestamp }
-            
-            // Check if the unpinned story should be removed (if expired)
             let storyStillExists = filteredStories.contains { $0.id == unpinnedStoryID }
             
             if !storyStillExists {

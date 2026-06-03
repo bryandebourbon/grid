@@ -23,13 +23,6 @@ extension StoriesService {
         return story
     }
 
-    func storiesForViewer(
-        deviceID: String,
-        viewerDeviceID: String
-    ) async -> (stories: [Story], hasUnviewed: Bool) {
-        await getStoriesForDevice(deviceID, viewerDeviceID: viewerDeviceID)
-    }
-
     func hasUnviewedStories(for deviceID: String, viewerDeviceID: String) async -> Bool {
         let result = await getStoriesForDevice(deviceID, viewerDeviceID: viewerDeviceID)
         return result.hasUnviewed

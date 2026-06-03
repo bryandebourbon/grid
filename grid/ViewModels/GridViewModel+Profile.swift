@@ -14,51 +14,9 @@ extension GridViewModel {
         updateUserActivityAndLocation(profile) // NEW: Use activity-based saving
         placeCurrentUserOnGrid()
         print("GridViewModel: Set current user profile for device ID \(profile.deviceID) (user: \(profile.userID))")
-        
-        // Automatically enable encryption for all users
-        enableEncryptionOnlyMode()
-        
-        // Load encryption profiles first, then other data
-        loadEncryptionProfiles { [weak self] in
-            guard let self = self else { return }
-            
-                    // Load star/block relationships after encryption profiles
-        print("GridViewModel: Loading star/block relationships...")
-        self.loadStarBlockRelationships(forUserID: profile.userID) { [weak self] in
-            guard let self = self else { return }
-            
-            // After star/block relationships, load read receipts
-            print("GridViewModel: Loading read receipts...")
-            self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
-                guard let self = self else { return }
-                
-                // Load story views to restore viewed/unviewed state
-                print("GridViewModel: Loading story views...")
-                self.storiesService.loadStoryViewsForViewer(deviceID: profile.deviceID) { [weak self] in
-                    guard let self = self else { return }
-                    
-                    // Load current user's album to restore pin state
-                    print("GridViewModel: Loading user album...")
-                    self.loadCurrentUserAlbum(forDeviceID: profile.deviceID) { [weak self] in
-                        guard let self = self else { return }
-                        
-                        // Finally, fetch messages after all persistent state is loaded
-                        print("GridViewModel: Preloading all messages for instant chat access...")
-                        self.fetchAllMessagesForCurrentDevice(deviceID: profile.deviceID)
-                        
-                        // Check for unencrypted messages after loading
-                        self.checkForUnencryptedMessages()
-                        
-                        // Load stories data
-                        Task {
-                            await self.storiesService.refreshStories()
-                        }
-                    }
-                }
-            }
-        }
-        }
-        
+
+        bootstrapSession(for: profile)
+
         // Subscribe to message changes immediately
         messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         
@@ -126,22 +84,18 @@ extension GridViewModel {
             messages: messages,
             displayNameLookup: { [weak self] otherDeviceID in
                 guard let self = self else {
-                    return "Device \(String(otherDeviceID.prefix(8)))"
+                    return ProfileDisplayNameLogic.chatTitle(
+                        recipientDeviceID: otherDeviceID,
+                        currentDeviceID: nil,
+                        gridNodes: []
+                    )
                 }
-                if let profile = self.findNode(forDeviceID: otherDeviceID)?.userProfile {
-                    return profile.displayName
-                }
-                return "Device \(String(otherDeviceID.prefix(8)))"
+                return self.displayName(forDeviceID: otherDeviceID)
             }
         )
         .map { ($0.deviceID, $0.displayName, $0.lastMessage, $0.messageCount) }
     }
     
-    // LEGACY: Keep for backwards compatibility
-    func saveProfileToPublicGrid(_ profile: UserProfile) {
-        updateUserActivityAndLocation(profile)
-    }
-
     func updateCurrentProfileImage(newPhotoData: Data?) {
         guard currentUserProfile != nil else {
             print("Cannot update profile image, currentUserProfile is nil.")

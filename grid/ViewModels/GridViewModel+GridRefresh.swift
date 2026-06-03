@@ -287,45 +287,23 @@ extension GridViewModel {
     
     // Force refresh the grid by fetching all users again
     func forceRefreshGrid() {
-        print("🔄 ========== FORCE REFRESH GRID ==========")
-        print("🔄 Current blockedUsers: \(blockedUsers)")
-        print("🔄 Current usersWhoBlockedMe: \(usersWhoBlockedMe)")
-        print("🔄 Calling proximityService.fetchAllUsers...")
-        
+        #if DEBUG
+        print("GridViewModel: forceRefreshGrid blocked=\(blockedUsers.count) blockedMe=\(usersWhoBlockedMe.count)")
+        #endif
+
         if let currentLocation = locationService.currentLocation {
-            print("🔄 Using current location: \(currentLocation.coordinate)")
             proximityService.fetchAllUsers(currentUserLocation: currentLocation)
         } else {
-            print("🔄 No current location available, fetching without location")
             proximityService.fetchAllUsers()
         }
     }
-    
-    // Refresh grid using current local state without fetching from CloudKit
+
+    /// Re-layout the grid from cached nearby profiles (no CloudKit round-trip).
     func refreshGridWithCurrentState() {
-        print("🔄 ========== REFRESH GRID WITH CURRENT STATE ==========")
-        print("🔄 blockedUsers.count: \(blockedUsers.count)")
-        print("🔄 blockedUsers: \(blockedUsers)")
-        print("🔄 usersWhoBlockedMe.count: \(usersWhoBlockedMe.count)")
-        print("🔄 usersWhoBlockedMe: \(usersWhoBlockedMe)")
-        
-        // Use the current cached profiles and apply current blocking filters
-        let profiles = proximityService.activeNearbyProfiles
-        print("🔄 proximityService.activeNearbyProfiles.count: \(profiles.count)")
-        for (index, profile) in profiles.enumerated() {
-            print("🔄 Profile \(index): \(profile.displayName) (userID: \(profile.userID))")
-        }
-        
-        print("🔄 Calling updateGridWithAllProfiles with \(profiles.count) profiles")
-        updateGridWithAllProfiles(profiles)
-        
-        // Wait a moment, then do a full refresh to ensure consistency
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            print("🔄 ========== DELAYED FULL REFRESH ==========")
-            print("🔄 Following up with full refresh to ensure consistency")
-            print("🔄 blockedUsers before full refresh: \(self.blockedUsers)")
-            self.forceRefreshGrid()
-        }
+        #if DEBUG
+        print("GridViewModel: refreshGridWithCurrentState profiles=\(proximityService.activeNearbyProfiles.count)")
+        #endif
+        updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
     }
     
     // NEW: Check if sender is in grid, if not fetch their profile and add them

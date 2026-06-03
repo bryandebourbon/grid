@@ -9,23 +9,14 @@ struct ChatOverlayView: View {
     let recipientDeviceID: String
     let onClose: () -> Void
     
-    // Helper to get recipient display name
     private func recipientDisplayName() -> String {
-        if recipientDeviceID == viewModel.currentUserProfile?.deviceID {
-            return "My Notes"
-        }
-        
-        // Find the recipient's profile to get their display name
-        for row in viewModel.gridNodes {
-            for node in row {
-                if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
-                    return profile.deviceName ?? "User"
-                }
-            }
-        }
-        return "Chat"
+        ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: recipientDeviceID,
+            currentDeviceID: viewModel.currentUserProfile?.deviceID,
+            gridNodes: viewModel.gridNodes
+        )
     }
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Header bar

@@ -112,41 +112,7 @@ class GridViewModel: ObservableObject {
         if let profile = initialProfile {
             updateUserActivityAndLocation(profile)
             placeCurrentUserOnGrid()
-            
-            // Automatically enable encryption for all users
-            enableEncryptionOnlyMode()
-            
-            // Load encryption profiles first, then other data
-            loadEncryptionProfiles { [weak self] in
-                guard let self = self else { return }
-                
-                // After encryption profiles are loaded, load read receipts
-                self.loadReadReceipts(forDeviceID: profile.deviceID) { [weak self] in
-                    guard let self = self else { return }
-                    
-                    // Load story views to restore viewed/unviewed state
-                    self.storiesService.loadStoryViewsForViewer(deviceID: profile.deviceID) { [weak self] in
-                        guard let self = self else { return }
-                        
-                        // Load current user's album to restore pin state
-                        self.loadCurrentUserAlbum(forDeviceID: profile.deviceID) { [weak self] in
-                            guard let self = self else { return }
-                            
-                            // Finally, fetch messages after all persistent state is loaded
-                            self.fetchMessagesForCurrentDevice(deviceID: profile.deviceID)
-                            // Check for unencrypted messages after loading
-                            self.checkForUnencryptedMessages()
-                            
-                            // Load stories data
-                            Task {
-                                await self.storiesService.refreshStories()
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Subscribe to new messages
+            bootstrapSession(for: profile)
             messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         }
         
@@ -179,12 +145,6 @@ class GridViewModel: ObservableObject {
         objectWillChange.send()
     }
     
-    // LEGACY: Keep for backwards compatibility but prefer proximity-based updates
-    private func updateGridWithPublicProfiles(_ profiles: [UserProfile]) {
-        // This method is now mainly for fallback when location is not available
-        updateGridWithAllProfiles(profiles)
-    }
-    
     func placeProfileOnGrid(_ profile: UserProfile) {
         guard let slot = GridPlacementLogic.firstEmptySlot(in: gridNodes) else {
             print("Grid is full! Cannot place device with ID \(profile.deviceID)")
@@ -211,14 +171,6 @@ class GridViewModel: ObservableObject {
         objectWillChange.send()
     }
     
-    // LEGACY: Keep for backward compatibility but now uses preloaded messages
-    func fetchMessagesForCurrentDevice(deviceID: String) {
-        print("GridViewModel: Using preloaded messages (no CloudKit fetch needed)")
-        // Messages are already loaded and kept up-to-date via real-time subscription
-        // This method is kept for compatibility but doesn't need to do anything
-        print("GridViewModel: \(messages.count) messages already available instantly")
-    }
-
     func initializeGrid() {
         gridNodes = GridPlacementLogic.makeEmptyGrid(size: gridSize)
     }
