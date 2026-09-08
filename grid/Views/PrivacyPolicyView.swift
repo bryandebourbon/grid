@@ -12,7 +12,7 @@ struct PrivacyPolicyView: View {
                         .fontWeight(.bold)
                         .padding(.top)
                     
-                    Text("Last updated: \(Date().formatted(date: .abbreviated, time: .omitted))")
+                    Text("Last updated: \(AppSupport.legalLastUpdated)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
@@ -214,7 +214,7 @@ struct PrivacyPolicyView: View {
                                 Text("For privacy questions or to exercise your rights:")
                                     .font(.body)
                                 
-                                Link("Email: bdebourbon@me.com", destination: URL(string: "mailto:bdebourbon@me.com")!)
+                                Link("Email: \(AppSupport.email)", destination: AppSupport.mailtoURL)
                                     .font(.body)
                                     .foregroundColor(.blue)
                                 

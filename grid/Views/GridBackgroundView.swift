@@ -4,7 +4,6 @@ import UIKit
 #endif
 
 struct GridBackgroundView: View {
-    let backgroundColor: Color
     let backgroundImage: Image?
 
     var body: some View {
@@ -22,7 +21,7 @@ struct GridBackgroundView: View {
             }
             .ignoresSafeArea(.all)
         } else {
-            backgroundColor
+            Color(.systemBackground)
         }
     }
 }

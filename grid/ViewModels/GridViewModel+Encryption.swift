@@ -51,6 +51,9 @@ extension GridViewModel {
     
     // Decrypt message for display
     func decryptMessage(_ message: Message) -> String {
+        if let cached = decryptedTextCache[message.id] {
+            return cached
+        }
         guard message.isEncrypted,
               let encryptedContentString = message.encryptedContent,
               let encryptedContent = Data(base64Encoded: encryptedContentString),  // Convert from base64 string
@@ -58,15 +61,17 @@ extension GridViewModel {
             return message.text
         }
         
-        if let decryptedText = CryptoService.shared.decrypt(data: encryptedContent, withPrivateKey: privateKey) {
-            return decryptedText
-        } else {
-            return "[Failed to decrypt message]"
-        }
+        let text = CryptoService.shared.decrypt(data: encryptedContent, withPrivateKey: privateKey)
+            ?? "[Failed to decrypt message]"
+        decryptedTextCache[message.id] = text
+        return text
     }
     
     // Decrypt image for display
     func decryptImageMessage(_ message: Message) -> Data? {
+        if let cached = decryptedImageCache[message.id] {
+            return cached
+        }
         guard message.isEncrypted,
               let encryptedImageDataString = message.encryptedImageData,
               let encryptedImageData = Data(base64Encoded: encryptedImageDataString),
@@ -75,6 +80,7 @@ extension GridViewModel {
         }
         
         if let decryptedImageData = CryptoService.shared.decryptImage(data: encryptedImageData, withPrivateKey: privateKey) {
+            decryptedImageCache[message.id] = decryptedImageData
             return decryptedImageData
         } else {
             print("Failed to decrypt image message")
@@ -128,8 +134,7 @@ extension GridViewModel {
         let moderationResult = contentModerationService.isMessageAppropriate(text)
         
         if !moderationResult.isAppropriate {
-            print("Message blocked by content filter: \(moderationResult.reason ?? "Unknown reason")")
-            // You could show an alert here to inform the user
+            presentUserFacingAlert(moderationResult.reason ?? "That message was blocked by the content filter.")
             return
         }
         
@@ -173,8 +178,7 @@ extension GridViewModel {
         let moderationResult = contentModerationService.isImageAppropriate(newPhotoData)
         
         if !moderationResult.isAppropriate {
-            print("Image blocked by content filter: \(moderationResult.reason ?? "Unknown reason")")
-            // You could show an alert here to inform the user
+            presentUserFacingAlert(moderationResult.reason ?? "That image was blocked by the content filter.")
             return
         }
         #endif
@@ -222,22 +226,40 @@ extension GridViewModel {
     // MARK: - Interest Filter Methods
     
     /// Toggle interest filter on/off
+    func addCustomInterest(named name: String, emoji: String) {
+        guard let interest = CustomInterestStore.add(name: name, emoji: emoji) else { return }
+        openInterestPage(interest)
+        objectWillChange.send()
+    }
+
+    func focusInterestForNearby(_ interest: Interest) {
+        openInterestPage(interest)
+    }
+
     func toggleInterestFilter(_ interest: Interest) {
         if selectedInterestFilter.contains(interest) {
             selectedInterestFilter.remove(interest)
+            if lastTappedInterest == interest {
+                lastTappedInterest = selectedInterestFilter.sorted { $0.rawValue < $1.rawValue }.first
+            }
         } else {
             selectedInterestFilter.insert(interest)
+            lastTappedInterest = interest
         }
     }
     
     /// Remove specific interest from filter
     func removeInterestFilter(_ interest: Interest) {
         selectedInterestFilter.remove(interest)
+        if lastTappedInterest == interest {
+            lastTappedInterest = selectedInterestFilter.sorted { $0.rawValue < $1.rawValue }.first
+        }
     }
     
     /// Clear all interest filters
     func clearInterestFilter() {
         selectedInterestFilter.removeAll()
+        lastTappedInterest = nil
     }
     
     /// Check if interest filter is active

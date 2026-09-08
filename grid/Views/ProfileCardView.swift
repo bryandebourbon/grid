@@ -7,10 +7,13 @@ import UIKit
 struct ProfileCardView: View {
     @ObservedObject var viewModel: GridViewModel
     let userProfile: UserProfile
+    var showsNavigationChrome: Bool = true
     @Environment(\.dismiss) var dismiss
     let onChatTapped: (String) -> Void
 
     @State private var bioText: String = ""
+    @State private var nameText: String = ""
+    @State private var isEditingName: Bool = false
     @State private var isEditingBio: Bool = false
     @State private var isEditingInterests: Bool = false
     @State private var selectedInterests: Set<Interest> = []
@@ -28,9 +31,24 @@ struct ProfileCardView: View {
     }
 
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+        Group {
+            if showsNavigationChrome {
+                NavigationView {
+                    profileScroll
+                }
+                .navigationViewStyle(StackNavigationViewStyle())
+            } else {
+                profileScroll
+            }
+        }
+        .sheet(isPresented: $isEditingPhoto) {
+            photoEditorSheet
+        }
+    }
+
+    private var profileScroll: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
                     // Main Profile Photo Section
                     VStack(spacing: 12) {
                         HStack {
@@ -53,9 +71,40 @@ struct ProfileCardView: View {
                             Spacer()
                         }
 
-                        Text(userProfile.deviceName ?? "User")
-                            .font(.title)
-                            .frame(maxWidth: .infinity, alignment: .center)
+                        if isCurrentUserProfile && isEditingName {
+                            TextField("Your name", text: $nameText)
+                                .textContentType(.name)
+                                .textInputAutocapitalization(.words)
+                                .multilineTextAlignment(.center)
+                                .font(.title)
+                            HStack {
+                                Button("Cancel") {
+                                    isEditingName = false
+                                    nameText = viewModel.currentUserProfile?.displayName ?? ""
+                                }
+                                .foregroundColor(.secondary)
+                                Spacer()
+                                Button("Save Name") {
+                                    viewModel.updatePersonName(nameText) { success in
+                                        if success {
+                                            isEditingName = false
+                                        }
+                                    }
+                                }
+                                .disabled(!ProfileDisplayNameLogic.isUsablePersonName(nameText))
+                            }
+                            .font(.caption)
+                        } else {
+                            Text(userProfile.displayName)
+                                .font(.title)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .onTapGesture {
+                                    if isCurrentUserProfile {
+                                        nameText = viewModel.currentUserProfile?.displayName ?? userProfile.displayName
+                                        isEditingName = true
+                                    }
+                                }
+                        }
 
                         ProfilePinnedStoriesRow(viewModel: viewModel, userProfile: userProfile)
 
@@ -211,112 +260,104 @@ struct ProfileCardView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") { dismiss() }
-                }
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    // Star button
-                    if !isCurrentUserProfile {
-                        Button(action: {
-                            viewModel.toggleStar(for: userProfile.deviceID)
-                        }) {
-                            Image(systemName: viewModel.isStarred(userProfile.deviceID) ? "star.fill" : "star")
-                                .foregroundColor(viewModel.isStarred(userProfile.deviceID) ? .yellow : .primary)
-                        }
-                    }
-                    
-                    // Chat Button
-                    if !isCurrentUserProfile {
-                        Button("Chat") {
-                            dismiss()
-                            onChatTapped(userProfile.deviceID)
-                        }
-                    } else {
-                        Button("My Notes") {
-                            dismiss()
-                            onChatTapped(userProfile.deviceID)
-                        }
-                    }
-                    
-                    // Block button
-                    if !isCurrentUserProfile {
-                        Menu {
-                            Button(action: {
-                                viewModel.toggleBlock(for: userProfile.deviceID)
-                            }) {
-                                Label(viewModel.isBlocked(userProfile.deviceID) ? "Unblock" : "Block", 
-                                      systemImage: viewModel.isBlocked(userProfile.deviceID) ? "nosign" : "hand.raised")
-                            }
-                            
-                            Divider()
-                            
-                            Button(action: {
-                                dismiss()
-                                viewModel.selectedUserProfileForReport = ProfileCardUser(id: userProfile.deviceID, userProfile: userProfile)
-                            }) {
-                                Label("Report User", systemImage: "exclamationmark.shield")
-                            }
-                            .foregroundColor(.red)
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
-                    }
-                }
-            }
             .onAppear {
                 mainImageLoader.loadImage(from: userProfile.profileImage)
+                nameText = isCurrentUserProfile ? (viewModel.currentUserProfile?.displayName ?? userProfile.displayName) : userProfile.displayName
                 bioText = isCurrentUserProfile ? (viewModel.currentUserProfile?.bio ?? "") : (userProfile.bio ?? "")
                 selectedInterests = Set(isCurrentUserProfile ? (viewModel.currentUserProfile?.interests ?? []) : userProfile.interests)
             }
-        }
-        .navigationViewStyle(StackNavigationViewStyle())
-        .sheet(isPresented: $isEditingPhoto) {
-            NavigationView {
-                VStack(spacing: 20) {
-                    Text("Edit Profile Photo")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .padding(.top)
-                    
-                    CircularPhotoEditor(
-                        selectedPhotoData: $selectedMainPhotoData,
-                        circleSize: 250,
-                        placeholder: "Update Profile Photo",
-                        onPhotoChanged: { _ in
-                            // Photo was changed, will be saved when user taps Done
-                        }
-                    )
-                    
-                    Spacer()
-                }
-                .padding()
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if showsNavigationChrome {
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") {
-                            selectedMainPhotoData = nil
-                            isEditingPhoto = false
-                        }
+                        Button("Close") { dismiss() }
                     }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") {
-                            saveMainPhoto()
-                            isEditingPhoto = false
+                    ToolbarItemGroup(placement: .navigationBarTrailing) {
+                        if !isCurrentUserProfile {
+                            Button(action: {
+                                viewModel.requestStar(for: userProfile.deviceID)
+                            }) {
+                                Image(systemName: viewModel.isStarred(userProfile.deviceID) ? "star.fill" : "star")
+                                    .foregroundColor(viewModel.isStarred(userProfile.deviceID) ? .yellow : .primary)
+                            }
+                            .starGroupPopover(viewModel: viewModel, deviceID: userProfile.deviceID)
                         }
-                        .disabled(selectedMainPhotoData == nil)
+
+                        if !isCurrentUserProfile {
+                            Button("Chat") {
+                                dismiss()
+                                onChatTapped(userProfile.deviceID)
+                            }
+                        }
+
+                        if !isCurrentUserProfile && !LocalLLMIdentity.isLLM(userProfile.deviceID) {
+                            Menu {
+                                Button(action: {
+                                    viewModel.toggleBlock(for: userProfile.deviceID)
+                                }) {
+                                    Label(viewModel.isBlocked(userProfile.deviceID) ? "Unblock" : "Block",
+                                          systemImage: viewModel.isBlocked(userProfile.deviceID) ? "nosign" : "hand.raised")
+                                }
+
+                                Divider()
+
+                                Button(action: {
+                                    dismiss()
+                                    viewModel.selectedUserProfileForReport = ProfileCardUser(id: userProfile.deviceID, userProfile: userProfile)
+                                }) {
+                                    Label("Report User", systemImage: "exclamationmark.shield")
+                                }
+                                .foregroundColor(.red)
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                            }
+                        }
                     }
                 }
             }
-            .onAppear {
-                // Initialize with current photo if available
-                if let currentImage = userProfile.profileImage,
-                   let url = currentImage.fileURL,
-                   let data = try? Data(contentsOf: url) {
-                    selectedMainPhotoData = data
+    }
+
+    private var photoEditorSheet: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Edit Profile Photo")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
+
+                CircularPhotoEditor(
+                    selectedPhotoData: $selectedMainPhotoData,
+                    circleSize: 250,
+                    placeholder: "Update Profile Photo",
+                    onPhotoChanged: { _ in }
+                )
+
+                Spacer()
+            }
+            .padding()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        selectedMainPhotoData = nil
+                        isEditingPhoto = false
+                    }
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        saveMainPhoto()
+                        isEditingPhoto = false
+                    }
+                    .disabled(selectedMainPhotoData == nil)
+                }
+            }
+        }
+        .onAppear {
+            if let currentImage = userProfile.profileImage,
+               let url = currentImage.fileURL,
+               let data = try? Data(contentsOf: url) {
+                selectedMainPhotoData = data
             }
         }
     }

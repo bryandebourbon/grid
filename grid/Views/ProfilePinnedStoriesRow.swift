@@ -1,14 +1,16 @@
 import SwiftUI
 import CloudKit
+import PhotosUI
 
-/// Up to three stories the profile owner pinned under their photo (visible on bio/profile).
+/// Five equal-width pinnable photo slots that span the available width.
 struct ProfilePinnedStoriesRow: View {
     @ObservedObject var viewModel: GridViewModel
     let userProfile: UserProfile
+    var showsTitle = true
+    var photoShape: GridPhotoShape = .card
 
     @State private var album: Album?
-    @State private var showingPinPicker = false
-    @State private var pinCandidates: [Story] = []
+    @State private var pickerItem: PhotosPickerItem?
     @State private var pinAlertTitle = ""
     @State private var pinAlertMessage = ""
     @State private var showingPinAlert = false
@@ -17,51 +19,42 @@ struct ProfilePinnedStoriesRow: View {
         viewModel.currentUserProfile?.deviceID == userProfile.deviceID
     }
 
+    private var slotAspect: CGFloat {
+        GridCellLayout.widthOverHeight(square: photoShape.usesSquareProportion)
+    }
+
+    private let tileHeight: CGFloat = 88
+    private let albumCorner: CGFloat = 12
+
+    private var tileWidth: CGFloat {
+        tileHeight * slotAspect
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Pinned Stories")
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            if showsTitle {
+                Text("Album")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-            if let album, !album.photoMetadata.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(Array(album.photoMetadata.enumerated()), id: \.element.id) { index, metadata in
-                            if index < album.pinnedPhotos.count {
-                                PinnedStoryThumbnail(asset: album.pinnedPhotos[index], caption: metadata.caption) {
-                                    if isOwner {
-                                        Task { await unpin(storyID: metadata.storyID) }
-                                    }
-                                }
-                            }
-                        }
-
-                        if isOwner, album.hasSpace {
-                            addPinButton
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(0..<Album.maxPhotos, id: \.self) { index in
+                        slot(at: index)
+                            .frame(height: tileHeight)
                     }
                 }
-            } else if isOwner {
-                HStack(spacing: 10) {
-                    Text("Pin up to 3 of your stories for others to see here.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer(minLength: 0)
-                    addPinButton
-                }
-            } else {
-                Text("No pinned stories")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .italic()
             }
+            .animation(.easeInOut(duration: 0.28), value: photoShape)
         }
         .task(id: userProfile.deviceID) {
             album = await viewModel.getAlbum(for: userProfile.deviceID)
         }
-        .sheet(isPresented: $showingPinPicker) {
-            pinPickerSheet
+        .onChange(of: pickerItem) { newItem in
+            guard let newItem else { return }
+            Task { await pinPickedPhoto(newItem) }
         }
         .alert(pinAlertTitle, isPresented: $showingPinAlert) {
             Button("OK", role: .cancel) {}
@@ -70,80 +63,62 @@ struct ProfilePinnedStoriesRow: View {
         }
     }
 
-    private var addPinButton: some View {
-        Button {
-            Task { await preparePinPicker() }
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title2)
-                Text("Pin")
-                    .font(.caption2)
-            }
-            .foregroundColor(.blue)
-            .frame(width: 60, height: 80)
-            .background(Color.blue.opacity(0.08))
-            .cornerRadius(8)
+    @ViewBuilder
+    private func slot(at index: Int) -> some View {
+        let metadata = album.flatMap { album in
+            index < album.photoMetadata.count ? album.photoMetadata[index] : nil
         }
-        .disabled(!isOwner)
-    }
+        let asset = album.flatMap { album in
+            index < album.pinnedPhotos.count ? album.pinnedPhotos[index] : nil
+        }
 
-    private var pinPickerSheet: some View {
-        NavigationView {
-            List {
-                if pinCandidates.isEmpty {
-                    Text("Post a story first, then pin it here.")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(pinCandidates) { story in
-                        Button {
-                            Task {
-                                await pin(story: story)
-                                showingPinPicker = false
-                            }
-                        } label: {
-                            HStack {
-                                Text(story.caption?.isEmpty == false ? story.caption! : "Story")
-                                Spacer()
-                                Text(story.timestamp, style: .date)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                }
+        if let metadata, let asset {
+            PinnedStoryThumbnail(
+                asset: asset,
+                fallbackAspect: slotAspect,
+                cornerRadius: albumCorner,
+                onRemove: isOwner ? { Task { await unpin(storyID: metadata.storyID) } } : nil
+            )
+        } else if isOwner {
+            PhotosPicker(selection: $pickerItem, matching: .images) {
+                emptySlot
             }
-            .navigationTitle("Pin a Story")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") { showingPinPicker = false }
-                }
-            }
+            .buttonStyle(.plain)
+        } else {
+            emptySlot
         }
     }
 
-    private func preparePinPicker() async {
-        guard let deviceID = viewModel.currentUserProfile?.deviceID else { return }
-        await viewModel.storiesService.refreshStories()
-        let pinnedIDs = Set(album?.photoMetadata.map(\.storyID) ?? [])
-        pinCandidates = viewModel.storiesService.allActiveStories
-            .filter { $0.deviceID == deviceID && $0.isValid && !pinnedIDs.contains($0.id) }
-            .sorted { $0.timestamp > $1.timestamp }
-        showingPinPicker = true
+    private var emptySlot: some View {
+        ZStack {
+            Color.primary.opacity(0.06)
+            if isOwner {
+                Image(systemName: "plus")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: tileWidth, height: tileHeight)
+        .clipShape(RoundedRectangle(cornerRadius: albumCorner, style: .continuous))
     }
 
-    private func pin(story: Story) async {
-        let result = await viewModel.pinStoryToAlbum(story)
+    private func pinPickedPhoto(_ item: PhotosPickerItem) async {
+        defer { pickerItem = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            await MainActor.run {
+                pinAlertTitle = "Could not pin"
+                pinAlertMessage = "Try another photo."
+                showingPinAlert = true
+            }
+            return
+        }
+        let result = await viewModel.pinPhotoDataToAlbum(data)
         await MainActor.run {
-            if result.success {
-                pinAlertTitle = "Pinned"
-                pinAlertMessage = "Story added to your profile."
-            } else {
+            if !result.success {
                 pinAlertTitle = "Could not pin"
                 pinAlertMessage = result.error ?? "Try again."
+                showingPinAlert = true
             }
-            showingPinAlert = true
         }
         album = await viewModel.getAlbum(for: userProfile.deviceID)
     }
@@ -157,38 +132,53 @@ struct ProfilePinnedStoriesRow: View {
                 showingPinAlert = true
             }
         }
-        self.album = await viewModel.getAlbum(for: userProfile.deviceID)
+        album = await viewModel.getAlbum(for: userProfile.deviceID)
     }
 }
 
 private struct PinnedStoryThumbnail: View {
     let asset: CKAsset
-    let caption: String?
-    let onTap: () -> Void
+    var fallbackAspect: CGFloat = 1
+    var cornerRadius: CGFloat = 12
+    var onRemove: (() -> Void)? = nil
 
     @StateObject private var loader = ImageLoader()
 
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Group {
-                if let image = loader.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    Rectangle().fill(Color.gray.opacity(0.2))
-                }
-            }
-            .frame(width: 60, height: 80)
-            .clipped()
-            .cornerRadius(8)
-            .onTapGesture(perform: onTap)
+    private var photoAspect: CGFloat {
+        guard let size = loader.imageSize, size.height > 0 else { return fallbackAspect }
+        return size.width / size.height
+    }
 
-            Image(systemName: "pin.fill")
-                .font(.caption2)
-                .foregroundColor(.white)
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+
+            if let image = loader.image {
+                image
+                    .resizable()
+                    .scaledToFit()
+            }
+
+            if onRemove != nil {
+                Button {
+                    onRemove?()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.primary.opacity(0.7), Color.white.opacity(0.92))
+                }
+                .buttonStyle(.plain)
                 .padding(4)
-                .background(Circle().fill(Color.blue))
-                .padding(4)
+                .accessibilityLabel("Remove photo")
+            }
         }
+        .aspectRatio(photoAspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .onAppear { loader.loadImage(from: asset) }
+        .onChange(of: asset.fileURL) { _ in
+            loader.loadImage(from: asset)
+        }
     }
 }

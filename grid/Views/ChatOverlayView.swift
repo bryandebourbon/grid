@@ -7,8 +7,26 @@ import UIKit
 struct ChatOverlayView: View {
     @ObservedObject var viewModel: GridViewModel
     let recipientDeviceID: String
+    var isPresented: Bool = true
+    @FocusState.Binding var isComposerFocused: Bool
     let onClose: () -> Void
     
+    private var partnerProfile: UserProfile? {
+        if recipientDeviceID == viewModel.currentUserProfile?.deviceID {
+            return viewModel.currentUserProfile
+        }
+        return ProfileDisplayNameLogic.profile(forDeviceID: recipientDeviceID, in: viewModel.allGridNodes)
+            ?? ProfileDisplayNameLogic.profile(forDeviceID: recipientDeviceID, in: viewModel.gridNodes)
+    }
+
+    private var headerBio: String? {
+        if LocalLLMIdentity.isLLM(recipientDeviceID) {
+            let bio = LocalLLMIdentity.bio.trimmingCharacters(in: .whitespacesAndNewlines)
+            return bio.isEmpty ? nil : bio
+        }
+        return viewModel.statusText(for: recipientDeviceID)
+    }
+
     private func recipientDisplayName() -> String {
         ProfileDisplayNameLogic.chatTitle(
             recipientDeviceID: recipientDeviceID,
@@ -29,6 +47,9 @@ struct ChatOverlayView: View {
                         .background(Color(.systemGray6))
                         .clipShape(Circle())
                 }
+                .accessibilityIdentifier(GridUITestHarness.chatCloseIdentifier)
+                .accessibilityLabel("Close chat")
+                .accessibilityAddTraits(.isButton)
                 
                 Spacer()
                 
@@ -36,66 +57,131 @@ struct ChatOverlayView: View {
                     Text(recipientDisplayName())
                         .font(.headline)
                         .fontWeight(.semibold)
-                    
-                    if recipientDeviceID != viewModel.currentUserProfile?.deviceID {
-                        if let distanceString = viewModel.getDistanceString(to: recipientDeviceID) {
-                            Text(distanceString)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        .lineLimit(1)
+                        .accessibilityElement()
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier(GridUITestHarness.chatTitleIdentifier)
+                        .accessibilityValue(recipientDeviceID)
+                        .accessibilityLabel(recipientDisplayName())
+
+                    if let bio = headerBio {
+                        Text(bio)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                    }
+
+                    if recipientDeviceID != viewModel.currentUserProfile?.deviceID,
+                       let distanceString = viewModel.getDistanceString(to: recipientDeviceID) {
+                        Text(distanceString)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
+                .frame(maxWidth: .infinity)
                 
                 Spacer()
                 
-                // Menu button
-                Menu {
-                    if recipientDeviceID != viewModel.currentUserProfile?.deviceID {
-                        Button(action: {
-                            // Find the recipient's profile
-                            for row in viewModel.gridNodes {
-                                for node in row {
-                                    if let profile = node.userProfile, profile.deviceID == recipientDeviceID {
-                                        onClose()
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                            viewModel.selectedUserProfileForReport = ProfileCardUser(id: recipientDeviceID, userProfile: profile)
-                                        }
-                                        return
-                                    }
-                                }
-                            }
-                        }) {
-                            Label("Report User", systemImage: "exclamationmark.shield")
+                if LocalLLMIdentity.isLLM(recipientDeviceID)
+                    || recipientDeviceID == viewModel.currentUserProfile?.deviceID {
+                    Color.clear.frame(width: 44, height: 44)
+                } else {
+                    Menu {
+                        Button {
+                            viewModel.requestStar(for: recipientDeviceID)
+                        } label: {
+                            Label(
+                                viewModel.isStarred(recipientDeviceID) ? "Unstar" : "Star",
+                                systemImage: viewModel.isStarred(recipientDeviceID) ? "star.slash" : "star"
+                            )
                         }
+
+                        Button(role: viewModel.isBlocked(recipientDeviceID) ? nil : .destructive) {
+                            viewModel.toggleBlock(for: recipientDeviceID)
+                        } label: {
+                            Label(
+                                viewModel.isBlocked(recipientDeviceID) ? "Unblock" : "Block",
+                                systemImage: viewModel.isBlocked(recipientDeviceID) ? "hand.raised.slash" : "hand.raised"
+                            )
+                        }
+
+                        Button(role: .destructive) {
+                            if let profile = partnerProfile {
+                                viewModel.selectedUserProfileForReport = ProfileCardUser(
+                                    id: recipientDeviceID,
+                                    userProfile: profile
+                                )
+                            }
+                        } label: {
+                            Label("Report", systemImage: "exclamationmark.shield")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                            .frame(width: 44, height: 44)
+                            .background(Color(.systemGray6))
+                            .clipShape(Circle())
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title2)
-                        .foregroundColor(.primary)
-                        .frame(width: 44, height: 44)
-                        .background(Color(.systemGray6))
-                        .clipShape(Circle())
+                    .accessibilityLabel("Chat actions")
+                    .starGroupPopover(viewModel: viewModel, deviceID: recipientDeviceID)
                 }
             }
             .padding()
             .background(Color(.systemGray6).opacity(0.3))
             
             // Chat content
-            ChatView(viewModel: viewModel, recipientDeviceID: recipientDeviceID)
+            ChatView(
+                viewModel: viewModel,
+                recipientDeviceID: recipientDeviceID,
+                isPresented: isPresented,
+                isTextFieldFocused: $isComposerFocused,
+                onBack: onClose
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color(.systemBackground))
-        .cornerRadius(20)
-        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
-        .frame(maxWidth: min(400, UIScreen.main.bounds.width - 40))
-        .frame(maxHeight: min(600, UIScreen.main.bounds.height - 100))
-        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground).ignoresSafeArea())
+        .overlay(alignment: .leading) {
+            edgeBackSwipe { $0 > 70 }
+        }
+        .overlay(alignment: .trailing) {
+            edgeBackSwipe { $0 < -70 }
+        }
         .onAppear {
-            // When the view appears, ensure the viewModel knows which device we're chatting with
-            viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
-            AppLog.messaging.debug("Opened chat overlay")
-            
-            // Mark all messages from this device as read
-            viewModel.markMessagesAsRead(from: recipientDeviceID)
+            if isPresented { activateVisibleThread() }
         }
+        .onChange(of: isPresented) { presented in
+            if presented { activateVisibleThread() }
+        }
+        .onChange(of: recipientDeviceID) { _ in
+            if isPresented { activateVisibleThread() }
+        }
+    }
+
+    private func activateVisibleThread() {
+        ChatOpenTrace.mark("overlay.activate \(recipientDeviceID.prefix(8))")
+        viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
+        viewModel.refreshIncomingMessages {
+            self.viewModel.markMessagesAsRead(from: self.recipientDeviceID)
+        }
+    }
+
+    private func edgeBackSwipe(_ isBackSwipe: @escaping (CGFloat) -> Bool) -> some View {
+        Color.clear
+            .frame(width: 28)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 20)
+                    .onEnded { value in
+                        let isMostlyHorizontal = abs(value.translation.width) > abs(value.translation.height)
+                        if isMostlyHorizontal && isBackSwipe(value.translation.width) {
+                            onClose()
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
     }
 }

@@ -7,7 +7,7 @@ enum GridPlacementLogic {
     static func makeEmptyGrid(size: Int = defaultSize) -> [[GridNode]] {
         (0..<size).map { row in
             (0..<size).map { col in
-                GridNode(id: UUID(), x: row, y: col, userProfile: nil)
+                GridNode(x: row, y: col, userProfile: nil)
             }
         }
     }

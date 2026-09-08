@@ -13,34 +13,21 @@ struct CreateProfileView: View {
 
     @State private var selectedPhotoData: Data? = nil // For single main photo
     @State private var selectedInterests: Set<Interest> = [] // NEW: Selected interests
-    @State private var currentStep: Int = 1 // NEW: Step tracking (1: Photos, 2: Interests, 3: Review)
+    @State private var personName: String = ProfileDisplayNameLogic.pendingPersonName() ?? ""
+    @State private var currentStep: Int = 1 // 1: Name, 2: Photos, 3: Interests, 4: Review
     @State private var isSaving = false
     @State private var errorMessage: String? = nil
+    @FocusState private var nameFieldFocused: Bool
 
     // Generate device-specific info consistently across build types
     private var deviceID: String {
         return generateConsistentDeviceID(for: appleUserID)
     }
-    private let deviceName = UIDevice.current.name
 
     // Generate a consistent device ID that works across dev builds, TestFlight, and App Store
     private func generateConsistentDeviceID(for userID: String) -> String {
         // Check if we have a stored device ID for this user
-        let storedKey = "consistentDeviceID_\(userID)"
-        if let storedDeviceID = UserDefaults.standard.string(forKey: storedKey) {
-            return storedDeviceID
-        }
-        
-        // Generate a stable device ID based on the Apple User ID
-        // This ensures the same user gets the same device ID across dev builds, TestFlight, and App Store
-        // We take the last part of the Apple User ID (after the last dot) and use it as our device identifier
-        let userIDComponents = userID.components(separatedBy: ".")
-        let userSuffix = userIDComponents.last ?? "default"
-        let deviceID = "\(userSuffix)-DEVICE"
-        
-        // Store it for future use
-        UserDefaults.standard.set(deviceID, forKey: storedKey)
-        
+        let deviceID = DeviceIdentityLogic.resolvedDeviceID(forAppleUserID: userID)
         print("Generated consistent device ID: \(deviceID) for user: \(userID)")
         return deviceID
     }
@@ -50,11 +37,11 @@ struct CreateProfileView: View {
             VStack {
                 // Progress indicator
                 HStack {
-                    ForEach(1...3, id: \.self) { step in
+                    ForEach(1...4, id: \.self) { step in
                         Circle()
                             .fill(step <= currentStep ? Color.blue : Color.gray.opacity(0.3))
                             .frame(width: 12, height: 12)
-                        if step < 3 {
+                        if step < 4 {
                             Rectangle()
                                 .fill(step < currentStep ? Color.blue : Color.gray.opacity(0.3))
                                 .frame(height: 2)
@@ -69,13 +56,15 @@ struct CreateProfileView: View {
                 Group {
                     switch currentStep {
                     case 1:
-                        photoSelectionStep
+                        nameEntryStep
                     case 2:
-                        interestSelectionStep
+                        photoSelectionStep
                     case 3:
+                        interestSelectionStep
+                    case 4:
                         reviewStep
                     default:
-                        photoSelectionStep
+                        nameEntryStep
                     }
                 }
                 
@@ -95,7 +84,7 @@ struct CreateProfileView: View {
                     Spacer()
                     
                     Button(nextButtonTitle) {
-                        if currentStep < 3 {
+                        if currentStep < 4 {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 currentStep += 1
                             }
@@ -123,6 +112,42 @@ struct CreateProfileView: View {
         .navigationViewStyle(StackNavigationViewStyle())
     }
     
+    private var nameEntryStep: some View {
+        VStack(spacing: 20) {
+            Text("What’s your name?")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+
+            Text("This is how people see you in chat and notifications.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            TextField("Your name", text: $personName)
+                .textContentType(.name)
+                .textInputAutocapitalization(.words)
+                .disableAutocorrection(true)
+                .multilineTextAlignment(.center)
+                .font(.title2)
+                .padding()
+                .background(Color(.systemGray6))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 32)
+                .focused($nameFieldFocused)
+                .submitLabel(.next)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .foregroundColor(.red)
+                    .padding()
+            }
+        }
+        .onAppear {
+            nameFieldFocused = true
+        }
+    }
+
     // MARK: - Photo Selection Step
     
     private var photoSelectionStep: some View {
@@ -133,10 +158,6 @@ struct CreateProfileView: View {
             
             Text("Select your main profile photo and position it perfectly")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
-            
-            Text("Device: \(deviceName)")
-                .font(.caption)
                 .foregroundColor(.secondary)
 
             CircularPhotoEditor(
@@ -231,10 +252,10 @@ struct CreateProfileView: View {
                 
                 VStack(alignment: .leading, spacing: 15) {
                     HStack {
-                        Text("Device:")
+                        Text("Name:")
                             .fontWeight(.medium)
                         Spacer()
-                        Text(deviceName)
+                        Text(resolvedProfileName)
                             .foregroundColor(.secondary)
                     }
                     
@@ -276,35 +297,67 @@ struct CreateProfileView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
             }
         }
     }
     
     // MARK: - Helper Methods
     
+    private var resolvedProfileName: String {
+        if let name = ProfileDisplayNameLogic.normalizedPersonName(personName) {
+            return name
+        }
+        if isTestPeer {
+            return "Test Peer"
+        }
+        return personName
+    }
+
     private var stepTitle: String {
         switch currentStep {
-        case 1: return "Add Photo"
-        case 2: return "Select Interests"
-        case 3: return "Review Profile"
+        case 1: return "Your Name"
+        case 2: return "Add Photo"
+        case 3: return "Select Interests"
+        case 4: return "Review Profile"
         default: return "Create Profile"
         }
     }
     
     private var nextButtonTitle: String {
         switch currentStep {
-        case 1: return "Next: Interests"
-        case 2: return "Next: Review"
-        case 3: return isSaving ? "Saving..." : "Create Profile"
+        case 1: return "Next: Photo"
+        case 2: return "Next: Interests"
+        case 3: return "Next: Review"
+        case 4: return isSaving ? "Saving..." : "Create Profile"
         default: return "Next"
         }
     }
     
+    private var isTestPeer: Bool {
+        TestPeerIdentity.isTest(appleUserID)
+    }
+
     private var isNextButtonDisabled: Bool {
         switch currentStep {
-        case 1: return selectedPhotoData == nil
-        case 2: return selectedInterests.isEmpty
-        case 3: return isSaving
+        case 1:
+            #if DEBUG
+            if isTestPeer { return false }
+            #endif
+            return !ProfileDisplayNameLogic.isUsablePersonName(personName)
+        case 2:
+            #if DEBUG
+            if isTestPeer { return false }
+            #endif
+            return selectedPhotoData == nil
+        case 3: return selectedInterests.isEmpty
+        case 4: return isSaving
         default: return false
         }
     }
@@ -318,7 +371,14 @@ struct CreateProfileView: View {
     }
 
     private func saveProfile() {
-        guard let photoData = selectedPhotoData else {
+        var photoData = selectedPhotoData
+        #if DEBUG
+        if photoData == nil && isTestPeer {
+            photoData = ProfileCreationLogic.placeholderPhotoJPEG()
+            selectedPhotoData = photoData
+        }
+        #endif
+        guard let photoData else {
             errorMessage = "No photo selected."
             return
         }
@@ -330,62 +390,70 @@ struct CreateProfileView: View {
             errorMessage = "User ID is missing. Cannot save profile."
             return
         }
+        let profileName = resolvedProfileName
+        guard ProfileDisplayNameLogic.isUsablePersonName(profileName) else {
+            errorMessage = "Please enter your name."
+            currentStep = 1
+            return
+        }
 
         isSaving = true
         errorMessage = nil
 
-        let tempDir = FileManager.default.temporaryDirectory
-        let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-        var tempFileURLs: [URL] = [tempFileURL]
-        
+        CKContainer.default().accountStatus { status, _ in
+            DispatchQueue.main.async {
+                guard status == .available else {
+                    self.isSaving = false
+                    self.errorMessage = ProfileCreationLogic.userFacingCloudKitError(
+                        accountStatus: status,
+                        saveError: nil
+                    )
+                    return
+                }
+                self.writeProfileToCloudKit(photoData: photoData)
+            }
+        }
+    }
+
+    private func writeProfileToCloudKit(photoData: Data) {
+        let tempFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("jpg")
+
         do {
             try photoData.write(to: tempFileURL)
-            let profileImageAsset = CKAsset(fileURL: tempFileURL)
-
-            let newProfile = UserProfile(
-                userID: appleUserID,
-                deviceID: deviceID,
-                deviceName: deviceName,
-                profileImage: profileImageAsset,
-                bio: nil,
-                interests: Array(selectedInterests)
-            )
-            
-            let publicRecord = newProfile.toPublicCKRecord()
-            let publicDB = CKContainer.default().publicCloudDatabase
-
-            let modifyOperation = CKModifyRecordsOperation(recordsToSave: [publicRecord], recordIDsToDelete: nil)
-            modifyOperation.savePolicy = .changedKeys
-            modifyOperation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
-                for url in tempFileURLs {
-                    try? FileManager.default.removeItem(at: url)
-                }
-                
-                DispatchQueue.main.async {
-                    self.isSaving = false
-                    if let error = error {
-                        print("Error saving profile to public CloudKit: \(error.localizedDescription)")
-                        self.errorMessage = "Failed to save profile: \(error.localizedDescription)"
-                    } else if savedRecords?.first != nil {
-                        print("Profile saved successfully with \(self.selectedInterests.count) interests!")
-                        self.showCreateProfileView = false 
-                    } else {
-                        print("Unknown error saving profile.")
-                        self.errorMessage = "An unknown error occurred while saving."
-                    }
-                }
-            }
-            
-            publicDB.add(modifyOperation)
-            
         } catch {
-            print("Error writing photo data to temporary file: \(error.localizedDescription)")
             errorMessage = "Could not process photo for saving."
-            for url in tempFileURLs {
-                try? FileManager.default.removeItem(at: url)
-            }
             isSaving = false
             return
+        }
+
+        let newProfile = UserProfile(
+            userID: appleUserID,
+            deviceID: deviceID,
+            deviceName: resolvedProfileName,
+            profileImage: CKAsset(fileURL: tempFileURL),
+            bio: isTestPeer ? "Simulator test peer" : nil,
+            interests: Array(selectedInterests)
+        )
+        let publicRecord = newProfile.toPublicCKRecord()
+
+        CKContainer.default().publicCloudDatabase.save(publicRecord) { _, error in
+            try? FileManager.default.removeItem(at: tempFileURL)
+            DispatchQueue.main.async {
+                self.isSaving = false
+                if let error {
+                    print("Error saving profile to public CloudKit: \(error.localizedDescription)")
+                    self.errorMessage = ProfileCreationLogic.userFacingCloudKitError(
+                        accountStatus: .available,
+                        saveError: error
+                    )
+                    return
+                }
+                print("Profile saved successfully with \(self.selectedInterests.count) interests!")
+                ProfileDisplayNameLogic.clearPendingPersonName()
+                self.showCreateProfileView = false
+            }
         }
     }
 }

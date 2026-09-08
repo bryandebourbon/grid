@@ -17,7 +17,7 @@ struct TermsOfUseView: View {
                         .fontWeight(.bold)
                         .padding(.top)
 
-                    Text("Last updated: \(Date().formatted(date: .abbreviated, time: .omitted))")
+                    Text("Last updated: \(AppSupport.legalLastUpdated)")
                         .font(.caption)
                         .foregroundColor(.secondary)
 

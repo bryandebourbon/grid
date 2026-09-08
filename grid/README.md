@@ -39,6 +39,8 @@ The app requires the following record types in your CloudKit Public Database:
 - `isEncrypted` (Int64)
 - `encryptedContent` (String)
 - `encryptionKeyID` (String)
+- `reactionsJSON` (String)
+- `reactionsUpdatedAt` (Date/Time)
 
 ### UserRelationships
 - `userID` (String, Queryable)

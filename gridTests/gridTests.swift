@@ -167,19 +167,18 @@ struct AlbumTests {
         #expect(album.photosCount == 1)
     }
 
-    @Test func enforcesMaxOfThree() throws {
-        #expect(Album.maxPhotos == 3)
+    @Test func enforcesMaxOfFive() throws {
+        #expect(Album.maxPhotos == 5)
         var album = Album(ownerUserID: "u1", ownerDeviceID: "d1")
         for i in 0..<Album.maxPhotos {
             #expect(album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "s\(i)")))
         }
-        #expect(album.photosCount == 3)
+        #expect(album.photosCount == 5)
         #expect(album.hasSpace == false)
 
-        // A fourth pin must be rejected and leave the album unchanged.
         let overflow = album.addPhoto(asset: try makeAsset(), metadata: makeMetadata(storyID: "extra"))
         #expect(overflow == false)
-        #expect(album.photosCount == 3)
+        #expect(album.photosCount == 5)
     }
 
     @Test func removePhotoKeepsAssetsAndMetadataInSync() throws {

@@ -46,6 +46,40 @@ extension GridViewModel {
         return .failure(saveResult.error ?? "Failed to save album")
     }
 
+    func pinPhotoDataToAlbum(_ data: Data) async -> PinResult {
+        guard let currentProfile = currentUserProfile else {
+            return .failure("No current user profile")
+        }
+        let albumResult = await createAlbumIfNeeded()
+        guard albumResult.success, var album = albumResult.album else {
+            return .failure(albumResult.error ?? "Failed to get or create album")
+        }
+        guard album.hasSpace else { return .albumFull() }
+
+        let tempFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pin-\(UUID().uuidString)")
+            .appendingPathExtension("jpg")
+        do {
+            try data.write(to: tempFileURL)
+        } catch {
+            return .failure("Could not save photo")
+        }
+
+        let metadata = PhotoMetadata(
+            storyID: "photo-\(UUID().uuidString)",
+            originalStoryDate: Date()
+        )
+        guard album.addPhoto(asset: CKAsset(fileURL: tempFileURL), metadata: metadata) else {
+            return .failure("Failed to add photo to album")
+        }
+        let saveResult = await albumService.saveAlbum(album)
+        if saveResult.success, let saved = saveResult.album {
+            userAlbums[currentProfile.deviceID] = saved
+            return .success()
+        }
+        return .failure(saveResult.error ?? "Failed to save album")
+    }
+
     func unpinStoryIDFromAlbum(_ storyID: String) async -> PinResult {
         guard let currentProfile = currentUserProfile else {
             return .failure("No current user profile")

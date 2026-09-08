@@ -6,6 +6,7 @@ import UserNotifications
 // Define Notification Names if not already globally available
 extension Notification.Name {
     static let didTapPushNotificationForChat = Notification.Name("didTapPushNotificationForChat")
+    static let didIngestCloudKitMessage = Notification.Name("didIngestCloudKitMessage")
 }
 
 class MessagingService: ObservableObject {
@@ -32,8 +33,42 @@ class MessagingService: ObservableObject {
     
     @objc private func handleCloudKitNotification(_ notification: Notification) {
         guard let recordID = notification.object as? CKRecord.ID else { return }
+        PendingMessageFetchStore.enqueue(recordID.recordName)
+        MessageDeliveryTrace.log("push.local record=\(recordID.recordName.prefix(8))")
         print("MessagingService: Handling CloudKit notification for record: \(recordID.recordName)")
-        fetchMessage(withRecordID: recordID, currentDeviceID: nil)
+        fetchMessage(withRecordID: recordID, currentDeviceID: nil, announce: true, completion: nil)
+    }
+
+    /// Writes only reaction fields so a save cannot wipe an image asset.
+    func updateReactions(on message: Message, completion: ((Result<Void, Error>) -> Void)? = nil) {
+        let recordID = message.recordID ?? CKRecord.ID(recordName: message.id)
+        publicDB.fetch(withRecordID: recordID) { record, error in
+            if let error {
+                DispatchQueue.main.async { completion?(.failure(error)) }
+                return
+            }
+            guard let record else {
+                DispatchQueue.main.async {
+                    completion?(.failure(NSError(
+                        domain: "MessagingService",
+                        code: -2,
+                        userInfo: [NSLocalizedDescriptionKey: "Message record not found."]
+                    )))
+                }
+                return
+            }
+            record["reactionsJSON"] = MessageReactionLogic.encode(message.reactions)
+            record["reactionsUpdatedAt"] = message.reactionsUpdatedAt
+            self.publicDB.save(record) { _, saveError in
+                DispatchQueue.main.async {
+                    if let saveError {
+                        completion?(.failure(saveError))
+                    } else {
+                        completion?(.success(()))
+                    }
+                }
+            }
+        }
     }
 
     func sendMessage(_ message: Message, completion: @escaping (Result<Message, Error>) -> Void) {
@@ -152,13 +187,13 @@ class MessagingService: ObservableObject {
         )
 
         let notificationInfo = CKSubscription.NotificationInfo()
-        notificationInfo.shouldSendContentAvailable = true // For background updates
-        notificationInfo.alertBody = "New message received!" // User-visible alert
-        notificationInfo.soundName = "default" // Sound
-        notificationInfo.shouldBadge = true // Badge count
-        
-        // Add custom fields to the notification payload for routing
-        notificationInfo.desiredKeys = ["senderDeviceID", "text"] // Include sender info
+        notificationInfo.shouldSendContentAvailable = true
+        notificationInfo.shouldBadge = true
+        // No alertBody: CloudKit cannot decrypt the message. The app posts a
+        // local banner with the sender and plaintext after the record fetch.
+        // Production schema only allows the original notification fields.
+        // Adding keys creates notif_additional_field_N and CloudKit rejects the save.
+        notificationInfo.desiredKeys = MessageSubscriptionLogic.desiredKeys
         
         newSubscription.notificationInfo = notificationInfo
 
@@ -211,57 +246,93 @@ class MessagingService: ObservableObject {
                         return
                     }
                     
-                    // We have the senderDeviceID, post notification for navigation
                     print("Posting .didTapPushNotificationForChat with senderDeviceID: \(senderDeviceID)")
                     NotificationCenter.default.post(name: .didTapPushNotificationForChat, object: nil, userInfo: ["senderDeviceID": senderDeviceID])
 
-                    // Also send to newMessageReceived for GridViewModel to update its main messages list if needed
-                    // This ensures the message is in the list even if the app was closed.
-                    if let message = Message(record: fetchedRecord, currentDeviceID: nil) { // currentDeviceID is nil as context is recipient
-                         self.newMessageReceived.send(message)
+                    if let message = Message(record: fetchedRecord, currentDeviceID: nil) {
+                        PendingMessageFetchStore.remove(recordID.recordName)
+                        MessageInboxStore.upsert(message)
+                        self.newMessageReceived.send(message)
+                        NotificationCenter.default.post(name: .didIngestCloudKitMessage, object: message)
                     }
                 }
             }
         }
     }
     
-    private func fetchMessage(withRecordID recordID: CKRecord.ID, currentDeviceID: String?) {
+    func fetchMessage(
+        withRecordID recordID: CKRecord.ID,
+        currentDeviceID: String?,
+        announce: Bool = false,
+        completion: ((Result<Message, Error>) -> Void)?
+    ) {
+        PendingMessageFetchStore.enqueue(recordID.recordName)
         publicDB.fetch(withRecordID: recordID) { record, error in
             DispatchQueue.main.async {
                 if let error = error {
                     print("Error fetching single message by ID \(recordID.recordName): \(error.localizedDescription)")
+                    completion?(.failure(error))
                     return
                 }
-                // Pass the provided currentDeviceID to the Message initializer
                 guard let fetchedRecord = record, let message = Message(record: fetchedRecord, currentDeviceID: currentDeviceID) else {
                     print("Failed to fetch or parse message from push notification: \(recordID.recordName)")
+                    completion?(.failure(NSError(
+                        domain: "MessagingService",
+                        code: -2,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to parse message record."]
+                    )))
                     return
                 }
-                
-                print("Successfully fetched message from push: \(message.text)")
-                
-                // Update local store (receivedMessages is not typically the primary store for GridViewModel)
-                // The primary handling and storage is in GridViewModel.messages
-                // This line might be redundant if GridViewModel is the sole manager of the messages array via newMessageReceived.
-                // if !self.receivedMessages.contains(where: { $0.id == message.id }) {
-                //     self.receivedMessages.append(message)
-                //     self.receivedMessages.sort(by: { $0.timestamp < $1.timestamp })
-                // }
-                
-                // Notify GridViewModel that a new message has arrived (for general UI update)
-                self.newMessageReceived.send(message)
-                
-                // Post a specific notification for navigation if this fetch was triggered by a push tap.
-                // We infer this if currentDeviceID was passed as nil initially from handlePushNotification/handleCloudKitNotification
-                // and now we have a senderDeviceID from the message.
-                // A more robust way would be to pass a flag like `isFromPushTapContext` into fetchMessage.
-                // For now, let's assume any message fetched here due to a notification might be a navigation candidate.
-                // The AppDelegate/SceneDelegate will ultimately decide if it was a tap.
 
-                // The decision to navigate should come from AppDelegate/SceneDelegate after confirming a tap.
-                // So, handlePushNotification should post .didTapPushNotificationForChat if it's a tap.
-                // Let's adjust handlePushNotification to do this.
+                MessageDeliveryTrace.log("fetchByID ok id=\(message.id.prefix(8)) from=\(message.senderDeviceID.prefix(8)) image=\(message.encryptedImageData != nil)")
+                print("Successfully fetched message from push: \(message.text)")
+                PendingMessageFetchStore.remove(recordID.recordName)
+                MessageInboxStore.upsert(message)
+                self.newMessageReceived.send(message)
+                NotificationCenter.default.post(name: .didIngestCloudKitMessage, object: message)
+                if announce {
+                    MessageDeliveryTrace.log("banner.request id=\(message.id.prefix(8))")
+                    MessageBannerNotifier.announce(message, currentDeviceID: currentDeviceID)
+                }
+                completion?(.success(message))
             }
         }
     }
-} 
+
+    func fetchPendingRecords(currentDeviceID: String?, completion: @escaping ([Message]) -> Void) {
+        fetchRecords(named: PendingMessageFetchStore.all(), currentDeviceID: currentDeviceID, completion: completion)
+    }
+
+    func fetchRecords(named recordNames: [String], currentDeviceID: String?, completion: @escaping ([Message]) -> Void) {
+        let uniqueNames = Array(Set(recordNames.filter { !$0.isEmpty }))
+        guard !uniqueNames.isEmpty else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        let group = DispatchGroup()
+        var fetched: [Message] = []
+        let lock = NSLock()
+
+        for name in uniqueNames {
+            group.enter()
+            publicDB.fetch(withRecordID: CKRecord.ID(recordName: name)) { record, error in
+                defer { group.leave() }
+                if let error = error {
+                    print("Error fetching pending message \(name): \(error.localizedDescription)")
+                    return
+                }
+                guard let record, let message = Message(record: record, currentDeviceID: currentDeviceID) else { return }
+                PendingMessageFetchStore.remove(name)
+                MessageInboxStore.upsert(message)
+                lock.lock()
+                fetched.append(message)
+                lock.unlock()
+            }
+        }
+
+        group.notify(queue: .main) {
+            completion(fetched)
+        }
+    }
+}

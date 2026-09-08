@@ -188,7 +188,20 @@ struct StoryCreationView: View {
     
     private func postStory() {
         guard let imageData = selectedImageData else { return }
-        
+
+        let imageCheck = viewModel.contentModerationService.isImageAppropriate(imageData)
+        if !imageCheck.isAppropriate {
+            uploadError = imageCheck.reason ?? "That photo was blocked by the content filter."
+            return
+        }
+        if !caption.isEmpty {
+            let captionCheck = viewModel.contentModerationService.isTextAppropriate(caption)
+            if !captionCheck.isAppropriate {
+                uploadError = captionCheck.reason ?? "That caption was blocked by the content filter."
+                return
+            }
+        }
+
         isUploading = true
         uploadError = nil
         

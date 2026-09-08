@@ -20,7 +20,7 @@ struct ContactInfoView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Email Support", systemImage: "envelope.fill")
                             .font(.headline)
-                        Link("bdebourbon@me.com", destination: URL(string: "mailto:bdebourbon@me.com")!)
+                        Link(AppSupport.email, destination: AppSupport.mailtoURL)
                             .font(.body)
                             .foregroundColor(.blue)
                         Text("For general inquiries and support")
@@ -35,7 +35,7 @@ struct ContactInfoView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Content Moderation", systemImage: "exclamationmark.shield.fill")
                             .font(.headline)
-                        Link("bdebourbon@me.com", destination: URL(string: "mailto:bdebourbon@me.com")!)
+                        Link(AppSupport.email, destination: AppSupport.mailtoURL)
                             .font(.body)
                             .foregroundColor(.blue)
                         Text("Report inappropriate content or users")
@@ -50,7 +50,7 @@ struct ContactInfoView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Privacy Concerns", systemImage: "lock.shield.fill")
                             .font(.headline)
-                        Link("bdebouron@me.com", destination: URL(string: "mailto:bdebourbon@me.com")!)
+                        Link(AppSupport.email, destination: AppSupport.mailtoURL)
                             .font(.body)
                             .foregroundColor(.blue)
                         Text("Questions about data and privacy")

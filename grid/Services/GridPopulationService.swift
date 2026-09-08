@@ -6,13 +6,17 @@ struct GridDisplayState {
     var blockedUserIDs: Set<String>
     var usersWhoBlockedMe: Set<String>
     var selectedInterestFilter: Set<Interest>
+    var starredUserIDs: Set<String> = []
+    var favoritesOnly: Bool = false
+    var showsLocalLLM: Bool = false
+    var showsSelfOnGrid: Bool = false
 }
 
 @MainActor
 final class GridPopulationService {
 
-    func profilesToDisplay(nearby: [UserProfile]) -> [UserProfile] {
-        nearby
+    func profilesToDisplay(nearby: [UserProfile], currentUser: UserProfile? = nil) -> [UserProfile] {
+        nearby.filter { TestPeerIdentity.belongsOnRealUserGrid($0, currentUser: currentUser) }
     }
 
     func layoutProfiles(
@@ -23,7 +27,12 @@ final class GridPopulationService {
     ) {
         grid = GridPlacementLogic.makeEmptyGrid()
         guard let currentDeviceID = currentUser?.deviceID else {
-            for profile in profiles { placeRemaining(profile, into: &grid) }
+            if display.showsLocalLLM {
+                placeLocalLLM(into: &grid, currentUserPresent: false)
+            }
+            for profile in profiles where !LocalLLMIdentity.isLLM(profile.deviceID) {
+                placeRemaining(profile, into: &grid)
+            }
             return
         }
 
@@ -35,16 +44,35 @@ final class GridPopulationService {
             to: partitioned.others,
             blockedUserIDs: display.blockedUserIDs,
             usersWhoBlockedMe: display.usersWhoBlockedMe,
-            selectedInterestFilter: display.selectedInterestFilter
+            selectedInterestFilter: display.selectedInterestFilter,
+            starredUserIDs: display.starredUserIDs,
+            favoritesOnly: display.favoritesOnly
         )
 
-        if let current = currentUser {
+        if display.showsSelfOnGrid, let current = currentUser {
             GridPlacementLogic.place(profile: current, in: &grid, at: 0, col: 0)
         }
 
-        for profile in others {
-            placeRemaining(profile, into: &grid, skip: (0, 0))
+        let peers = others.filter { !LocalLLMIdentity.isLLM($0.deviceID) }
+        if display.showsLocalLLM && !display.favoritesOnly {
+            placeLocalLLM(into: &grid, currentUserPresent: display.showsSelfOnGrid)
         }
+
+        let skip: (x: Int, y: Int)? = display.showsSelfOnGrid ? (0, 0) : nil
+        for profile in peers {
+            placeRemaining(profile, into: &grid, skip: skip)
+        }
+    }
+
+    private func placeLocalLLM(into grid: inout [[GridNode]], currentUserPresent: Bool) {
+        guard grid.isEmpty == false else { return }
+        let row = 0
+        let col = currentUserPresent && grid[row].count > 1 ? 1 : 0
+        guard col < grid[row].count, grid[row][col].userProfile == nil else {
+            placeRemaining(LocalLLMIdentity.profile, into: &grid, skip: currentUserPresent ? (0, 0) : nil)
+            return
+        }
+        GridPlacementLogic.place(profile: LocalLLMIdentity.profile, in: &grid, at: row, col: col)
     }
 
     private func placeRemaining(

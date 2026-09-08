@@ -26,6 +26,8 @@ struct Message: Identifiable, Codable {
     var encryptedContent: String? // Base64 encoded encrypted message content (when isEncrypted = true)
     var encryptedImageData: String? // Base64 encoded encrypted image data (when isEncrypted = true)
     var encryptionKeyID: String? // ID of the encryption key used
+    var reactions: [MessageReaction] = []
+    var reactionsUpdatedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -42,6 +44,8 @@ struct Message: Identifiable, Codable {
         case encryptedContent
         case encryptedImageData
         case encryptionKeyID
+        case reactions
+        case reactionsUpdatedAt
         // recordID is not directly encoded/decoded as it's managed by CloudKit interactions
         // imageAsset (CKAsset) is also not directly Codable and handled by CKRecord.
         // This comment seems to contradict adding recordID to CodingKeys.
@@ -70,6 +74,8 @@ struct Message: Identifiable, Codable {
         encryptedContent = try container.decodeIfPresent(String.self, forKey: .encryptedContent)
         encryptedImageData = try container.decodeIfPresent(String.self, forKey: .encryptedImageData)
         encryptionKeyID = try container.decodeIfPresent(String.self, forKey: .encryptionKeyID)
+        reactions = try container.decodeIfPresent([MessageReaction].self, forKey: .reactions) ?? []
+        reactionsUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .reactionsUpdatedAt)
         // Note: CKRecord.ID is not inherently Codable. If you need to store it locally
         // using Codable, you'd typically store its recordName (String) or a custom representation.
         // For now, assuming recordID is managed outside of Codable persistence for this struct.
@@ -93,6 +99,8 @@ struct Message: Identifiable, Codable {
         try container.encodeIfPresent(encryptedContent, forKey: .encryptedContent)
         try container.encodeIfPresent(encryptedImageData, forKey: .encryptedImageData)
         try container.encodeIfPresent(encryptionKeyID, forKey: .encryptionKeyID)
+        try container.encode(reactions, forKey: .reactions)
+        try container.encodeIfPresent(reactionsUpdatedAt, forKey: .reactionsUpdatedAt)
         // imageAsset (CKAsset) is not encoded.
     }
 
@@ -123,6 +131,8 @@ struct Message: Identifiable, Codable {
         self.encryptedContent = nil
         self.encryptedImageData = nil
         self.encryptionKeyID = nil
+        self.reactions = []
+        self.reactionsUpdatedAt = nil
     }
 
     // Initializer from a CKRecord
@@ -163,6 +173,8 @@ struct Message: Identifiable, Codable {
         self.encryptedContent = record["encryptedContent"] as? String
         self.encryptedImageData = record["encryptedImageData"] as? String
         self.encryptionKeyID = record["encryptionKeyID"] as? String
+        self.reactions = MessageReactionLogic.decode(record["reactionsJSON"] as? String)
+        self.reactionsUpdatedAt = record["reactionsUpdatedAt"] as? Date
     }
 
     // Helper to create/update a CKRecord from this message
@@ -205,6 +217,13 @@ struct Message: Identifiable, Codable {
                 record["encryptionKeyID"] = encryptionKeyID
             }
         }
+
+        if let reactionsJSON = MessageReactionLogic.encode(reactions) {
+            record["reactionsJSON"] = reactionsJSON
+        } else {
+            record["reactionsJSON"] = nil
+        }
+        record["reactionsUpdatedAt"] = reactionsUpdatedAt
         
         return record
     }

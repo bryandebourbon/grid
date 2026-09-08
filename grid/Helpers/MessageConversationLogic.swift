@@ -22,6 +22,12 @@ enum MessageConversationLogic {
         .sorted { $0.timestamp < $1.timestamp }
     }
 
+    static func lastSelfMessage(for deviceID: String, in messages: [Message]) -> Message? {
+        messages
+            .filter { $0.senderDeviceID == deviceID && $0.recipientDeviceID == deviceID }
+            .max { $0.timestamp < $1.timestamp }
+    }
+
     static func conversationList(
         currentDeviceID: String,
         messages: [Message],
@@ -31,12 +37,12 @@ enum MessageConversationLogic {
             message.senderDeviceID == currentDeviceID ? message.recipientDeviceID : message.senderDeviceID
         }
 
-        return grouped.map { partnerID, thread in
+        return grouped.compactMap { partnerID, thread -> ConversationSummary? in
+            guard partnerID != currentDeviceID else { return nil }
             let sorted = thread.sorted { $0.timestamp < $1.timestamp }
-            let name = partnerID == currentDeviceID ? "My Notes" : displayNameLookup(partnerID)
             return ConversationSummary(
                 deviceID: partnerID,
-                displayName: name,
+                displayName: displayNameLookup(partnerID),
                 lastMessage: sorted.last,
                 messageCount: thread.count
             )
