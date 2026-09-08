@@ -97,6 +97,14 @@ class ProximityService: ObservableObject {
     
     // Update current user's active status and location in CloudKit
     func updateUserActivity(_ profile: UserProfile, completion: @escaping (Result<UserProfile, Error>) -> Void) {
+        if GridPresenceLogic.isLeftoverDebugPeer(profile) {
+            completion(.failure(NSError(
+                domain: "ProximityService",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Refusing to publish a test fixture profile"]
+            )))
+            return
+        }
         print("DEBUG: Saving profile to CloudKit - lat: \(profile.latitude ?? 0), lon: \(profile.longitude ?? 0)")
         
         let record = profile.toPublicCKRecord()

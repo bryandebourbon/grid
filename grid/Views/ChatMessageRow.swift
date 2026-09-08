@@ -121,8 +121,10 @@ struct MessageRow: View {
                     .overlay(Text("Error loading image").font(.caption))
             }
         } else if message.isEncrypted && message.encryptedImageData != nil {
-            encryptedImageBubble
-        } else if !displayText.isEmpty {
+            if viewModel.decryptImageMessage(message) != nil {
+                encryptedImageBubble
+            }
+        } else if !displayText.isEmpty, !MessageDecryptabilityLogic.isUndecryptableText(displayText) {
             Text(displayText)
                 .padding(10)
                 .background(isCurrentDeviceSender ? Color.blue.opacity(0.7) : Color.gray.opacity(0.3))
@@ -131,10 +133,6 @@ struct MessageRow: View {
                 .opacity(message.status == .sending ? 0.7 : 1.0)
                 .accessibilityIdentifier(GridUITestHarness.chatMessageIdentifier)
                 .accessibilityValue(displayText)
-        } else {
-            Text("[Empty Message]")
-                .font(.caption)
-                .foregroundColor(.gray)
         }
     }
 
@@ -176,12 +174,6 @@ struct MessageRow: View {
                     .overlay(Text("Invalid image data").font(.caption))
             }
             #endif
-        } else {
-            Rectangle()
-                .fill(Color.red.opacity(0.2))
-                .frame(width: 150, height: 100)
-                .cornerRadius(10)
-                .overlay(Text("Failed to decrypt image").font(.caption))
         }
     }
 }

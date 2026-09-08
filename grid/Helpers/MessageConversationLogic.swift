@@ -230,6 +230,6 @@ enum MessageConversationLogic {
         raw.isEmpty
             || raw == MessageBannerLogic.encryptedTextPlaceholder
             || raw == MessageBannerLogic.encryptedImagePlaceholder
-            || raw == "[Failed to decrypt message]"
+            || raw == MessageDecryptabilityLogic.failedTextPlaceholder
     }
 }

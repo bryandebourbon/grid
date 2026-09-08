@@ -62,7 +62,7 @@ extension GridViewModel {
         }
         
         let text = CryptoService.shared.decrypt(data: encryptedContent, withPrivateKey: privateKey)
-            ?? "[Failed to decrypt message]"
+            ?? MessageDecryptabilityLogic.failedTextPlaceholder
         decryptedTextCache[message.id] = text
         return text
     }
@@ -316,12 +316,18 @@ extension GridViewModel {
     // Check if there are unread messages (all messages are now encrypted)
     func hasUnreadMessages() -> Bool {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return false }
-        
-        // Check for unread messages sent to current device
-        return messages.contains { message in
+        return readableMessages().contains { message in
             message.recipientDeviceID == currentDeviceID &&
             message.senderDeviceID != currentDeviceID &&
             !readReceipts.contains(message.id)
         }
+    }
+
+    func messageIsReadable(_ message: Message) -> Bool {
+        MessageDecryptabilityLogic.isReadable(message)
+    }
+
+    func readableMessages() -> [Message] {
+        MessageDecryptabilityLogic.visible(in: messages)
     }
 }

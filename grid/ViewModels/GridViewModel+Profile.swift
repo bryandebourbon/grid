@@ -133,7 +133,7 @@ extension GridViewModel {
         return MessageConversationLogic.messages(
             inConversationWith: deviceID,
             currentDeviceID: currentDeviceID,
-            from: messages
+            from: readableMessages()
         )
     }
 
@@ -149,7 +149,7 @@ extension GridViewModel {
         return MessageConversationLogic.messagesHome(
             currentDeviceID: current.deviceID,
             currentUserID: current.userID,
-            messages: messages,
+            messages: readableMessages(),
             readReceipts: readReceipts,
             starredUserIDs: starredUsers,
             profiles: knownProfiles(),

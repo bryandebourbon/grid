@@ -9,7 +9,8 @@ enum MessageBannerNotifier {
     static let messageIDKey = "messageID"
 
     static func announce(_ message: Message, currentDeviceID: String? = nil) {
-        guard MessageBannerLogic.shouldAnnounce(
+        guard MessageDecryptabilityLogic.isReadable(message),
+              MessageBannerLogic.shouldAnnounce(
             senderDeviceID: message.senderDeviceID,
             currentDeviceID: currentDeviceID,
             viewingDeviceID: ForegroundChatState.partnerDeviceID

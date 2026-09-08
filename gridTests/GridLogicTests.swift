@@ -95,8 +95,12 @@ struct GridColumnZoomLogicTests {
             bio: "Simulator test peer"
         )
         let person = UserProfile(userID: "u", deviceID: "me", deviceName: "Me")
+        let harnessMe = GridUITestHarness.me
         #expect(GridPresenceLogic.isLeftoverDebugPeer(peer))
         #expect(!GridPresenceLogic.shouldShowPeer(peer))
+        #expect(GridPresenceLogic.isLeftoverDebugPeer(harnessMe))
+        #expect(GridPresenceLogic.isLeftoverDebugPeer(GridUITestHarness.alice))
+        #expect(!GridPresenceLogic.shouldShowPeer(harnessMe))
         #expect(!GridPresenceLogic.isLeftoverDebugPeer(person))
         #expect(GridPresenceLogic.shouldShowPeer(person))
         #expect(InitialsAvatarLogic.initials(from: "Test Peer") == "TP")
@@ -892,6 +896,87 @@ struct MessageReadLogicTests {
             readReceipts: ["1"],
             excludingSenderDeviceID: "bob"
         ) == 0)
+    }
+}
+
+struct MessageDecryptabilityLogicTests {
+    @Test func undecryptableCiphertextDoesNotCountAnywhere() {
+        #expect(!MessageDecryptabilityLogic.counts(
+            isEncrypted: true,
+            hasEncryptedImage: false,
+            decryptedText: MessageDecryptabilityLogic.failedTextPlaceholder,
+            hasDecryptedImage: false
+        ))
+        #expect(!MessageDecryptabilityLogic.counts(
+            isEncrypted: true,
+            hasEncryptedImage: false,
+            decryptedText: MessageBannerLogic.encryptedTextPlaceholder,
+            hasDecryptedImage: false
+        ))
+        #expect(!MessageDecryptabilityLogic.counts(
+            isEncrypted: true,
+            hasEncryptedImage: false,
+            decryptedText: nil,
+            hasDecryptedImage: false
+        ))
+        #expect(!MessageDecryptabilityLogic.counts(
+            isEncrypted: true,
+            hasEncryptedImage: true,
+            decryptedText: nil,
+            hasDecryptedImage: false
+        ))
+        #expect(MessageDecryptabilityLogic.counts(
+            isEncrypted: true,
+            hasEncryptedImage: false,
+            decryptedText: "hey",
+            hasDecryptedImage: false
+        ))
+        #expect(MessageDecryptabilityLogic.counts(
+            isEncrypted: true,
+            hasEncryptedImage: true,
+            decryptedText: nil,
+            hasDecryptedImage: true
+        ))
+        #expect(MessageDecryptabilityLogic.counts(
+            isEncrypted: false,
+            hasEncryptedImage: false,
+            decryptedText: "plain",
+            hasDecryptedImage: false
+        ))
+
+        var locked = Message(
+            id: "old-account",
+            senderDeviceID: "elliott",
+            recipientDeviceID: "me",
+            senderUserID: "u-elliott",
+            recipientUserID: "u-me",
+            text: MessageBannerLogic.encryptedTextPlaceholder,
+            status: .received
+        )
+        locked.isEncrypted = true
+        locked.encryptedContent = "not-valid-ciphertext"
+        let open = Message(
+            id: "new",
+            senderDeviceID: "elliott",
+            recipientDeviceID: "me",
+            senderUserID: "u-elliott",
+            recipientUserID: "u-me",
+            text: "hey",
+            status: .received
+        )
+        let visible = MessageDecryptabilityLogic.visible(in: [locked, open])
+        #expect(visible.map(\.id) == ["new"])
+        #expect(MessageReadLogic.unreadCount(
+            from: "elliott",
+            currentDeviceID: "me",
+            messages: visible,
+            readReceipts: []
+        ) == 1)
+        #expect(MessageConversationLogic.conversationList(
+            currentDeviceID: "me",
+            messages: visible,
+            displayNameLookup: { _ in "Elliott" }
+        ).map(\.lastMessage?.id) == ["new"])
     }
 }
 
