@@ -143,7 +143,7 @@ extension GridViewModel {
         return MessageReadLogic.unreadCount(
             from: deviceID,
             currentDeviceID: currentDeviceID,
-            messages: messages,
+            messages: readableMessages(),
             readReceipts: readReceipts
         )
     }
@@ -152,7 +152,7 @@ extension GridViewModel {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return 0 }
         return MessageReadLogic.incomingUnreadCount(
             currentDeviceID: currentDeviceID,
-            messages: messages,
+            messages: readableMessages(),
             readReceipts: readReceipts,
             excludingSenderDeviceID: excludingDeviceID
         )

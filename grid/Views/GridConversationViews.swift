@@ -216,7 +216,7 @@ struct ConversationRowView: View {
         let decrypted = viewModel.decryptMessage(message)
         let text = decrypted == MessageBannerLogic.encryptedTextPlaceholder
             || decrypted == MessageBannerLogic.encryptedImagePlaceholder
-            || decrypted == "[Failed to decrypt message]"
+            || MessageDecryptabilityLogic.isUndecryptableText(decrypted)
             ? nil
             : decrypted
         return MessageConversationLogic.previewLine(

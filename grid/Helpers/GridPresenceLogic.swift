@@ -9,11 +9,12 @@ enum GridPresenceLogic {
     static func isLeftoverDebugPeer(_ profile: UserProfile) -> Bool {
         let userID = profile.userID.lowercased()
         let deviceID = profile.deviceID.lowercased()
-        if userID.hasPrefix("grid.test-peer.") { return true }
-        if deviceID.hasPrefix("grid.test-peer") { return true }
+        if userID.hasPrefix("grid.test-peer.") || userID.hasPrefix("grid.uitest.") { return true }
+        if deviceID.hasPrefix("grid.test-peer") || deviceID.hasPrefix("uitest-") { return true }
         if profile.deviceName.compare("Test Peer", options: .caseInsensitive) == .orderedSame {
             return true
         }
+        if profile.deviceName.localizedCaseInsensitiveContains("UI Test") { return true }
         return (profile.bio ?? "").localizedCaseInsensitiveContains("simulator test peer")
     }
 
