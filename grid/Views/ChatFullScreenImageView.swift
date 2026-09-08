@@ -1,32 +1,30 @@
 import SwiftUI
-import PhotosUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // Full-screen image viewer
 struct FullScreenImageView: View {
     let imageData: FullScreenImageData
     let onDismiss: () -> Void
-    
+
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
-    
+
     var body: some View {
         ZStack {
-            // Black background
             Color.black
                 .ignoresSafeArea()
                 .onTapGesture {
-                    // Only dismiss if not zoomed in
                     if scale <= 1.0 {
                         onDismiss()
                     }
                 }
-            
+
             VStack {
-                // Header with encryption indicator and close button
                 HStack {
-                    // Encryption indicator
                     if imageData.isEncrypted {
                         HStack(spacing: 4) {
                             Image(systemName: "lock.fill")
@@ -41,61 +39,42 @@ struct FullScreenImageView: View {
                         .background(Color.black.opacity(0.6))
                         .cornerRadius(8)
                     }
-                    
                     Spacer()
-                    
-                    // Close button
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Circle())
-                    }
                 }
                 .padding()
-                .opacity(scale > 1.0 ? 0.3 : 1.0) // Fade header when zoomed
+                .opacity(scale > 1.0 ? 0.3 : 1.0)
                 .animation(.easeInOut(duration: 0.2), value: scale)
-                
+
                 Spacer()
-                
-                // Zoomable image
+
                 imageData.image
                     .resizable()
                     .scaledToFit()
                     .scaleEffect(scale)
                     .offset(offset)
                     .onTapGesture(count: 2) {
-                        // Double tap to zoom in/out
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
                             if scale > 1.0 {
-                                // Reset zoom
                                 scale = 1.0
                                 offset = .zero
                             } else {
-                                // Zoom in to 2x
                                 scale = 2.0
                             }
                         }
                     }
                     .onTapGesture {
-                        // Single tap - only dismiss if not zoomed
                         if scale <= 1.0 {
                             onDismiss()
                         }
                     }
                     .gesture(
                         SimultaneousGesture(
-                            // Magnification gesture for pinch-to-zoom
                             MagnificationGesture()
                                 .onChanged { value in
-                                    let newScale = lastScale * value
-                                    scale = max(1.0, min(newScale, 5.0)) // Limit zoom between 1x and 5x
+                                    scale = max(1.0, min(lastScale * value, 5.0))
                                 }
                                 .onEnded { _ in
                                     lastScale = scale
-                                    
-                                    // Reset position when zoomed out to 1.0 or close to it
                                     if scale <= 1.1 {
                                         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
                                             scale = 1.0
@@ -105,16 +84,13 @@ struct FullScreenImageView: View {
                                         lastOffset = .zero
                                     }
                                 },
-                            
-                            // Drag gesture for panning when zoomed
                             DragGesture()
                                 .onChanged { value in
                                     if scale > 1.0 {
-                                        let newOffset = CGSize(
+                                        offset = limitOffset(CGSize(
                                             width: lastOffset.width + value.translation.width,
                                             height: lastOffset.height + value.translation.height
-                                        )
-                                        offset = limitOffset(newOffset)
+                                        ))
                                     }
                                 }
                                 .onEnded { _ in
@@ -122,19 +98,84 @@ struct FullScreenImageView: View {
                                 }
                         )
                     )
-                
+
                 Spacer()
             }
         }
     }
-    
-    // Helper function to limit panning within reasonable bounds
+
     private func limitOffset(_ newOffset: CGSize) -> CGSize {
-        let maxOffset: CGFloat = 200 * scale // Adjust this value as needed
-        
-        let limitedWidth = max(-maxOffset, min(maxOffset, newOffset.width))
-        let limitedHeight = max(-maxOffset, min(maxOffset, newOffset.height))
-        
-        return CGSize(width: limitedWidth, height: limitedHeight)
+        let maxOffset: CGFloat = 200 * scale
+        return CGSize(
+            width: max(-maxOffset, min(maxOffset, newOffset.width)),
+            height: max(-maxOffset, min(maxOffset, newOffset.height))
+        )
     }
 }
+
+#if canImport(UIKit)
+/// Close control lives in its own overlay so photo gestures cannot eat the tap.
+struct PhotoCloseButton: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> PhotoCloseHost {
+        let host = PhotoCloseHost()
+        host.button.addTarget(context.coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
+        return host
+    }
+
+    func updateUIView(_ host: PhotoCloseHost, context: Context) {
+        context.coordinator.action = action
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func tapped() {
+            action()
+        }
+    }
+}
+
+final class PhotoCloseHost: UIView {
+    let button = UIButton(type: .system)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        let config = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        button.setImage(UIImage(systemName: "xmark.circle.fill", withConfiguration: config), for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        button.layer.cornerRadius = 28
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: 56, height: 56)
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: -12, dy: -12).contains(point)
+    }
+}
+#endif

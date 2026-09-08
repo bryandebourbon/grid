@@ -199,6 +199,9 @@ struct ChatView: View {
         }
         .onAppear {
             ChatOpenTrace.mark("ChatView.onAppear presented=\(isPresented) focused=\(isTextFieldFocused) messages=\(chatMessages.count)")
+            if isPresented {
+                isTextFieldFocused = true
+            }
         }
         .onChange(of: isPresented) { presented in
             ChatOpenTrace.mark("ChatView.isPresented=\(presented)")
@@ -214,6 +217,16 @@ struct ChatView: View {
                 FullScreenImageView(imageData: imageData) {
                     fullScreenImage = nil
                 }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if fullScreenImage != nil {
+                PhotoCloseButton {
+                    fullScreenImage = nil
+                }
+                .frame(width: 56, height: 56)
+                .padding(.trailing, 14)
+                .padding(.bottom, 10)
             }
         }
     }

@@ -80,7 +80,7 @@ struct ChatMessageComposer: View {
 }
 
 #if canImport(UIKit)
-/// Single-line field. Send keeps first responder so the keyboard does not drop.
+/// Send does not resign. Opening a chat sets focus so the keyboard comes up.
 private struct ChatSendField: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
@@ -110,14 +110,12 @@ private struct ChatSendField: UIViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.isFocused = isFocused
         context.coordinator.onSend = onSend
+        field.wantsFocus = isFocused.wrappedValue
         if field.text != text {
             field.text = text
         }
-        if isFocused.wrappedValue, !field.isFirstResponder {
-            DispatchQueue.main.async {
-                guard isFocused.wrappedValue, field.window != nil, !field.isFirstResponder else { return }
-                field.becomeFirstResponder()
-            }
+        if isFocused.wrappedValue, field.window != nil, !field.isFirstResponder {
+            field.becomeFirstResponder()
         }
     }
 
@@ -138,6 +136,12 @@ private struct ChatSendField: UIViewRepresentable {
 
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
             onSend()
+            if !isFocused.wrappedValue {
+                isFocused.wrappedValue = true
+            }
+            if textField.window != nil, !textField.isFirstResponder {
+                textField.becomeFirstResponder()
+            }
             return false
         }
 
@@ -146,16 +150,19 @@ private struct ChatSendField: UIViewRepresentable {
                 isFocused.wrappedValue = true
             }
         }
-
-        func textFieldDidEndEditing(_ textField: UITextField) {
-            if isFocused.wrappedValue {
-                isFocused.wrappedValue = false
-            }
-        }
     }
 }
 
 private final class ExpandingChatField: UITextField {
+    var wantsFocus = false
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil, wantsFocus, !isFirstResponder {
+            becomeFirstResponder()
+        }
+    }
+
     override var intrinsicContentSize: CGSize {
         CGSize(width: UIView.noIntrinsicMetric, height: 22)
     }
