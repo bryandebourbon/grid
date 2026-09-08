@@ -9,6 +9,7 @@ struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
     @State private var showingConversationsList = false  // NEW: For conversations list
     @State private var isProfileDrawerExpanded = false
+    @State private var showingInterestCapPopover = false
     @FocusState private var isChatComposerFocused: Bool
     @State private var showingContactInfo = false  // NEW: For contact info
     @State private var showingSignOutConfirmation = false
@@ -16,7 +17,6 @@ struct GridView: View {
     @State private var storiesMode = GridUITestHarness.isActive
         ? false
         : UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false
-    @State private var photoShape = GridPhotoShape.stored()
     @State private var showBioBubbles = UserDefaults.standard.bool(forKey: "grid.bioBubbles")
     @State private var zoom = GridColumnZoom()
     @State private var showingStoryCreation = false  // NEW: For story creation sheet
@@ -28,9 +28,9 @@ struct GridView: View {
     @State private var showingBackgroundPhotoPicker = false
     @State private var selectedBackgroundPhotoItem: PhotosPickerItem? = nil
     
-    private var shouldUseCircularPhotos: Bool { storiesMode || photoShape.usesCircleClip }
+    private var shouldUseCircularPhotos: Bool { false }
 
-    private var shouldUseSquarePhotos: Bool { storiesMode || photoShape.usesSquareProportion }
+    private var shouldUseSquarePhotos: Bool { false }
     @State private var singleTapTimer: Timer?
     var signOutAction: () -> Void
     var deleteAccountAction: () -> Void
@@ -40,6 +40,16 @@ struct GridView: View {
 
     private var gridScrollBottomInset: CGFloat {
         GridInterestBrowseSection.peekHeight() + Self.aboveDrawerControlsHeight + 8
+    }
+
+    private var showBioBubblesBinding: Binding<Bool> {
+        Binding(
+            get: { showBioBubbles },
+            set: { newValue in
+                showBioBubbles = newValue
+                UserDefaults.standard.set(newValue, forKey: "grid.bioBubbles")
+            }
+        )
     }
 
     private var showSelfOnGridBinding: Binding<Bool> {
@@ -121,6 +131,7 @@ struct GridView: View {
                                 useSquarePhotos: shouldUseSquarePhotos,
                                 storiesMode: storiesMode,
                                 showBioBubbles: showBioBubbles,
+                                gridColumns: zoom.gridColumns,
                                 onChatTapped: { _ in
                                     if let partnerID {
                                         handleChatTapped(partnerID)
@@ -226,6 +237,16 @@ struct GridView: View {
             current: viewModel.peopleTab,
             tabs: viewModel.orderedPeopleTabs
         )
+        if GridPeopleTabPaging.shouldPromptRemoveInterestToAdd(
+            translation: translation.width,
+            current: viewModel.peopleTab,
+            tabs: viewModel.orderedPeopleTabs,
+            canAddInterestPage: viewModel.canAddInterestPage
+        ) {
+            PeopleTabSwipeTrace.log("decision swipe -> interest cap popover")
+            showingInterestCapPopover = true
+            return
+        }
         if GridPeopleTabPaging.shouldOpenInterestSearch(
             translation: translation.width,
             current: viewModel.peopleTab,
@@ -245,6 +266,16 @@ struct GridView: View {
     }
 
     private func handlePeopleTabSwipe(translation: CGFloat) {
+        if GridPeopleTabPaging.shouldPromptRemoveInterestToAdd(
+            translation: translation,
+            current: viewModel.peopleTab,
+            tabs: viewModel.orderedPeopleTabs,
+            canAddInterestPage: viewModel.canAddInterestPage
+        ) {
+            PeopleTabSwipeTrace.log("decision swipe -> interest cap popover")
+            showingInterestCapPopover = true
+            return
+        }
         if GridPeopleTabPaging.shouldOpenInterestSearch(
             translation: translation,
             current: viewModel.peopleTab,
@@ -289,6 +320,24 @@ struct GridView: View {
         }
     }
 
+    private var zoomControls: some View {
+        HStack(spacing: 8) {
+            mapsCircleButton(systemImage: "minus.magnifyingglass") {
+                zoom.zoomOut()
+            }
+            .disabled(!zoom.canZoomOut)
+            .opacity(zoom.canZoomOut ? 1 : 0.4)
+            .accessibilityLabel("Zoom out")
+
+            mapsCircleButton(systemImage: "plus.magnifyingglass") {
+                zoom.zoomIn()
+            }
+            .disabled(!zoom.canZoomIn)
+            .opacity(zoom.canZoomIn ? 1 : 0.4)
+            .accessibilityLabel("Zoom in")
+        }
+    }
+
     private var aboveDrawerControls: some View {
         HStack(spacing: 8) {
             if storiesMode {
@@ -296,34 +345,6 @@ struct GridView: View {
                     showingStoryCreation = true
                 }
                 .accessibilityLabel("Create Story")
-            }
-
-            if !storiesMode {
-                mapsCircleButton(systemImage: photoShape.systemImage) {
-                    #if os(iOS)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    #endif
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        photoShape = photoShape.next
-                        photoShape.persist()
-                    }
-                }
-                .accessibilityLabel("Photo shape")
-                .accessibilityValue(photoShape.accessibilityName)
-                .accessibilityIdentifier("photos.proportion")
-
-                mapsCircleButton(systemImage: showBioBubbles ? "text.bubble.fill" : "text.bubble") {
-                    #if os(iOS)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    #endif
-                    withAnimation(.easeInOut(duration: 0.28)) {
-                        showBioBubbles.toggle()
-                        UserDefaults.standard.set(showBioBubbles, forKey: "grid.bioBubbles")
-                    }
-                }
-                .accessibilityLabel("Bio bubbles")
-                .accessibilityValue(showBioBubbles ? "On" : "Off")
-                .accessibilityIdentifier("bios.bubbles")
             }
 
             settingsMenu
@@ -358,6 +379,10 @@ struct GridView: View {
 
             Toggle(isOn: showSelfOnGridBinding) {
                 Label("Show me on the grid", systemImage: "person.crop.square")
+            }
+
+            Toggle(isOn: showBioBubblesBinding) {
+                Label("Status bubbles", systemImage: "text.bubble")
             }
 
             Button {
@@ -503,9 +528,6 @@ struct GridView: View {
                 UITestHitButton(title: "All", identifier: "people.tab.all") {
                     viewModel.peopleTab = .all
                 }
-                UITestHitButton(title: "Favorites", identifier: "people.tab.favorites") {
-                    viewModel.peopleTab = .favorites
-                }
                 Text(viewModel.peopleTab.rawValue)
                     .font(.caption.monospaced())
                     .accessibilityIdentifier(GridUITestHarness.peopleTabProbeIdentifier)
@@ -642,6 +664,7 @@ struct GridView: View {
                     VStack(spacing: 8) {
                         HStack {
                             Spacer()
+                            zoomControls
                             aboveDrawerControls
                         }
                         .padding(.horizontal, 16)
@@ -650,7 +673,6 @@ struct GridView: View {
                             GridInterestBrowseSection(
                                 viewModel: viewModel,
                                 isExpanded: $isProfileDrawerExpanded,
-                                photoShape: photoShape,
                                 showBioBubbles: showBioBubbles,
                                 onChatTapped: { deviceID in
                                     isProfileDrawerExpanded = false
@@ -672,6 +694,7 @@ struct GridView: View {
                             groups: viewModel.customGroups,
                             interestPages: viewModel.interestPages,
                             canAddInterestPage: viewModel.canAddInterestPage,
+                            showingInterestCapPopover: $showingInterestCapPopover,
                             onSearchInterests: openInterestSearch,
                             onDeleteInterest: { interest in
                                 viewModel.unregisterFromInterest(interest)

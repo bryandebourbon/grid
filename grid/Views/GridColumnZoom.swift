@@ -22,6 +22,26 @@ final class GridColumnZoom {
     private var dragStartTime = Date()
 
     var scrollDisabled: Bool { isScaling || isDragging }
+    var canZoomIn: Bool { gridColumns > GridColumnZoomLogic.minColumns }
+    var canZoomOut: Bool { gridColumns < GridColumnZoomLogic.maxColumns }
+
+    func zoomIn() {
+        stepColumns(by: -1)
+    }
+
+    func zoomOut() {
+        stepColumns(by: 1)
+    }
+
+    private func stepColumns(by delta: Int) {
+        let target = GridColumnZoomLogic.clamp(gridColumns + delta)
+        guard target != gridColumns else { return }
+        haptic(.medium)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+            gridColumns = target
+            baseColumns = target
+        }
+    }
 
     func resetPressState() {
         isLongPressing = false

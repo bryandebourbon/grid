@@ -13,7 +13,6 @@ enum InterestDrawerLevel {
 struct GridInterestBrowseSection: View {
     @ObservedObject var viewModel: GridViewModel
     @Binding var isExpanded: Bool
-    var photoShape: GridPhotoShape = .card
     var showBioBubbles = false
     var onChatTapped: (String) -> Void = { _ in }
     @State private var dragOffset: CGFloat = 0
@@ -145,11 +144,9 @@ struct GridInterestBrowseSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            Image(systemName: "chevron.up")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            peekInterests
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
@@ -179,8 +176,7 @@ struct GridInterestBrowseSection: View {
 
                 ProfilePinnedStoriesRow(
                     viewModel: viewModel,
-                    userProfile: profile,
-                    photoShape: photoShape
+                    userProfile: profile
                 )
 
                 Spacer(minLength: 0)
@@ -199,21 +195,20 @@ struct GridInterestBrowseSection: View {
 
     private var mainPhotoWidth: CGFloat { 96 }
     private var mainPhotoHeight: CGFloat {
-        photoShape == .card ? mainPhotoWidth * GridCellLayout.portraitHeightToWidth : mainPhotoWidth
+        mainPhotoWidth * GridCellLayout.portraitHeightToWidth
     }
 
-    private var peekPhotoWidth: CGFloat { photoShape == .card ? 28 : 40 }
+    private var peekPhotoWidth: CGFloat { 28 }
     private var peekPhotoHeight: CGFloat {
-        photoShape == .card ? peekPhotoWidth * GridCellLayout.portraitHeightToWidth : peekPhotoWidth
+        peekPhotoWidth * GridCellLayout.portraitHeightToWidth
     }
 
     private var mainPhoto: some View {
         profileImage
             .frame(width: mainPhotoWidth, height: mainPhotoHeight)
             .background(Color.primary.opacity(0.08))
-            .modifier(DynamicClipShape(useCircular: photoShape.usesCircleClip))
+            .clipShape(RoundedRectangle(cornerRadius: GridCellLayout.cornerRadius, style: .continuous))
             .overlay { photoStroke }
-            .animation(.easeInOut(duration: 0.28), value: photoShape)
     }
 
     private var profileImage: some View {
@@ -222,11 +217,13 @@ struct GridInterestBrowseSection: View {
                 image
                     .resizable()
                     .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
             } else {
                 Image(systemName: "person.fill")
                     .resizable()
                     .scaledToFit()
-                    .padding(photoShape == .card ? 22 : 28)
+                    .padding(22)
                     .foregroundStyle(.secondary)
             }
         }
@@ -234,12 +231,8 @@ struct GridInterestBrowseSection: View {
 
     @ViewBuilder
     private var photoStroke: some View {
-        if photoShape.usesCircleClip {
-            Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.5)
-        } else {
-            RoundedRectangle(cornerRadius: GridCellLayout.cornerRadius, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
-        }
+        RoundedRectangle(cornerRadius: GridCellLayout.cornerRadius, style: .continuous)
+            .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
     }
 
     @ViewBuilder
@@ -290,14 +283,21 @@ struct GridInterestBrowseSection: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button {
-                    viewModel.showingInterestSearch = true
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.caption.weight(.semibold))
+                if viewModel.canAddInterestPage {
+                    Button {
+                        viewModel.showingInterestSearch = true
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Search interests")
+                } else {
+                    Text("Delete interest to add a new one")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
-                .accessibilityLabel("Search interests")
             }
 
             HStack(spacing: 6) {
@@ -474,13 +474,32 @@ struct GridInterestBrowseSection: View {
         }
     }
 
+    private var peekInterests: some View {
+        HStack(spacing: 6) {
+            ForEach(viewModel.interestPages) { interest in
+                Button {
+                    viewModel.peopleTab = .interest(interest.rawValue)
+                } label: {
+                    Text(interest.emoji)
+                        .font(.body)
+                        .frame(width: 32, height: 32)
+                        .background(Color.primary.opacity(0.08), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(interest.rawValue)
+            }
+        }
+    }
+
     private var profileAvatar: some View {
         profileImage
             .frame(width: peekPhotoWidth, height: peekPhotoHeight)
             .background(Color.primary.opacity(0.08))
-            .modifier(DynamicClipShape(useCircular: photoShape.usesCircleClip))
-            .overlay { photoStroke }
-            .animation(.easeInOut(duration: 0.28), value: photoShape)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+            }
     }
 
     private func toggleLevel() {

@@ -29,14 +29,11 @@ final class ChatPartnerUITests: XCTestCase {
     }
 
     @MainActor
-    func testFavoritesTabTapAndGridSwipe() throws {
+    func testPeopleTabSwipe() throws {
         let app = launchLiveGrid()
         XCTAssertTrue(app.buttons["people.tab.all"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["people.tab.favorites"].exists)
 
-        tap(app.buttons["people.tab.favorites"])
-        XCTAssertTrue(app.buttons["people.tab.favorites"].waitForExistence(timeout: 4))
-
-        tap(app.buttons["people.tab.all"])
         let grid = app.scrollViews.firstMatch
         XCTAssertTrue(grid.waitForExistence(timeout: 4))
         grid.swipeLeft()

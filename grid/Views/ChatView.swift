@@ -33,88 +33,32 @@ struct ChatView: View {
         (viewModel.userAlbums[recipientDeviceID]?.photosCount ?? 0) > 0
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { scrollViewProxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        if chatMessages.isEmpty {
-                            VStack {
-                                Image(systemName: "message")
-                                    .font(.largeTitle)
-                                    .foregroundColor(.gray)
-                                Text("No messages yet")
-                                    .foregroundColor(.gray)
-                                Text("Send a message to start the conversation!")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding(.top, 50)
-                        } else {
-                            ForEach(chatMessages) { message in
-                                MessageRow(
-                                    message: message,
-                                    isCurrentDeviceSender: message.senderDeviceID == currentDeviceID,
-                                    onImageTap: { imageData in
-                                        fullScreenImage = imageData
-                                    },
-                                    onReact: { emoji in
-                                        viewModel.toggleReaction(emoji, on: message.id)
-                                    },
-                                    isReactionPickerVisible: reactingMessageID == message.id,
-                                    onToggleReactionPicker: {
-                                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                                            reactingMessageID = reactingMessageID == message.id ? nil : message.id
-                                        }
-                                    }
-                                )
-                                .id(message.id)
-                                .environmentObject(viewModel)
-                            }
-                        }
+    private var showsPartnerPinStrip: Bool {
+        showPartnerPins && hasPartnerPins && partnerProfile != nil
+    }
 
-                        Color.clear
-                            .frame(height: 1)
-                            .id(Self.bottomAnchorID)
-                    }
-                    .padding()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .defaultScrollAnchor(.bottom)
-                .scrollDismissesKeyboard(.never)
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    geometry.contentOffset.y
-                } action: { oldOffset, newOffset in
-                    if reactingMessageID != nil, abs(newOffset - oldOffset) > 1 {
-                        reactingMessageID = nil
-                    }
-                }
-                .onChange(of: chatMessages.count) { _ in
-                    pinToLatest(scrollViewProxy)
-                }
-                .onChange(of: latestMessageID) { _ in
-                    pinToLatest(scrollViewProxy)
-                }
-                .onChange(of: recipientDeviceID) { _ in
-                    resetComposer()
-                    pinToLatest(scrollViewProxy)
-                }
-                .onChange(of: isPresented) { presented in
-                    if presented { pinToLatest(scrollViewProxy) }
-                }
-                .onAppear {
-                    pinToLatest(scrollViewProxy)
-                }
-            }
+    private var accessoryHeight: CGFloat {
+        var height: CGFloat = 0
+        if showsPartnerPinStrip { height += 100 }
+        if showPhotoStrip { height += 92 }
+        return height
+    }
 
-            if showPartnerPins, hasPartnerPins {
-                ChatPartnerPinnedPhotoStrip(
+    @ViewBuilder
+    private var chatAccessoryStrips: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if showsPartnerPinStrip, let partnerProfile {
+                ProfilePinnedStoriesRow(
                     viewModel: viewModel,
-                    deviceID: recipientDeviceID
-                ) { image in
-                    fullScreenImage = FullScreenImageData(image: image, isEncrypted: false)
-                }
+                    userProfile: partnerProfile,
+                    showsTitle: false,
+                    showsAddSlots: false,
+                    onSelectImage: { image in
+                        fullScreenImage = FullScreenImageData(image: image, isEncrypted: false)
+                    }
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
@@ -133,6 +77,100 @@ struct ChatView: View {
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.clear)
+    }
+
+    private var partnerProfile: UserProfile? {
+        if recipientDeviceID == viewModel.currentUserProfile?.deviceID {
+            return viewModel.currentUserProfile
+        }
+        if LocalLLMIdentity.isLLM(recipientDeviceID) {
+            return LocalLLMIdentity.profile
+        }
+        return ProfileDisplayNameLogic.profile(forDeviceID: recipientDeviceID, in: viewModel.allGridNodes)
+            ?? ProfileDisplayNameLogic.profile(forDeviceID: recipientDeviceID, in: viewModel.gridNodes)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottom) {
+                ScrollViewReader { scrollViewProxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            if chatMessages.isEmpty {
+                                VStack {
+                                    Image(systemName: "message")
+                                        .font(.largeTitle)
+                                        .foregroundColor(.gray)
+                                    Text("No messages yet")
+                                        .foregroundColor(.gray)
+                                    Text("Send a message to start the conversation!")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .padding(.top, 50)
+                            } else {
+                                ForEach(chatMessages) { message in
+                                    MessageRow(
+                                        message: message,
+                                        isCurrentDeviceSender: message.senderDeviceID == currentDeviceID,
+                                        onImageTap: { imageData in
+                                            fullScreenImage = imageData
+                                        },
+                                        onReact: { emoji in
+                                            viewModel.toggleReaction(emoji, on: message.id)
+                                        },
+                                        isReactionPickerVisible: reactingMessageID == message.id,
+                                        onToggleReactionPicker: {
+                                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                                reactingMessageID = reactingMessageID == message.id ? nil : message.id
+                                            }
+                                        }
+                                    )
+                                    .id(message.id)
+                                    .environmentObject(viewModel)
+                                }
+                            }
+
+                            Color.clear
+                                .frame(height: max(accessoryHeight, 1))
+                                .id(Self.bottomAnchorID)
+                        }
+                        .padding()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .defaultScrollAnchor(.bottom)
+                    .scrollDismissesKeyboard(.never)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentOffset.y
+                    } action: { oldOffset, newOffset in
+                        if reactingMessageID != nil, abs(newOffset - oldOffset) > 1 {
+                            reactingMessageID = nil
+                        }
+                    }
+                    .onChange(of: chatMessages.count) { _ in
+                        pinToLatest(scrollViewProxy)
+                    }
+                    .onChange(of: latestMessageID) { _ in
+                        pinToLatest(scrollViewProxy)
+                    }
+                    .onChange(of: recipientDeviceID) { _ in
+                        resetComposer()
+                        pinToLatest(scrollViewProxy)
+                    }
+                    .onChange(of: isPresented) { presented in
+                        if presented { pinToLatest(scrollViewProxy) }
+                    }
+                    .onAppear {
+                        pinToLatest(scrollViewProxy)
+                    }
+                }
+
+                chatAccessoryStrips
             }
 
             ChatMessageComposer(

@@ -44,6 +44,10 @@ class GridViewModel: ObservableObject {
 
     @Published var peopleTab: GridPeopleTab = .all {
         didSet {
+            if case .favorites = peopleTab {
+                peopleTab = .all
+                return
+            }
             guard oldValue != peopleTab else { return }
             gridNodes = nodes(for: peopleTab)
         }

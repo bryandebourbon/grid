@@ -109,7 +109,7 @@ enum GridPeopleTabPaging {
         customGroups: [PeopleGroup],
         interestPages: [Interest] = []
     ) -> [GridPeopleTab] {
-        [.all, .favorites]
+        [.all]
             + customGroups.map { .custom($0.id) }
             + interestPages.map { .interest($0.rawValue) }
     }
@@ -125,6 +125,15 @@ enum GridPeopleTabPaging {
         return current
     }
 
+    static func isSwipePastLastTab(
+        translation: CGFloat,
+        current: GridPeopleTab,
+        tabs: [GridPeopleTab]
+    ) -> Bool {
+        guard let index = tabs.firstIndex(of: current), !tabs.isEmpty else { return false }
+        return translation < -40 && index == tabs.count - 1
+    }
+
     /// Swiping toward the next page while already on the last tab opens interest search,
     /// unless the user already has the maximum number of interest pages.
     static func shouldOpenInterestSearch(
@@ -134,8 +143,18 @@ enum GridPeopleTabPaging {
         canAddInterestPage: Bool = true
     ) -> Bool {
         guard canAddInterestPage else { return false }
-        guard let index = tabs.firstIndex(of: current), !tabs.isEmpty else { return false }
-        return translation < -40 && index == tabs.count - 1
+        return isSwipePastLastTab(translation: translation, current: current, tabs: tabs)
+    }
+
+    /// At the three-interest cap, the same swipe asks the user to remove one first.
+    static func shouldPromptRemoveInterestToAdd(
+        translation: CGFloat,
+        current: GridPeopleTab,
+        tabs: [GridPeopleTab],
+        canAddInterestPage: Bool
+    ) -> Bool {
+        guard !canAddInterestPage else { return false }
+        return isSwipePastLastTab(translation: translation, current: current, tabs: tabs)
     }
 
     static func pageOffset(tab: GridPeopleTab, width: CGFloat, drag: CGFloat) -> CGFloat {
@@ -166,7 +185,7 @@ enum GridPeopleTabPaging {
         let threshold = width * 0.2
         switch current {
         case .all:
-            return projected < -threshold ? .favorites : .all
+            return .all
         case .favorites, .custom, .interest:
             return projected > threshold ? .all : current
         }
