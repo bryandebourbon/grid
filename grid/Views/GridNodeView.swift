@@ -28,13 +28,20 @@ struct GridNodeView: View {
                     loadedImage
                         .resizable()
                         .scaledToFill()
-                } else {
-                    let isLocalLLM = node.userProfile.map { LocalLLMIdentity.isLLM($0.deviceID) } ?? false
-                    Image(systemName: isLocalLLM ? "sparkles" : "person.fill")
+                } else if let profile = node.userProfile, LocalLLMIdentity.isLLM(profile.deviceID) {
+                    Image(systemName: "sparkles")
                         .resizable()
                         .scaledToFit()
-                        .padding(isLocalLLM ? 14 : 5)
-                        .foregroundColor(isLocalLLM ? Color.purple.opacity(0.85) : Color.gray.opacity(0.5))
+                        .padding(14)
+                        .foregroundColor(Color.purple.opacity(0.85))
+                } else if let profile = node.userProfile {
+                    InitialsAvatarFill(
+                        name: profile.displayName,
+                        seed: profile.deviceID,
+                        gridColumns: gridColumns
+                    )
+                } else {
+                    Color.gray.opacity(0.1)
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity) // Ensure it expands
@@ -152,12 +159,12 @@ struct GridNodeView: View {
                     ?? "grid.cell.empty.\(node.x).\(node.y)")
         )
         .accessibilityLabel(node.userProfile?.deviceName ?? "Empty cell")
-        .task(id: node.id) {
-            imageLoader.loadImage(from: node.userProfile?.profileImage)
+        .task(id: photoLoadKey) {
+            imageLoader.loadImage(from: displayedProfileImage, force: true)
             loadStoriesStatus()
         }
-        .onChange(of: node.userProfile?.profileImage?.fileURL) { _ in
-            imageLoader.loadImage(from: node.userProfile?.profileImage)
+        .onChange(of: photoLoadKey) { _ in
+            imageLoader.loadImage(from: displayedProfileImage, force: true)
         }
         .onChange(of: storiesMode) { _ in
             loadStoriesStatus()
@@ -165,6 +172,17 @@ struct GridNodeView: View {
         .onChange(of: viewModel.storiesService.allActiveStories) { _ in
             loadStoriesStatus()
         }
+    }
+
+    private var displayedProfileImage: CKAsset? {
+        if node.userProfile?.deviceID == viewModel.currentUserProfile?.deviceID {
+            return viewModel.currentUserProfile?.profileImage ?? node.userProfile?.profileImage
+        }
+        return node.userProfile?.profileImage
+    }
+
+    private var photoLoadKey: String {
+        "\(node.id)|\(ProfileImageRefreshLogic.loadKey(for: displayedProfileImage))"
     }
 
     private func handleCellTap() {

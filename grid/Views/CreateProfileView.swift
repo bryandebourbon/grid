@@ -314,9 +314,6 @@ struct CreateProfileView: View {
         if let name = ProfileDisplayNameLogic.normalizedPersonName(personName) {
             return name
         }
-        if isTestPeer {
-            return "Test Peer"
-        }
         return personName
     }
 
@@ -340,21 +337,11 @@ struct CreateProfileView: View {
         }
     }
     
-    private var isTestPeer: Bool {
-        TestPeerIdentity.isTest(appleUserID)
-    }
-
     private var isNextButtonDisabled: Bool {
         switch currentStep {
         case 1:
-            #if DEBUG
-            if isTestPeer { return false }
-            #endif
             return !ProfileDisplayNameLogic.isUsablePersonName(personName)
         case 2:
-            #if DEBUG
-            if isTestPeer { return false }
-            #endif
             return selectedPhotoData == nil
         case 3: return selectedInterests.isEmpty
         case 4: return isSaving
@@ -372,12 +359,6 @@ struct CreateProfileView: View {
 
     private func saveProfile() {
         var photoData = selectedPhotoData
-        #if DEBUG
-        if photoData == nil && isTestPeer {
-            photoData = ProfileCreationLogic.placeholderPhotoJPEG()
-            selectedPhotoData = photoData
-        }
-        #endif
         guard let photoData else {
             errorMessage = "No photo selected."
             return
@@ -433,7 +414,7 @@ struct CreateProfileView: View {
             deviceID: deviceID,
             deviceName: resolvedProfileName,
             profileImage: CKAsset(fileURL: tempFileURL),
-            bio: isTestPeer ? "Simulator test peer" : nil,
+            bio: nil,
             interests: Array(selectedInterests)
         )
         let publicRecord = newProfile.toPublicCKRecord()

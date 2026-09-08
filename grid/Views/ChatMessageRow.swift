@@ -32,24 +32,32 @@ struct MessageRow: View {
             }
 
             VStack(alignment: isCurrentDeviceSender ? .trailing : .leading, spacing: 4) {
-                if isReactionPickerVisible {
-                    MessageReactionPicker { emoji in
-                        onReact(emoji)
-                        onToggleReactionPicker()
-                    }
-                }
+                ZStack(alignment: isCurrentDeviceSender ? .topTrailing : .topLeading) {
+                    bubble
+                        .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 48) {
+                            #if os(iOS)
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            #endif
+                            onToggleReactionPicker()
+                        }
 
-                bubble
-                    .overlay(alignment: isCurrentDeviceSender ? .topTrailing : .topLeading) {
-                        MessageReactionChips(
-                            reactions: message.reactions,
-                            currentDeviceID: viewModel.currentUserProfile?.deviceID,
-                            onToggle: onReact
-                        )
-                        .offset(y: -10)
-                        .padding(.horizontal, 6)
+                    if isReactionPickerVisible {
+                        MessageReactionPicker { emoji in
+                            onReact(emoji)
+                            onToggleReactionPicker()
+                        }
+                        .offset(y: -46)
                     }
-                    .padding(.top, message.reactions.isEmpty ? 0 : 10)
+
+                    MessageReactionChips(
+                        reactions: message.reactions,
+                        currentDeviceID: viewModel.currentUserProfile?.deviceID,
+                        onToggle: onReact
+                    )
+                    .offset(y: -10)
+                    .padding(.horizontal, 6)
+                }
+                .padding(.top, isReactionPickerVisible ? 46 : (message.reactions.isEmpty ? 0 : 10))
 
                 HStack(spacing: 4) {
                     Text(message.timestamp, style: .time)
@@ -71,12 +79,6 @@ struct MessageRow: View {
                         }
                     }
                 }
-            }
-            .onLongPressGesture(minimumDuration: 0.35) {
-                #if os(iOS)
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                #endif
-                onToggleReactionPicker()
             }
 
             if !isCurrentDeviceSender {
@@ -127,6 +129,8 @@ struct MessageRow: View {
                 .foregroundColor(isCurrentDeviceSender ? .white : .primary)
                 .cornerRadius(10)
                 .opacity(message.status == .sending ? 0.7 : 1.0)
+                .accessibilityIdentifier(GridUITestHarness.chatMessageIdentifier)
+                .accessibilityValue(displayText)
         } else {
             Text("[Empty Message]")
                 .font(.caption)

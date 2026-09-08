@@ -22,6 +22,7 @@ class LocationService: NSObject, ObservableObject {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 100 // Update every 100 meters (was 10 meters)
+        authorizationStatus = locationManager.authorizationStatus
     }
     
     func requestLocationPermission() {
@@ -95,13 +96,23 @@ extension LocationService: CLLocationManagerDelegate {
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("Location error: \(error.localizedDescription)")
+        if let clError = error as? CLError, clError.code == .locationUnknown {
+            manager.requestLocation()
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        applyAuthorization(manager.authorizationStatus)
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        applyAuthorization(status)
+    }
+
+    private func applyAuthorization(_ status: CLAuthorizationStatus) {
         DispatchQueue.main.async {
             self.authorizationStatus = status
             print("Location authorization status changed: \(status.rawValue)")
-            
             switch status {
             case .authorizedWhenInUse, .authorizedAlways:
                 self.startLocationUpdates()

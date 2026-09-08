@@ -23,18 +23,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             return true
         }
 
-        // Request permission for push notifications
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
-            if granted {
-                print("Push notification permission granted")
-                DispatchQueue.main.async {
-                    application.registerForRemoteNotifications()
-                }
-            } else {
-                print("Push notification permission denied: \(error?.localizedDescription ?? "Unknown error")")
-            }
-        }
-        
+        NotificationPermissionService.registerIfAlreadyAuthorized()
         return true
     }
     

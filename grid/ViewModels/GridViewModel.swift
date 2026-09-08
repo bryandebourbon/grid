@@ -21,6 +21,9 @@ class GridViewModel: ObservableObject {
     var locksGridToFixtures = false
     var senderProfileFetchesInFlight = Set<String>()
     @Published var locationPermissionStatus: String = "Location permission not requested"
+    @Published var needsLocationOnboarding = false
+    let sessionStartedAt = Date()
+    var shouldRefreshGridOnNextLocation = false
     @Published var pendingChatNavigationDeviceID: String? = nil // For deferred navigation
     @Published var selectedUserProfileForReport: ProfileCardUser? = nil // For report dialog
     
@@ -104,6 +107,7 @@ class GridViewModel: ObservableObject {
     let readReceiptService: ReadReceiptService // Read-receipt persistence
     let albumService: AlbumService
     let reportService: ReportService
+    let sharedInterestService: SharedInterestService
     private let gridPopulationService = GridPopulationService()
     var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
@@ -117,6 +121,7 @@ class GridViewModel: ObservableObject {
          readReceiptService: ReadReceiptService = ReadReceiptService(),
          albumService: AlbumService = AlbumService(),
          reportService: ReportService = ReportService(),
+         sharedInterestService: SharedInterestService = SharedInterestService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
@@ -128,6 +133,7 @@ class GridViewModel: ObservableObject {
         self.readReceiptService = readReceiptService
         self.albumService = albumService
         self.reportService = reportService
+        self.sharedInterestService = sharedInterestService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -145,8 +151,9 @@ class GridViewModel: ObservableObject {
             messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         }
         
-        // Request location permission on init
-        locationService.requestLocationPermission()
+        needsLocationOnboarding = LocationOnboardingLogic.shouldShowWelcome(
+            status: locationService.authorizationStatus
+        )
     }
 
     func displayState(
@@ -160,9 +167,20 @@ class GridViewModel: ObservableObject {
             selectedInterestFilter: interestFilter,
             starredUserIDs: memberUserIDs,
             favoritesOnly: membersOnly,
-            showsLocalLLM: showsLocalLLM,
-            showsSelfOnGrid: showsSelfOnGrid
+            showsLocalLLM: showsLocalLLM && hasLocationAccess,
+            showsSelfOnGrid: showsSelfOnGrid && hasLocationAccess,
+            showsNearbyPeople: hasLocationAccess
         )
+    }
+
+    var hasLocationAccess: Bool {
+        locksGridToFixtures || LocationOnboardingLogic.shouldShowNearbyPeople(
+            status: locationService.authorizationStatus
+        )
+    }
+
+    var locationEnableButtonTitle: String {
+        LocationOnboardingLogic.enableButtonTitle(for: locationService.authorizationStatus)
     }
 
     var orderedPeopleTabs: [GridPeopleTab] {
@@ -327,10 +345,12 @@ class GridViewModel: ObservableObject {
 
     func updateGridWithAllProfiles(_ profiles: [UserProfile]) {
         let source = locksGridToFixtures ? GridUITestHarness.nearby : profiles
-        let toDisplay = gridPopulationService.profilesToDisplay(
-            nearby: source,
-            currentUser: currentUserProfile
-        )
+        let toDisplay = locksGridToFixtures
+            ? source
+            : gridPopulationService.profilesToDisplay(
+                nearby: source,
+                currentUser: currentUserProfile
+            )
         var all = GridPlacementLogic.makeEmptyGrid()
         var favorites = GridPlacementLogic.makeEmptyGrid()
         gridPopulationService.layoutProfiles(
@@ -380,7 +400,31 @@ class GridViewModel: ObservableObject {
         if let current = currentUserProfile {
             SenderNameCache.store(current.deviceName, for: current.deviceID)
         }
+        ingestSharedInterestsFromProfiles(toDisplay)
         objectWillChange.send()
+    }
+
+    func ingestSharedInterestsFromProfiles(_ profiles: [UserProfile]) {
+        var harvest = profiles
+        if let currentUserProfile {
+            harvest.append(currentUserProfile)
+        }
+        ingestSharedInterests(SharedInterestMergeLogic.harvested(from: harvest))
+    }
+
+    func ingestSharedInterests(_ incoming: [CustomInterestRecord]) {
+        let existing = CustomInterestStore.load()
+        let merged = SharedInterestMergeLogic.merging(incoming, into: existing)
+        guard merged != existing else { return }
+        CustomInterestStore.save(merged)
+        objectWillChange.send()
+    }
+
+    func refreshSharedInterestCatalog(completion: (() -> Void)? = nil) {
+        sharedInterestService.fetchAll { [weak self] records in
+            self?.ingestSharedInterests(records)
+            completion?()
+        }
     }
     
     func placeProfileOnGrid(_ profile: UserProfile) {

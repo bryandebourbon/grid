@@ -72,6 +72,11 @@ class AccountDeletionService {
 
             operation.queryCompletionBlock = { [weak self] opCursor, error in
                 if let error = error {
+                    if AccountDeletionLogic.isSkippableSchemaError(error) {
+                        print("AccountDeletionService: skipping \(recordTypeForLog) — schema is not queryable")
+                        completion(nil)
+                        return
+                    }
                     print("AccountDeletionService: error fetching \(recordTypeForLog) for deletion: \(error.localizedDescription)")
                     completion(error)
                     return

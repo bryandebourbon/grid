@@ -15,7 +15,7 @@ class ProximityService: ObservableObject {
     }
     
     // Fetch ALL users and sort by distance - simple and straightforward
-    func fetchAllUsers(currentUserLocation: CLLocation? = nil) {
+    func fetchAllUsers(currentUserLocation: CLLocation? = nil, completion: (() -> Void)? = nil) {
         print("ProximityService: fetchAllUsers called with location: \(currentUserLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0))")
         
         // Store the location if provided
@@ -36,11 +36,15 @@ class ProximityService: ObservableObject {
         print("ProximityService: Executing CloudKit query for UserProfiles with predicate: \(predicate)")
         
         publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
-            guard let self = self else { return }
+            guard let self = self else {
+                DispatchQueue.main.async { completion?() }
+                return
+            }
             
             print("ProximityService: CloudKit query completed. Records count: \(records?.count ?? -1), Error: \(error?.localizedDescription ?? "none")")
             
             DispatchQueue.main.async {
+                defer { completion?() }
                 if let error = error {
                     // Handle the "record type not found" error gracefully
                     if error.localizedDescription.contains("Did not find record type") {
@@ -52,8 +56,11 @@ class ProximityService: ObservableObject {
                     return
                 }
                 
-                let allProfiles = records?.compactMap { UserProfile(record: $0) } ?? []
+                let fetched = records?.compactMap { UserProfile(record: $0) } ?? []
+                let leftover = fetched.filter(GridPresenceLogic.isLeftoverDebugPeer)
+                let allProfiles = fetched.filter { !GridPresenceLogic.isLeftoverDebugPeer($0) }
                 print("ProximityService: Successfully parsed \(allProfiles.count) UserProfile objects from \(records?.count ?? 0) CloudKit records")
+                self.deleteLeftoverDebugPeers(leftover)
                 
                 // Sort by distance if we have current location
                 if let currentLocation = locationToUse {
@@ -171,5 +178,20 @@ class ProximityService: ObservableObject {
     // Get formatted distance string in kilometers (.01km to 99km)
     func formatDistance(_ distance: Double) -> String {
         DistanceFormatLogic.format(meters: distance)
+    }
+
+    private func deleteLeftoverDebugPeers(_ profiles: [UserProfile]) {
+        let ids = profiles.map { $0.recordID ?? CKRecord.ID(recordName: $0.deviceID) }
+        guard ids.isEmpty == false else { return }
+        let operation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: ids)
+        operation.isAtomic = false
+        operation.modifyRecordsCompletionBlock = { _, deleted, error in
+            if let error {
+                print("ProximityService: could not delete leftover test peers: \(error.localizedDescription)")
+            } else {
+                print("ProximityService: deleted \(deleted?.count ?? 0) leftover test peer records")
+            }
+        }
+        publicDB.add(operation)
     }
 } 

@@ -59,9 +59,6 @@ struct ContentView: View {
                                 familyName: credential.fullName?.familyName
                             )
                         )
-                    },
-                    onTestPeerSignIn: {
-                        enterTestPeerSession(userID: TestPeerIdentity.userID())
                     }
                 ))
             } else if isLoadingProfile {
@@ -181,39 +178,6 @@ struct ContentView: View {
         ProfileDisplayNameLogic.clearPendingPersonName()
         gridViewModel.setCurrentUserProfile(profile)
         gridViewModel.persistAndUpdateProfileAndGrid()
-    }
-
-    /// Debug test peer skips Sign in with Apple *and* the CloudKit profile wizard
-    /// so the simulator can open the grid immediately.
-    private func enterTestPeerSession(userID: String) {
-        let deviceID = DeviceIdentityLogic.resolvedDeviceID(forAppleUserID: userID)
-        let profile = TestPeerProfileStore.load() ?? TestPeerProfileStore.makeDefault(
-            userID: userID,
-            deviceID: deviceID
-        )
-        TestPeerProfileStore.save(profile)
-
-        appleUserID = userID
-        UserDefaults.standard.set(userID, forKey: "appleUserID")
-        userProfile = profile
-        showSignInView = false
-        showCreateProfileView = false
-        isCheckingCredentials = false
-        isLoadingProfile = false
-        profileLoadFailed = false
-        gridViewModel.setCurrentUserProfile(profile)
-
-        CKContainer.default().accountStatus { status, _ in
-            DispatchQueue.main.async {
-                if status == .available {
-                    self.gridViewModel.persistAndUpdateProfileAndGrid()
-                } else {
-                    self.gridViewModel.presentUserFacingAlert(
-                        "You're on the grid as Test Peer. Sign in to iCloud in Settings so your phone can see this sim and messages can go through."
-                    )
-                }
-            }
-        }
     }
 
     private func checkUserProfile(userID: String) {
@@ -390,11 +354,16 @@ struct ContentView: View {
         if let storedUserID = UserDefaults.standard.string(forKey: "appleUserID") {
             print("ContentView: Found stored Apple ID: \(storedUserID)")
 
-            if TestPeerIdentity.isTest(storedUserID) {
-                enterTestPeerSession(userID: storedUserID)
+            if storedUserID.hasPrefix("grid.test-peer.") {
+                UserDefaults.standard.removeObject(forKey: "appleUserID")
+                UserDefaults.standard.removeObject(forKey: "grid.testPeerUserID")
+                UserDefaults.standard.removeObject(forKey: "grid.testPeer.profileSnapshot")
+                UserDefaults.standard.removeObject(forKey: "grid.testPeer.photoJPEG")
+                showSignInView = true
+                isCheckingCredentials = false
                 return
             }
-            
+
             // Verify the credential is still valid with Apple
             let provider = ASAuthorizationAppleIDProvider()
             provider.getCredentialState(forUserID: storedUserID) { credentialState, error in
@@ -458,7 +427,6 @@ struct ContentView: View {
 struct SignInView: View {
     @Binding var showSignInView: Bool
     var onSignInSuccess: (ASAuthorizationAppleIDCredential) -> Void
-    var onTestPeerSignIn: (() -> Void)? = nil 
 
     @State private var showingTerms = false
     @State private var showingPrivacy = false
@@ -511,17 +479,6 @@ struct SignInView: View {
             .padding()
             .disabled(!AgeGateLogic.canProceedToSignIn(confirmedMinimumAge: confirmedAge17))
             .opacity(AgeGateLogic.canProceedToSignIn(confirmedMinimumAge: confirmedAge17) ? 1 : 0.4)
-
-            #if DEBUG
-            Button("Continue as test peer") {
-                onTestPeerSignIn?()
-            }
-            .font(.subheadline.weight(.semibold))
-            .padding(.top, 4)
-            .disabled(!AgeGateLogic.canProceedToSignIn(confirmedMinimumAge: confirmedAge17) || onTestPeerSignIn == nil)
-            .opacity(AgeGateLogic.canProceedToSignIn(confirmedMinimumAge: confirmedAge17) ? 1 : 0.4)
-            .accessibilityIdentifier("testPeerSignIn")
-            #endif
 
             agreementNotice
                 .padding(.horizontal, 32)

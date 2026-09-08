@@ -17,7 +17,13 @@ struct GridView: View {
     @State private var storiesMode = GridUITestHarness.isActive
         ? false
         : UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false
-    @State private var showBioBubbles = UserDefaults.standard.bool(forKey: "grid.bioBubbles")
+    @State private var showBioBubbles = {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "grid.bioBubbles") == nil {
+            return true
+        }
+        return defaults.bool(forKey: "grid.bioBubbles")
+    }()
     @State private var zoom = GridColumnZoom()
     @State private var showingStoryCreation = false  // NEW: For story creation sheet
     @State private var showingBioStoriesOverlay = false  // NEW: For bio+stories overlay
@@ -120,7 +126,7 @@ struct GridView: View {
     private func gridScrollView(nodes: [[GridNode]], showsFavoritesHint: Bool) -> some View {
         ScrollView {
             VStack(spacing: GridCellLayout.gutter) {
-                ForEach(Array(GridColumnZoomLogic.rows(from: nodes, columns: zoom.gridColumns).enumerated()), id: \.offset) { _, row in
+                ForEach(Array(GridColumnZoomLogic.occupiedRows(from: nodes, columns: zoom.gridColumns).enumerated()), id: \.offset) { _, row in
                     HStack(spacing: GridCellLayout.gutter) {
                         ForEach(row) { node in
                             let partnerID = GridCellTapLogic.chatPartnerDeviceID(for: node)
@@ -158,7 +164,19 @@ struct GridView: View {
             .padding(.top, GridCellLayout.gutter)
             .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: zoom.gridColumns)
 
-            if showsFavoritesHint && !hasFavoritePeers(in: nodes) {
+            if viewModel.needsLocationOnboarding && !isProfileDrawerExpanded && !GridUITestHarness.isActive {
+                GridLocationWelcomeCard(
+                    buttonTitle: viewModel.locationEnableButtonTitle,
+                    onOpenProfile: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                            isProfileDrawerExpanded = true
+                        }
+                    },
+                    onEnableLocation: {
+                        viewModel.enableLocationFromOnboarding()
+                    }
+                )
+            } else if showsFavoritesHint && !hasFavoritePeers(in: nodes) {
                 Text(emptyGroupHint)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -168,6 +186,10 @@ struct GridView: View {
             }
 
             Color.clear.frame(height: gridScrollBottomInset)
+        }
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await viewModel.refreshPeopleAndMessages()
         }
         .scrollDisabled(zoom.scrollDisabled)
         .simultaneousGesture(peopleTabSwipeGesture)
@@ -320,6 +342,29 @@ struct GridView: View {
         }
     }
 
+    private var conversationsButton: some View {
+        Button {
+            showingConversationsList = true
+        } label: {
+            mapsCircleButtonLabel(systemImage: "bubble.left.and.bubble.right.fill")
+                .overlay(alignment: .topTrailing) {
+                    let unread = viewModel.incomingUnreadCount()
+                    if unread > 0 {
+                        Text(unread > 99 ? "99+" : "\(unread)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.black)
+                            .frame(minWidth: 20, minHeight: 20)
+                            .padding(.horizontal, unread > 9 ? 4 : 0)
+                            .background(Color.white, in: Capsule())
+                            .offset(x: 6, y: -4)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Messages")
+        .accessibilityValue(viewModel.incomingUnreadCount() > 0 ? "\(viewModel.incomingUnreadCount()) unread" : "No unread")
+    }
+
     private var zoomControls: some View {
         HStack(spacing: 8) {
             mapsCircleButton(systemImage: "minus.magnifyingglass") {
@@ -450,40 +495,6 @@ struct GridView: View {
             } label: {
                 Label("Privacy Policy", systemImage: "hand.raised.fill")
             }
-
-            #if DEBUG
-            Divider()
-
-            Button {
-                viewModel.sendDebugIncomingTextBanner()
-            } label: {
-                Label("Incoming text banner", systemImage: "text.bubble")
-            }
-
-            Button {
-                viewModel.sendDebugIncomingPhotoBanner()
-            } label: {
-                Label("Incoming photo banner", systemImage: "photo")
-            }
-
-            Button {
-                viewModel.sendDebugIncomingPushThenLock()
-            } label: {
-                Label("Incoming text, then lock phone", systemImage: "lock")
-            }
-
-            Button {
-                viewModel.sendDebugIncomingWhileInThatChat()
-            } label: {
-                Label("Incoming while in that chat", systemImage: "bubble.left.and.bubble.right")
-            }
-
-            Button {
-                viewModel.sendDebugCloudKitIncomingPing()
-            } label: {
-                Label("Full delivery test + report", systemImage: "checklist")
-            }
-            #endif
 
             Divider()
 
@@ -663,6 +674,7 @@ struct GridView: View {
 
                     VStack(spacing: 8) {
                         HStack {
+                            conversationsButton
                             Spacer()
                             zoomControls
                             aboveDrawerControls
@@ -777,15 +789,7 @@ struct GridView: View {
     
     @MainActor
     func refreshGrid() async {
-        // Call the viewModel's refresh method
-        viewModel.refreshPublicGrid()
-        
-        return await withCheckedContinuation { continuation in
-            // Give it a moment to refresh, then complete
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                continuation.resume()
-            }
-        }
+        await viewModel.refreshPeopleAndMessages()
     }
 
 }

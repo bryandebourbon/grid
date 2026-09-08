@@ -42,4 +42,10 @@ enum GridColumnZoomLogic {
             Array(flat[$0 ..< min($0 + cols, flat.count)])
         }
     }
+
+    /// Same reflow, but drop empty slots so the grid only shows real people.
+    static func occupiedRows(from nodes: [[GridNode]], columns: Int) -> [[GridNode]] {
+        let occupied = nodes.flatMap { $0 }.filter { $0.userProfile != nil }
+        return rows(from: [occupied], columns: columns)
+    }
 }

@@ -38,6 +38,9 @@ enum GridUITestHarness {
 
     static let chatTitleIdentifier = "chat.title"
     static let chatCloseIdentifier = "chat.close"
+    static let chatComposerIdentifier = "chat.composer"
+    static let chatMessageIdentifier = "chat.message"
+    static let openMeIdentifier = "uitest.open.me"
     static let peopleTabAllIdentifier = "people.tab.all"
     static let peopleTabFavoritesIdentifier = "people.tab.favorites"
     static let peopleTabProbeIdentifier = "uitest.people.tab"

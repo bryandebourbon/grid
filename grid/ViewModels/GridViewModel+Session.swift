@@ -13,6 +13,7 @@ extension GridViewModel {
     /// Loads encryption, relationships, receipts, story views, album, messages, and stories cache.
     func bootstrapSession(for profile: UserProfile) {
         loadPersistedInbox()
+        readReceipts.formUnion(ReadReceiptStore.load())
         mergeLocalLLMMessages()
         enableEncryptionOnlyMode()
 
@@ -32,6 +33,7 @@ extension GridViewModel {
                             guard let self = self else { return }
 
                             self.refreshIncomingMessages()
+                            self.refreshSharedInterestCatalog()
 
                             Task {
                                 await self.storiesService.refreshStories()
@@ -66,7 +68,7 @@ extension GridViewModel {
         ProfileDisplayNameLogic.chatTitle(
             recipientDeviceID: deviceID,
             currentDeviceID: currentUserProfile?.deviceID,
-            gridNodes: gridNodes
+            gridNodes: allGridNodes
         )
     }
 }

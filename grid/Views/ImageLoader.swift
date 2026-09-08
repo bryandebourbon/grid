@@ -12,19 +12,23 @@ final class ImageLoader: ObservableObject {
     @Published var errorMessage: String?
 
     private var currentAsset: CKAsset?
+    private var currentFingerprint: String?
     private var imageLoadingTask: Task<Void, Never>?
 
-    func loadImage(from asset: CKAsset?) {
+    func loadImage(from asset: CKAsset?, force: Bool = false) {
         guard let asset = asset else {
             image = nil
             imageSize = nil
             currentAsset = nil
+            currentFingerprint = nil
             return
         }
-        guard asset.fileURL?.absoluteString != currentAsset?.fileURL?.absoluteString || image == nil else { return }
+        let fingerprint = ProfileImageRefreshLogic.loadKey(for: asset)
+        guard force || fingerprint != currentFingerprint || image == nil else { return }
 
         isLoading = true
         currentAsset = asset
+        currentFingerprint = fingerprint
         errorMessage = nil
         imageLoadingTask?.cancel()
 

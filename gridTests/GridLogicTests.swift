@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import CloudKit
+import CoreLocation
 @testable import grid
 
 // MARK: - Grid column zoom logic
@@ -79,6 +80,37 @@ struct GridColumnZoomLogicTests {
         #expect(rows.count == 9)
         #expect(rows.first?.count == 3)
         #expect(rows.last?.count == 1)
+    }
+
+    @Test func selfStaysOffTheGridUntilLocationIsGranted() {
+        #expect(!LocationOnboardingLogic.shouldShowNearbyPeople(status: .notDetermined))
+        #expect(LocationOnboardingLogic.shouldShowNearbyPeople(status: .authorizedWhenInUse))
+    }
+
+    @Test func leftoverDebugPeerIsHidden() {
+        let peer = UserProfile(
+            userID: "grid.test-peer.debug",
+            deviceID: "grid.test-peer.debug-DEVICE",
+            deviceName: "TP",
+            bio: "Simulator test peer"
+        )
+        let person = UserProfile(userID: "u", deviceID: "me", deviceName: "Me")
+        #expect(GridPresenceLogic.isLeftoverDebugPeer(peer))
+        #expect(!GridPresenceLogic.shouldShowPeer(peer))
+        #expect(!GridPresenceLogic.isLeftoverDebugPeer(person))
+        #expect(GridPresenceLogic.shouldShowPeer(person))
+        #expect(InitialsAvatarLogic.initials(from: "Test Peer") == "TP")
+        #expect(InitialsAvatarLogic.initials(from: "Bryan") == "BR")
+        #expect(InitialsAvatarLogic.initials(from: "Josh B") == "JB")
+    }
+
+    @Test func occupiedRowsHidesEmptySlots() {
+        var grid = GridPlacementLogic.makeEmptyGrid(size: 3)
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Me")
+        GridPlacementLogic.place(profile: me, in: &grid, at: 0, col: 0)
+        let rows = GridColumnZoomLogic.occupiedRows(from: grid, columns: 3)
+        #expect(rows.flatMap { $0 }.count == 1)
+        #expect(rows.flatMap { $0 }.first?.userProfile?.deviceID == "me")
     }
 }
 
@@ -166,6 +198,106 @@ struct MessageConversationLogicTests {
         #expect(list.map(\.deviceID) == ["bob", "carol", "alice"])
         #expect(list[0].lastMessage?.id == "2")
         #expect(list[0].messageCount == 1)
+    }
+
+    @Test func conversationListUnreadCountUsesReceiptsNotThreadSize() {
+        let messages = [
+            message(id: "1", from: "bob", to: "me", text: "a", at: Date(timeIntervalSince1970: 100)),
+            message(id: "2", from: "bob", to: "me", text: "b", at: Date(timeIntervalSince1970: 200)),
+            message(id: "3", from: "me", to: "bob", text: "c", at: Date(timeIntervalSince1970: 300)),
+        ]
+        let list = MessageConversationLogic.conversationList(
+            currentDeviceID: "me",
+            messages: messages,
+            readReceipts: ["1", "2"],
+            displayNameLookup: { _ in "Bob" }
+        )
+        #expect(list.count == 1)
+        #expect(list[0].messageCount == 3)
+        #expect(list[0].unreadCount == 0)
+    }
+
+    @Test func previewLineHidesEncryptedPlaceholdersAndDescribesPhotos() {
+        let encrypted = message(
+            id: "e",
+            from: "bob",
+            to: "me",
+            text: MessageBannerLogic.encryptedTextPlaceholder,
+            at: Date()
+        )
+        #expect(
+            MessageConversationLogic.previewLine(
+                message: encrypted,
+                currentDeviceID: "me",
+                partnerName: "Bob",
+                decryptedText: nil,
+                nameForDevice: { _ in "Bob" }
+            ) == "Message"
+        )
+
+        var photo = message(id: "p", from: "bob", to: "me", text: MessageBannerLogic.encryptedImagePlaceholder, at: Date())
+        photo.encryptedImageData = "img"
+        #expect(
+            MessageConversationLogic.previewLine(
+                message: photo,
+                currentDeviceID: "me",
+                partnerName: "Elliot",
+                decryptedText: nil,
+                nameForDevice: { _ in "Elliot" }
+            ) == "A photo was sent"
+        )
+
+        photo.reactions = [MessageReaction(emoji: "❤️", reactorDeviceID: "bob")]
+        #expect(
+            MessageConversationLogic.previewLine(
+                message: photo,
+                currentDeviceID: "me",
+                partnerName: "Elliot",
+                decryptedText: nil,
+                nameForDevice: { _ in "Elliot" }
+            ) == "Elliot loved a photo"
+        )
+    }
+
+    @Test func starredPeopleArePinnedAndOmittedFromTheList() {
+        let alice = UserProfile(userID: "u-alice", deviceID: "alice", deviceName: "Alice")
+        let bob = UserProfile(userID: "u-bob", deviceID: "bob", deviceName: "Bob")
+        let home = MessageConversationLogic.messagesHome(
+            currentDeviceID: "me",
+            currentUserID: "u-me",
+            messages: [
+                message(id: "1", from: "alice", to: "me", text: "hi", at: Date(timeIntervalSince1970: 100)),
+                message(id: "2", from: "bob", to: "me", text: "yo", at: Date(timeIntervalSince1970: 200)),
+            ],
+            readReceipts: ["1"],
+            starredUserIDs: ["u-alice"],
+            profiles: [alice, bob],
+            displayNameLookup: { id in id == "alice" ? "Alice" : "Bob" }
+        )
+
+        #expect(home.pinned.map(\.deviceID) == ["alice"])
+        #expect(home.pinned.first?.unreadCount == 0)
+        #expect(home.conversations.map(\.deviceID) == ["bob"])
+    }
+
+    @Test func starredPersonWithNoMessagesStillGetsAPin() {
+        let holly = UserProfile(userID: "u-holly", deviceID: "holly", deviceName: "Holly")
+        let home = MessageConversationLogic.messagesHome(
+            currentDeviceID: "me",
+            currentUserID: "u-me",
+            messages: [],
+            starredUserIDs: ["u-holly"],
+            profiles: [holly],
+            displayNameLookup: { _ in "Holly" }
+        )
+        #expect(home.pinned.map(\.displayName) == ["Holly"])
+        #expect(home.conversations.isEmpty)
+    }
+
+    @Test func listTimestampUsesYesterday() {
+        let now = Date()
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+        #expect(MessageConversationLogic.listTimestamp(yesterday, now: now) == "Yesterday")
     }
 }
 
@@ -464,6 +596,37 @@ struct CustomInterestStoreTests {
     }
 }
 
+struct SharedInterestMergeLogicTests {
+    @Test func recordNameIsStableAndSafe() {
+        #expect(SharedInterestIdentity.recordName(for: "Dodgeball") == "interest.dodgeball")
+        #expect(SharedInterestIdentity.recordName(for: "  Dodge Ball ") == "interest.dodge-ball")
+        #expect(SharedInterestIdentity.recordName(for: "Dodgeball") == SharedInterestIdentity.recordName(for: "dodgeball"))
+    }
+
+    @Test func harvestsCustomInterestsAndSkipsBuiltIns() {
+        let alice = UserProfile(
+            userID: "u-a",
+            deviceID: "a",
+            deviceName: "Alice",
+            interests: [.coffee, Interest(rawValue: "Dodgeball")]
+        )
+        let harvested = SharedInterestMergeLogic.harvested(from: [alice])
+        #expect(harvested.map(\.name) == ["Dodgeball"])
+    }
+
+    @Test func mergePrefersRealEmojiAndIgnoresBuiltIns() {
+        let existing = [CustomInterestRecord(name: "Dodgeball", emoji: "✨")]
+        let merged = SharedInterestMergeLogic.merging(
+            [
+                CustomInterestRecord(name: "dodgeball", emoji: "🏐"),
+                CustomInterestRecord(name: "Coffee", emoji: "☕"),
+            ],
+            into: existing
+        )
+        #expect(merged == [CustomInterestRecord(name: "Dodgeball", emoji: "🏐")])
+    }
+}
+
 // MARK: - Message read logic
 
 struct ProfileCreationLogicTests {
@@ -476,18 +639,6 @@ struct ProfileCreationLogicTests {
         let error = NSError(domain: CKError.errorDomain, code: CKError.notAuthenticated.rawValue)
         let message = ProfileCreationLogic.userFacingCloudKitError(accountStatus: .available, saveError: error)
         #expect(message.contains("iCloud"))
-    }
-}
-
-struct TestPeerIdentityTests {
-    @Test func recognizesAndPersistsTestUser() {
-        let defaults = UserDefaults(suiteName: "grid.testPeer.tests")!
-        defaults.removePersistentDomain(forName: "grid.testPeer.tests")
-        let first = TestPeerIdentity.userID(defaults: defaults, environment: ["SIMULATOR_UDID": "PEERTEST-1234"])
-        #expect(TestPeerIdentity.isTest(first))
-        #expect(first.contains("PEERTEST"))
-        #expect(TestPeerIdentity.userID(defaults: defaults, environment: [:]) == first)
-        #expect(!TestPeerIdentity.isTest("001234.real-apple-id"))
     }
 }
 
@@ -734,6 +885,13 @@ struct MessageReadLogicTests {
         #expect(MessageReadLogic.unreadCount(from: "bob", currentDeviceID: "me", messages: messages, readReceipts: ["1"]) == 1)
         #expect(MessageReadLogic.unreadCount(from: "bob", currentDeviceID: "me", messages: messages, readReceipts: ["1", "2"]) == 0)
         #expect(MessageReadLogic.unreadCount(from: "carol", currentDeviceID: "me", messages: messages, readReceipts: []) == 0)
+        #expect(MessageReadLogic.incomingUnreadCount(currentDeviceID: "me", messages: messages, readReceipts: ["1"]) == 1)
+        #expect(MessageReadLogic.incomingUnreadCount(
+            currentDeviceID: "me",
+            messages: messages,
+            readReceipts: ["1"],
+            excludingSenderDeviceID: "bob"
+        ) == 0)
     }
 }
 
@@ -852,6 +1010,31 @@ struct GridPlacementLogicTests {
         #expect(grid[0][1].id == PersonIdentity.id(forDeviceID: "d"))
         #expect(grid[0][0].id == PersonIdentity.emptySlotID(x: 0, y: 0))
         #expect(grid[0][0].userProfile == nil)
+    }
+
+    @Test func replaceProfileUpdatesMatchingCellsOnly() {
+        var grid = GridPlacementLogic.makeEmptyGrid(size: 2)
+        let original = UserProfile(userID: "u", deviceID: "me", deviceName: "Old")
+        let other = UserProfile(userID: "u2", deviceID: "bob", deviceName: "Bob")
+        GridPlacementLogic.place(profile: original, in: &grid, at: 0, col: 0)
+        GridPlacementLogic.place(profile: other, in: &grid, at: 0, col: 1)
+        let updated = UserProfile(userID: "u", deviceID: "me", deviceName: "New")
+        GridPlacementLogic.replaceProfile(updated, in: &grid)
+        #expect(grid[0][0].userProfile?.deviceName == "New")
+        #expect(grid[0][1].userProfile?.deviceName == "Bob")
+    }
+}
+
+struct ProfileImageRefreshLogicTests {
+
+    @Test func keepsLocalPhotoWhenSavedFileIsMissing() {
+        let local = FileManager.default.temporaryDirectory.appendingPathComponent("grid-local-photo.jpg")
+        try? Data("local".utf8).write(to: local)
+        defer { try? FileManager.default.removeItem(at: local) }
+        let missing = FileManager.default.temporaryDirectory.appendingPathComponent("grid-missing-photo.jpg")
+        #expect(ProfileImageRefreshLogic.shouldKeepLocalPhoto(localURL: local, savedURL: missing))
+        #expect(!ProfileImageRefreshLogic.shouldKeepLocalPhoto(localURL: local, savedURL: local))
+        #expect(!ProfileImageRefreshLogic.shouldKeepLocalPhoto(localURL: missing, savedURL: local))
     }
 }
 
@@ -1037,6 +1220,9 @@ struct GridUITestHarnessTests {
         #expect(ids.contains(GridUITestHarness.alice.deviceID))
         #expect(ids.contains(GridUITestHarness.bob.deviceID))
         #expect(GridUITestHarness.cellIdentifier(for: GridUITestHarness.alice.deviceID) == "grid.cell.uitest-alice-DEVICE")
+        #expect(GridUITestHarness.chatComposerIdentifier == "chat.composer")
+        #expect(GridUITestHarness.chatMessageIdentifier == "chat.message")
+        #expect(GridUITestHarness.openMeIdentifier == "uitest.open.me")
         #expect(viewModel.isStarred(GridUITestHarness.alice.deviceID))
         #expect(viewModel.getMessagesForConversation(with: GridUITestHarness.alice.deviceID).map(\.text) == [GridUITestHarness.aliceMessageText])
         #expect(viewModel.getMessagesForConversation(with: GridUITestHarness.bob.deviceID).map(\.text) == [GridUITestHarness.bobMessageText])
@@ -1055,5 +1241,78 @@ struct AccountDeletionCoverageTests {
         #expect(types.contains("Albums"))
         #expect(types.contains("ReadReceipts"))
         #expect(types.contains("Reports"))
+    }
+
+    @Test func skipsUnqueryableReportsSchema() {
+        let indexable = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.invalidArguments.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Type is not marked indexable: Reports"]
+        )
+        let missingType = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.unknownItem.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Did not find record type: Reports"]
+        )
+        let network = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.networkUnavailable.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Network unavailable"]
+        )
+        #expect(AccountDeletionLogic.isSkippableSchemaError(indexable))
+        #expect(AccountDeletionLogic.isSkippableSchemaError(missingType))
+        #expect(!AccountDeletionLogic.isSkippableSchemaError(network))
+    }
+}
+
+struct LocationOnboardingLogicTests {
+    @Test func welcomeUntilLocationIsGranted() {
+        #expect(LocationOnboardingLogic.shouldShowWelcome(status: .notDetermined))
+        #expect(LocationOnboardingLogic.shouldShowWelcome(status: .denied))
+        #expect(!LocationOnboardingLogic.shouldShowWelcome(status: .authorizedWhenInUse))
+        #expect(!LocationOnboardingLogic.shouldShowNearbyPeople(status: .notDetermined))
+        #expect(LocationOnboardingLogic.shouldShowNearbyPeople(status: .authorizedWhenInUse))
+        #expect(LocationOnboardingLogic.enableAction(for: .notDetermined) == .requestPermission)
+        #expect(LocationOnboardingLogic.enableAction(for: .denied) == .openSettings)
+    }
+}
+
+struct NotificationPermissionLogicTests {
+    @Test func waitsForFirstRealChat() {
+        #expect(!NotificationPermissionLogic.shouldRequest(alreadyRequested: true, event: .sent(isLLM: false)))
+        #expect(!NotificationPermissionLogic.shouldRequest(alreadyRequested: false, event: .sent(isLLM: true)))
+        #expect(NotificationPermissionLogic.shouldRequest(alreadyRequested: false, event: .sent(isLLM: false)))
+        #expect(NotificationPermissionLogic.shouldRequest(
+            alreadyRequested: false,
+            event: .received(fromCurrentUser: false, isLLM: false)
+        ))
+        #expect(!NotificationPermissionLogic.shouldRequest(
+            alreadyRequested: false,
+            event: .received(fromCurrentUser: true, isLLM: false)
+        ))
+    }
+}
+
+@MainActor
+struct LocationGatedGridTests {
+    @Test func hidesPeersUntilLocationIsGranted() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        let other = UserProfile(userID: "o", deviceID: "o1", deviceName: "Other")
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me, other],
+            currentUser: me,
+            display: GridDisplayState(
+                blockedUserIDs: [],
+                usersWhoBlockedMe: [],
+                selectedInterestFilter: [],
+                showsSelfOnGrid: true,
+                showsNearbyPeople: false
+            )
+        )
+        let placed = grid.flatMap { $0 }.compactMap(\.userProfile)
+        #expect(placed.map(\.deviceID) == ["me"])
     }
 }

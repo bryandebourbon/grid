@@ -228,6 +228,14 @@ extension GridViewModel {
     /// Toggle interest filter on/off
     func addCustomInterest(named name: String, emoji: String) {
         guard let interest = CustomInterestStore.add(name: name, emoji: emoji) else { return }
+        if interest.isCustom {
+            let published = CustomInterestRecord(
+                name: interest.rawValue,
+                emoji: CustomInterestStore.emoji(for: interest.rawValue) ?? emoji
+            )
+            sharedInterestService.publish(published, createdByUserID: currentUserProfile?.userID)
+            ingestSharedInterests([published])
+        }
         openInterestPage(interest)
         objectWillChange.send()
     }

@@ -35,6 +35,14 @@ enum GridPlacementLogic {
         grid[row][col].userProfile = profile
     }
 
+    static func replaceProfile(_ profile: UserProfile, in grid: inout [[GridNode]]) {
+        for row in grid.indices {
+            for col in grid[row].indices where grid[row][col].userProfile?.deviceID == profile.deviceID {
+                grid[row][col].userProfile = profile
+            }
+        }
+    }
+
     static func removeProfile(deviceID: String, from grid: inout [[GridNode]]) {
         for row in 0..<grid.count {
             for col in 0..<grid[row].count where grid[row][col].userProfile?.deviceID == deviceID {

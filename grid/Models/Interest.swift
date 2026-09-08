@@ -201,4 +201,9 @@ enum CustomInterestStore {
         save(items, defaults: defaults)
         return Interest(rawValue: trimmed)
     }
+
+    static func merge(_ incoming: [CustomInterestRecord], defaults: UserDefaults = .standard) {
+        let merged = SharedInterestMergeLogic.merging(incoming, into: load(defaults: defaults))
+        save(merged, defaults: defaults)
+    }
 }
