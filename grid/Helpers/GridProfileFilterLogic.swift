@@ -23,7 +23,9 @@ enum GridProfileFilterLogic {
         to others: [UserProfile],
         blockedUserIDs: Set<String>,
         usersWhoBlockedMe: Set<String>,
-        selectedInterestFilter: Set<Interest>
+        selectedInterestFilter: Set<Interest>,
+        starredUserIDs: Set<String> = [],
+        favoritesOnly: Bool = false
     ) -> [UserProfile] {
         var result = others
 
@@ -35,6 +37,10 @@ enum GridProfileFilterLogic {
             result = result.filter { profile in
                 !Set(profile.interests).intersection(selectedInterestFilter).isEmpty
             }
+        }
+
+        if favoritesOnly {
+            result = result.filter { starredUserIDs.contains($0.userID) }
         }
 
         return result

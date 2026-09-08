@@ -1,0 +1,45 @@
+import SwiftUI
+
+/// Instagram Notes-style status bubble that sits on a profile photo.
+struct BioStatusBubble: View {
+    let text: String
+    var isPlaceholder = false
+
+    private let fill = Color.white.opacity(0.92)
+    private let textGray = Color(white: 0.42)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(text)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isPlaceholder ? textGray.opacity(0.72) : textGray)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .frame(maxWidth: 124)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(fill)
+                }
+
+            SpeechBubbleTail()
+                .fill(fill)
+                .frame(width: 20, height: 11)
+                .offset(y: -1)
+        }
+        .shadow(color: Color.black.opacity(0.10), radius: 2, y: 1)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SpeechBubbleTail: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
+    }
+}

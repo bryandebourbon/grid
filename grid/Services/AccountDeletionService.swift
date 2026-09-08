@@ -12,18 +12,35 @@ class AccountDeletionService {
         self.publicDB = database
     }
 
-    /// Delete the user's profile, sent messages, relationships, and encryption profile.
+    /// Record types this user owns that must be removed on account deletion.
+    /// Reports *about* the user are kept for safety. Received messages stay
+    /// because they are owned by the sender.
+    static let deletableRecordQueries: [(recordType: String, predicateFormat: String, argument: String)] = [
+        ("UserProfiles", "userID == %@", "userID"),
+        ("Messages", "senderUserID == %@", "userID"),
+        ("UserRelationships", "userID == %@", "userID"),
+        ("EncryptionProfiles", "deviceID == %@", "deviceID"),
+        ("Stories", "userID == %@", "userID"),
+        ("StoryViews", "viewerUserID == %@", "userID"),
+        ("Albums", "ownerUserID == %@", "userID"),
+        ("ReadReceipts", "deviceID == %@", "deviceID"),
+        ("Reports", "reporterUserID == %@", "userID"),
+    ]
+
+    /// Delete the user's owned public records.
     /// Completion is delivered on the main queue with the first error encountered (if any).
     func deleteAllRecords(forUserID userID: String, deviceID: String, completion: @escaping (Error?) -> Void) {
         let group = DispatchGroup()
         var firstError: Error?
 
-        let queries: [(query: CKQuery, label: String)] = [
-            (CKQuery(recordType: "UserProfiles", predicate: NSPredicate(format: "userID == %@", userID)), "UserProfiles"),
-            (CKQuery(recordType: "Messages", predicate: NSPredicate(format: "senderUserID == %@", userID)), "Sent Messages"),
-            (CKQuery(recordType: "UserRelationships", predicate: NSPredicate(format: "userID == %@", userID)), "UserRelationships"),
-            (CKQuery(recordType: "EncryptionProfiles", predicate: NSPredicate(format: "deviceID == %@", deviceID)), "EncryptionProfiles"),
-        ]
+        let argumentValues = ["userID": userID, "deviceID": deviceID]
+        let queries: [(query: CKQuery, label: String)] = Self.deletableRecordQueries.map { entry in
+            let value = argumentValues[entry.argument] ?? ""
+            return (
+                CKQuery(recordType: entry.recordType, predicate: NSPredicate(format: entry.predicateFormat, value)),
+                entry.recordType
+            )
+        }
 
         for entry in queries {
             group.enter()

@@ -14,7 +14,8 @@ extension GridViewModel {
     // Simplified refresh - upload my location, get all users sorted by distance
     func refreshPublicGrid() {
         print("GridViewModel: Starting simple refresh - upload my location, get all users sorted by distance")
-        
+        if locksGridToFixtures { return }
+
         guard let profile = currentUserProfile else {
             print("No current user profile for refresh")
             return
@@ -57,6 +58,7 @@ extension GridViewModel {
     
     // Enhanced: Handle app lifecycle events with auto-refresh
     func handleAppDidBecomeActive() {
+        if locksGridToFixtures { return }
         guard var profile = currentUserProfile else { return }
         profile.markAsActive()
         self.currentUserProfile = profile
@@ -68,9 +70,8 @@ extension GridViewModel {
         
         // Update activity status in CloudKit (without refreshing the grid)
         updateUserActivityAndLocation(profile)
-        
-        // REMOVED: We don't want to auto-refresh the grid when app becomes active
-        // This should only happen on grid appear or manual refresh
+
+        refreshIncomingMessages()
     }
     
     func handleAppWillResignActive() {
@@ -106,6 +107,16 @@ extension GridViewModel {
     // NEW: Mark messages as read when opening a chat
     func markMessagesAsRead(from deviceID: String) {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return }
+        if LocalLLMIdentity.isLLM(deviceID) {
+            for index in messages.indices where
+                messages[index].senderDeviceID == deviceID &&
+                messages[index].recipientDeviceID == currentDeviceID {
+                messages[index].status = .sent
+                readReceipts.insert(messages[index].id)
+            }
+            objectWillChange.send()
+            return
+        }
         
         var newReadReceipts: [ReadReceipt] = []
         
@@ -186,7 +197,8 @@ extension GridViewModel {
             starredUsers.insert(targetUserID)
             relationshipService.saveRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
         }
-        
+
+        updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         objectWillChange.send()
     }
     
@@ -221,15 +233,16 @@ extension GridViewModel {
             return currentProfile.userID
         }
         
-        // Check grid nodes
-        for row in gridNodes {
-            for node in row {
-                if let profile = node.userProfile, profile.deviceID == deviceID {
-                    return profile.userID
+        for grid in [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values) {
+            for row in grid {
+                for node in row {
+                    if let profile = node.userProfile, profile.deviceID == deviceID {
+                        return profile.userID
+                    }
                 }
             }
         }
-        
+
         return nil
     }
     
@@ -237,6 +250,7 @@ extension GridViewModel {
     func isStarred(_ deviceID: String) -> Bool {
         guard let userID = getUserID(forDeviceID: deviceID) else { return false }
         return starredUsers.contains(userID)
+            || customGroups.contains { $0.memberUserIDs.contains(userID) }
     }
     
     // Check if a user is blocked (by deviceID)
@@ -300,61 +314,62 @@ extension GridViewModel {
         updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
     }
     
-    // NEW: Check if sender is in grid, if not fetch their profile and add them
     func checkAndAddNewSenderToGrid(senderDeviceID: String, senderUserID: String) {
-        // Check if this sender is already in the grid
-        let isInGrid = gridNodes.flatMap { $0 }.contains { node in
-            node.userProfile?.deviceID == senderDeviceID
-        }
-        
-        if !isInGrid {
-            print("GridViewModel: New message from device not in grid: \(senderDeviceID). Fetching their profile...")
-            
-            // Fetch just this one user's profile from CloudKit
-            let recordID = CKRecord.ID(recordName: senderDeviceID)
-            let publicDB = CKContainer.default().publicCloudDatabase
-            
-            publicDB.fetch(withRecordID: recordID) { [weak self] record, error in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    
-                    if let error = error {
-                        print("GridViewModel: Error fetching profile for new sender: \(error.localizedDescription)")
-                        // Create a minimal profile with just the info we have
-                        let minimalProfile = UserProfile(
-                            userID: senderUserID,
-                            deviceID: senderDeviceID,
-                            deviceName: "Unknown User"
-                        )
-                        self.addProfileToGrid(minimalProfile)
-                    } else if let record = record, let profile = UserProfile(record: record) {
-                        print("GridViewModel: Successfully fetched profile for new sender: \(profile.displayName)")
-                        self.addProfileToGrid(profile)
-                    }
+        if LocalLLMIdentity.isLLM(senderDeviceID) { return }
+        if hasProfileOnAnyGrid(deviceID: senderDeviceID) { return }
+        guard senderProfileFetchesInFlight.insert(senderDeviceID).inserted else { return }
+
+        print("GridViewModel: New message from device not in grid: \(senderDeviceID). Fetching their profile...")
+
+        let recordID = CKRecord.ID(recordName: senderDeviceID)
+        CKContainer.default().publicCloudDatabase.fetch(withRecordID: recordID) { [weak self] record, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.senderProfileFetchesInFlight.remove(senderDeviceID)
+                if self.hasProfileOnAnyGrid(deviceID: senderDeviceID) { return }
+
+                if let record, let profile = UserProfile(record: record) {
+                    print("GridViewModel: Successfully fetched profile for new sender: \(profile.displayName)")
+                    self.addProfileToGrid(profile)
+                    return
                 }
+
+                if let error {
+                    print("GridViewModel: Error fetching profile for new sender: \(error.localizedDescription)")
+                }
+                let minimalProfile = UserProfile(
+                    userID: senderUserID,
+                    deviceID: senderDeviceID,
+                    deviceName: ProfileDisplayNameLogic.fallbackTitle
+                )
+                self.addProfileToGrid(minimalProfile)
             }
         }
     }
-    
-    // Helper to add a profile to the grid
-    func addProfileToGrid(_ profile: UserProfile) {
-        // Find the first empty spot in the grid (skip position 0,0 which is for current user)
-        for i in 0..<gridSize {
-            for j in 0..<gridSize {
-                // Skip the top-left position (reserved for current user)
-                if i == 0 && j == 0 {
-                    continue
-                }
-                
-                if gridNodes[i][j].userProfile == nil {
-                    gridNodes[i][j].userProfile = profile
-                    print("GridViewModel: Added new sender to grid at position (\(i), \(j))")
-                    objectWillChange.send() // Trigger UI update
-                    return
-                }
-            }
+
+    func hasProfileOnAnyGrid(deviceID: String) -> Bool {
+        let grids = [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values)
+        return grids.contains { grid in
+            grid.flatMap { $0 }.contains { $0.userProfile?.deviceID == deviceID }
         }
-        print("GridViewModel: Grid is full, cannot add new sender")
+    }
+
+    func addProfileToGrid(_ profile: UserProfile) {
+        guard TestPeerIdentity.belongsOnRealUserGrid(profile, currentUser: currentUserProfile) else { return }
+        guard profile.deviceID != currentUserProfile?.deviceID else { return }
+        guard !hasProfileOnAnyGrid(deviceID: profile.deviceID) else { return }
+        if allGridNodes.isEmpty {
+            allGridNodes = GridPlacementLogic.makeEmptyGrid()
+        }
+        guard let slot = GridPlacementLogic.firstEmptySlot(in: allGridNodes) else {
+            print("GridViewModel: Grid is full, cannot add new sender")
+            return
+        }
+        GridPlacementLogic.place(profile: profile, in: &allGridNodes, at: slot.row, col: slot.col)
+        gridNodes = nodes(for: peopleTab)
+        SenderNameCache.store(profile.deviceName, for: profile.deviceID)
+        print("GridViewModel: Added new sender to grid at position (\(slot.row), \(slot.col))")
+        objectWillChange.send()
     }
     
     // NEW: Get distance string for UI display
@@ -386,6 +401,10 @@ extension GridViewModel {
     
     // NEW: Check if messaging is allowed (for UI state)
     func canMessageUser(deviceID: String) -> (allowed: Bool, reason: String) {
+        if LocalLLMIdentity.isLLM(deviceID) {
+            return (true, "On this phone")
+        }
+
         guard let currentProfile = currentUserProfile,
               let targetProfile = findNode(forDeviceID: deviceID)?.userProfile else {
             return (false, "Profile not found")

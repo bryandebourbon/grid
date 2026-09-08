@@ -1,17 +1,21 @@
 import SwiftUI
-import PhotosUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ChatView: View {
     @ObservedObject var viewModel: GridViewModel
     let recipientDeviceID: String
+    var isPresented: Bool = true
+    @FocusState.Binding var isTextFieldFocused: Bool
+    var onBack: () -> Void = {}
 
     @State private var newMessageText: String = ""
-    @State private var selectedPhotoItem: PhotosPickerItem? = nil
-    @State private var showPhotoPicker = false
+    @StateObject private var photoLibrary = RecentPhotoLibrary()
+    @State private var showPhotoStrip = false
+    @AppStorage("grid.chatPartnerPins") private var showPartnerPins = false
     @State private var fullScreenImage: FullScreenImageData? = nil
-    @FocusState private var isTextFieldFocused: Bool
-
-    @Environment(\.dismiss) var dismiss
+    @State private var reactingMessageID: String?
 
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
@@ -19,6 +23,14 @@ struct ChatView: View {
 
     private var chatMessages: [Message] {
         viewModel.getMessagesForConversation(with: recipientDeviceID)
+    }
+
+    private var latestMessageID: String? {
+        chatMessages.last?.id
+    }
+
+    private var hasPartnerPins: Bool {
+        (viewModel.userAlbums[recipientDeviceID]?.photosCount ?? 0) > 0
     }
 
     var body: some View {
@@ -46,89 +58,118 @@ struct ChatView: View {
                                     isCurrentDeviceSender: message.senderDeviceID == currentDeviceID,
                                     onImageTap: { imageData in
                                         fullScreenImage = imageData
+                                    },
+                                    onReact: { emoji in
+                                        viewModel.toggleReaction(emoji, on: message.id)
+                                    },
+                                    isReactionPickerVisible: reactingMessageID == message.id,
+                                    onToggleReactionPicker: {
+                                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                            reactingMessageID = reactingMessageID == message.id ? nil : message.id
+                                        }
                                     }
                                 )
                                 .id(message.id)
                                 .environmentObject(viewModel)
                             }
                         }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.bottomAnchorID)
                     }
                     .padding()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .defaultScrollAnchor(.bottom)
+                .scrollDismissesKeyboard(.never)
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentOffset.y
+                } action: { oldOffset, newOffset in
+                    if reactingMessageID != nil, abs(newOffset - oldOffset) > 1 {
+                        reactingMessageID = nil
+                    }
+                }
                 .onChange(of: chatMessages.count) { _ in
-                    scrollToBottom(scrollViewProxy)
+                    pinToLatest(scrollViewProxy)
+                }
+                .onChange(of: latestMessageID) { _ in
+                    pinToLatest(scrollViewProxy)
+                }
+                .onChange(of: recipientDeviceID) { _ in
+                    resetComposer()
+                    pinToLatest(scrollViewProxy)
+                }
+                .onChange(of: isPresented) { presented in
+                    if presented { pinToLatest(scrollViewProxy) }
                 }
                 .onAppear {
-                    scrollToBottom(scrollViewProxy)
+                    pinToLatest(scrollViewProxy)
                 }
             }
 
-            HStack(alignment: .bottom, spacing: 4) {
-                Button(action: { showPhotoPicker = true }) {
-                    Image(systemName: "photo.on.rectangle")
-                        .padding(.leading, 8)
+            if showPartnerPins, hasPartnerPins {
+                ChatPartnerPinnedPhotoStrip(
+                    viewModel: viewModel,
+                    deviceID: recipientDeviceID
+                ) { image in
+                    fullScreenImage = FullScreenImageData(image: image, isEncrypted: false)
                 }
-                .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotoItem, matching: .images)
-                .onChange(of: selectedPhotoItem) { newItem in
-                    Task {
-                        if let item = newItem,
-                           let data = try? await item.loadTransferable(type: Data.self) {
-                            viewModel.sendImageMessage(imageData: data, to: recipientDeviceID)
-                            selectedPhotoItem = nil
-                        } else {
-                            selectedPhotoItem = nil
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if showPhotoStrip {
+                ChatRecentPhotoStrip(
+                    library: photoLibrary,
+                    onSelect: { data in
+                        viewModel.sendImageMessage(imageData: data, to: recipientDeviceID)
+                    },
+                    onOpenSettings: {
+                        #if canImport(UIKit)
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
                         }
+                        #endif
                     }
-                }
-
-                ChatMessageComposer(
-                    text: $newMessageText,
-                    isFocused: $isTextFieldFocused,
-                    onSend: sendMessage
                 )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+            ChatMessageComposer(
+                text: $newMessageText,
+                isFocused: $isTextFieldFocused,
+                isPhotoStripOpen: showPhotoStrip,
+                isPartnerPinsOpen: showPartnerPins,
+                showsPartnerPinsButton: hasPartnerPins,
+                onBack: onBack,
+                onAdd: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showPhotoStrip.toggle()
+                    }
+                },
+                onTogglePartnerPins: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showPartnerPins.toggle()
+                    }
+                },
+                onSend: sendMessage
+            )
             .background(Color(.systemBackground))
         }
-        .navigationTitle(recipientDeviceID == currentDeviceID ? "My Notes" : "Chat with \(recipientDisplayName())")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: { dismiss() }) {
-                    Label("Close", systemImage: "xmark.circle.fill")
-                }
-            }
-            if recipientDeviceID != currentDeviceID {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button(action: {
-                            dismiss()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                if let profile = ProfileDisplayNameLogic.profile(
-                                    forDeviceID: recipientDeviceID,
-                                    in: viewModel.gridNodes
-                                ) {
-                                    viewModel.selectedUserProfileForReport = ProfileCardUser(
-                                        id: recipientDeviceID,
-                                        userProfile: profile
-                                    )
-                                }
-                            }
-                        }) {
-                            Label("Report User", systemImage: "exclamationmark.shield")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-            }
+        .task(id: recipientDeviceID) {
+            _ = await viewModel.getAlbum(for: recipientDeviceID)
         }
         .onAppear {
-            viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
-            viewModel.markMessagesAsRead(from: recipientDeviceID)
-            AppLog.messaging.debug("Opened chat thread")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                isTextFieldFocused = true
+            ChatOpenTrace.mark("ChatView.onAppear presented=\(isPresented) focused=\(isTextFieldFocused) messages=\(chatMessages.count)")
+        }
+        .onChange(of: isPresented) { presented in
+            ChatOpenTrace.mark("ChatView.isPresented=\(presented)")
+            if !presented {
+                showPhotoStrip = false
             }
+        }
+        .onChange(of: isTextFieldFocused) { focused in
+            ChatOpenTrace.mark("ChatView.focus=\(focused) presented=\(isPresented)")
         }
         .overlay {
             if let imageData = fullScreenImage {
@@ -139,11 +180,38 @@ struct ChatView: View {
         }
     }
 
-    private func scrollToBottom(_ scrollViewProxy: ScrollViewProxy) {
-        if let lastMessage = chatMessages.last {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                scrollViewProxy.scrollTo(lastMessage.id, anchor: .bottom)
+    private static let bottomAnchorID = "chat-bottom"
+
+    private func pinToLatest(_ scrollViewProxy: ScrollViewProxy) {
+        guard isPresented else { return }
+        ChatOpenTrace.mark("scroll pin latest=\(latestMessageID ?? "none") count=\(chatMessages.count)")
+        let target = latestMessageID ?? Self.bottomAnchorID
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            scrollViewProxy.scrollTo(target, anchor: .bottom)
+            scrollViewProxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+        }
+        DispatchQueue.main.async {
+            guard isPresented else { return }
+            var next = Transaction()
+            next.disablesAnimations = true
+            withTransaction(next) {
+                if let latestMessageID {
+                    scrollViewProxy.scrollTo(latestMessageID, anchor: .bottom)
+                }
+                scrollViewProxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
+        }
+    }
+
+    private func resetComposer() {
+        newMessageText = ""
+        showPhotoStrip = false
+        fullScreenImage = nil
+        reactingMessageID = nil
+        if isPresented {
+            isTextFieldFocused = true
         }
     }
 
@@ -153,13 +221,5 @@ struct ChatView: View {
         newMessageText = ""
         viewModel.sendMessageWithModeration(text: trimmed, to: recipientDeviceID)
         isTextFieldFocused = true
-    }
-
-    private func recipientDisplayName() -> String {
-        ProfileDisplayNameLogic.chatTitle(
-            recipientDeviceID: recipientDeviceID,
-            currentDeviceID: currentDeviceID,
-            gridNodes: viewModel.gridNodes
-        )
     }
 }

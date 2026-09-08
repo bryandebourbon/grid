@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct ReportUserView: View {
     @ObservedObject var viewModel: GridViewModel
@@ -80,11 +83,24 @@ struct ReportUserView: View {
                 }
             }
             .alert("Report Submitted", isPresented: $showSuccessAlert) {
+                if let mailURL = AppSupport.reportMailtoURL(
+                    reportedDisplayName: userProfile.displayName,
+                    reportedDeviceID: userProfile.deviceID,
+                    reason: selectedReason,
+                    details: additionalDetails.isEmpty ? nil : additionalDetails
+                ) {
+                    Button("Email Support") {
+                        #if canImport(UIKit)
+                        UIApplication.shared.open(mailURL)
+                        #endif
+                        dismiss()
+                    }
+                }
                 Button("OK") {
                     dismiss()
                 }
             } message: {
-                Text("Thank you for helping keep our community safe. We will review this report.")
+                Text("Thank you for helping keep our community safe. We review reports within 24 hours. You can also email this report to \(AppSupport.email).")
             }
             .alert("Error", isPresented: $showErrorAlert) {
                 Button("OK") { }

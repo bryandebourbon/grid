@@ -6,14 +6,15 @@ import UIKit
 
 struct ConversationsListView: View {
     @ObservedObject var viewModel: GridViewModel
-    let onChatSelected: (String) -> Void
     @Environment(\.dismiss) var dismiss
-    
+    @State private var path: [String] = []
+    @FocusState private var isComposerFocused: Bool
+
     var body: some View {
-        NavigationView {
+        NavigationStack(path: $path) {
             List {
                 let conversations = viewModel.getConversationList()
-                
+
                 if conversations.isEmpty {
                     VStack {
                         Image(systemName: "message.circle")
@@ -25,7 +26,7 @@ struct ConversationsListView: View {
                             .font(.caption)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
-                        Text("Double tap or long press to view profile")
+                        Text("Long press a square to view a profile")
                             .font(.caption2)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
@@ -34,14 +35,18 @@ struct ConversationsListView: View {
                     .listRowBackground(Color.clear)
                 } else {
                     ForEach(conversations, id: \.deviceID) { conversation in
-                        ConversationRowView(
-                            displayName: conversation.displayName,
-                            lastMessage: conversation.lastMessage,
-                            messageCount: conversation.messageCount,
-                            onTap: {
-                                onChatSelected(conversation.deviceID)
-                            }
-                        )
+                        Button {
+                            ChatOpenTrace.start("list \(conversation.deviceID.prefix(8))")
+                            path = [conversation.deviceID]
+                            isComposerFocused = true
+                        } label: {
+                            ConversationRowView(
+                                displayName: conversation.displayName,
+                                lastMessage: conversation.lastMessage,
+                                messageCount: conversation.messageCount
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -54,8 +59,32 @@ struct ConversationsListView: View {
                     }
                 }
             }
+            .navigationDestination(for: String.self) { deviceID in
+                ChatOverlayView(
+                    viewModel: viewModel,
+                    recipientDeviceID: deviceID,
+                    isPresented: true,
+                    isComposerFocused: $isComposerFocused,
+                    onClose: {
+                        isComposerFocused = false
+                        KeyboardPresentation.dismissKeyboard()
+                        viewModel.deselectChatPartner()
+                        if path.isEmpty == false {
+                            path.removeLast()
+                        }
+                    }
+                )
+                .navigationBarBackButtonHidden(true)
+                .toolbar(.hidden, for: .navigationBar)
+            }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
+        .onChange(of: path) { newPath in
+            if newPath.isEmpty {
+                isComposerFocused = false
+                KeyboardPresentation.dismissKeyboard()
+                viewModel.deselectChatPartner()
+            }
+        }
     }
 }
 
@@ -63,57 +92,54 @@ struct ConversationRowView: View {
     let displayName: String
     let lastMessage: Message?
     let messageCount: Int
-    let onTap: () -> Void
-    
+
     var body: some View {
-        Button(action: onTap) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(displayName)
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        
-                        Spacer()
-                        
-                        if messageCount > 0 {
-                            Text("\(messageCount)")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(Color.blue)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    
-                    if let lastMessage = lastMessage {
-                        HStack {
-                            Text(lastMessage.text)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
-                            
-                            Spacer()
-                            
-                            Text(lastMessage.timestamp, style: .relative)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    } else {
-                        Text("No messages yet")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .italic()
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(displayName)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+
+                    Spacer()
+
+                    if messageCount > 0 {
+                        Text("\(messageCount)")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.blue)
+                            .clipShape(Capsule())
                     }
                 }
-                
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+
+                if let lastMessage = lastMessage {
+                    HStack {
+                        Text(lastMessage.text)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+
+                        Spacer()
+
+                        Text(lastMessage.timestamp, style: .relative)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Text("No messages yet")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .italic()
+                }
             }
-            .padding(.vertical, 4)
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
-        .buttonStyle(PlainButtonStyle())
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 }

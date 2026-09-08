@@ -73,6 +73,13 @@ final class CryptoService {
         getPublicKey() != nil && getPrivateKey() != nil
     }
 
+    @discardableResult
+    func deleteStoredKeys() -> Bool {
+        let deletedPrivate = keychain.delete(forKey: keychainPrivateKeyTag)
+        let deletedPublic = keychain.delete(forKey: keychainPublicKeyTag)
+        return deletedPrivate && deletedPublic
+    }
+
     // MARK: - Public API (signatures preserved for existing call sites)
 
     func encrypt(text: String, withPublicKey publicKeyString: String) -> Data? {

@@ -8,6 +8,12 @@
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>The Grid uses your location to show nearby active users and enable proximity-based messaging. Location is only used while the app is open.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Grid uses the camera so you can take a photo for your story.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Grid uses your photo library so you can choose a profile photo, chat image, story, or background.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

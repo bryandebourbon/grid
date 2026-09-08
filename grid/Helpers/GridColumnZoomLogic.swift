@@ -33,4 +33,13 @@ enum GridColumnZoomLogic {
     static func clamp(_ columns: Int) -> Int {
         max(minColumns, min(maxColumns, columns))
     }
+
+    /// Reflow a stored 5×5 grid into pinch columns without `LazyVGrid` recycling.
+    static func rows<Cell>(from nodes: [[Cell]], columns: Int) -> [[Cell]] {
+        let flat = nodes.flatMap { $0 }
+        let cols = max(1, columns)
+        return stride(from: 0, to: flat.count, by: cols).map {
+            Array(flat[$0 ..< min($0 + cols, flat.count)])
+        }
+    }
 }

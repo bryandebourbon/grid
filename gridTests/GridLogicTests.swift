@@ -1,8 +1,35 @@
 import Testing
 import Foundation
+import CloudKit
 @testable import grid
 
 // MARK: - Grid column zoom logic
+
+struct GridCellLayoutTests {
+    @Test func portraitIsSixteenTenthsTall() {
+        #expect(GridCellLayout.portraitHeightToWidth == 1.6)
+        #expect(GridCellLayout.gutter == 8)
+        #expect(GridCellLayout.cornerRadius == 14)
+        #expect(GridCellLayout.widthOverHeight(square: false) == 1 / 1.6)
+        #expect(GridCellLayout.widthOverHeight(square: true) == 1)
+    }
+
+    @Test func bioBubbleUsesStatusTextAndMePlaceholder() {
+        #expect(BioStatusBubbleLogic.content(bio: "Hangover", isMe: false)?.text == "Hangover")
+        #expect(BioStatusBubbleLogic.content(bio: "  ", isMe: false) == nil)
+        #expect(BioStatusBubbleLogic.content(bio: nil, isMe: true)?.isPlaceholder == true)
+        #expect(BioStatusBubbleLogic.content(bio: "Out", isMe: true)?.isPlaceholder == false)
+    }
+
+    @Test func photoShapeCyclesCardSquareCircle() {
+        #expect(GridPhotoShape.card.next == .square)
+        #expect(GridPhotoShape.square.next == .circle)
+        #expect(GridPhotoShape.circle.next == .card)
+        #expect(GridPhotoShape.card.usesSquareProportion == false)
+        #expect(GridPhotoShape.square.usesSquareProportion)
+        #expect(GridPhotoShape.circle.usesCircleClip)
+    }
+}
 
 struct GridColumnZoomLogicTests {
 
@@ -38,6 +65,15 @@ struct GridColumnZoomLogicTests {
     @Test func fastSwipeIgnored() {
         #expect(GridColumnZoomLogic.shouldIgnoreDrag(velocity: 401))
         #expect(!GridColumnZoomLogic.shouldIgnoreDrag(velocity: 400))
+    }
+
+    @Test func pinchReflowsStoredFiveByFiveWithoutDroppingCells() {
+        let grid = GridPlacementLogic.makeEmptyGrid()
+        let rows = GridColumnZoomLogic.rows(from: grid, columns: 3)
+        #expect(rows.flatMap { $0 }.count == 25)
+        #expect(rows.count == 9)
+        #expect(rows.first?.count == 3)
+        #expect(rows.last?.count == 1)
     }
 }
 
@@ -84,7 +120,15 @@ struct MessageConversationLogicTests {
         #expect(thread.map(\.id) == ["c", "a"])
     }
 
-    @Test func conversationListUsesMyNotesForSelfThread() {
+    @Test func lastSelfMessageIsTheLatestNoteToSelf() {
+        let older = message(id: "old", from: "me", to: "me", text: "first", at: Date(timeIntervalSince1970: 100))
+        let newer = message(id: "new", from: "me", to: "me", text: "later", at: Date(timeIntervalSince1970: 200))
+        let chat = message(id: "chat", from: "me", to: "bob", text: "hi", at: Date(timeIntervalSince1970: 300))
+        #expect(MessageConversationLogic.lastSelfMessage(for: "me", in: [older, newer, chat])?.id == "new")
+        #expect(MessageConversationLogic.lastSelfMessage(for: "bob", in: [older, newer, chat]) == nil)
+    }
+
+    @Test func conversationListOmitsSelfThread() {
         let t0 = Date(timeIntervalSince1970: 100)
         let messages = [
             message(id: "n", from: "me", to: "me", text: "note", at: t0),
@@ -96,10 +140,7 @@ struct MessageConversationLogicTests {
             displayNameLookup: { _ in "Should Not Use" }
         )
 
-        #expect(list.count == 1)
-        #expect(list[0].displayName == "My Notes")
-        #expect(list[0].deviceID == "me")
-        #expect(list[0].messageCount == 1)
+        #expect(list.isEmpty)
     }
 
     @Test func conversationListSortsByMostRecentLastMessage() {
@@ -183,6 +224,192 @@ struct GridProfileFilterLogicTests {
 
         #expect(filtered.map(\.userID) == ["match"])
     }
+
+    @Test func favoritesOnlyKeepsStarredPeers() {
+        let profiles = [
+            profile(userID: "star", deviceID: "s1"),
+            profile(userID: "other", deviceID: "o1"),
+        ]
+        let filtered = GridProfileFilterLogic.applyDisplayFilters(
+            to: profiles,
+            blockedUserIDs: [],
+            usersWhoBlockedMe: [],
+            selectedInterestFilter: [],
+            starredUserIDs: ["star"],
+            favoritesOnly: true
+        )
+        #expect(filtered.map(\.userID) == ["star"])
+    }
+
+    @Test func allTabIgnoresStarredSet() {
+        let profiles = [
+            profile(userID: "star", deviceID: "s1"),
+            profile(userID: "other", deviceID: "o1"),
+        ]
+        let filtered = GridProfileFilterLogic.applyDisplayFilters(
+            to: profiles,
+            blockedUserIDs: [],
+            usersWhoBlockedMe: [],
+            selectedInterestFilter: [],
+            starredUserIDs: ["star"],
+            favoritesOnly: false
+        )
+        #expect(filtered.map(\.userID) == ["star", "other"])
+    }
+}
+
+struct NearbyInterestRankingTests {
+
+    private func profile(_ id: String, interests: [Interest]) -> UserProfile {
+        UserProfile(userID: id, deviceID: id, deviceName: id, interests: interests)
+    }
+
+    @Test func ranksByHowManyPeopleShareAnInterest() {
+        let ranked = NearbyInterestRanking.ranked(
+            from: [
+                profile("a", interests: [.coffee, .music]),
+                profile("b", interests: [.coffee]),
+                profile("me", interests: [.hiking]),
+            ],
+            excludingDeviceID: "me",
+            limit: 5
+        )
+        #expect(ranked.map(\.interest) == [.coffee, .music])
+        #expect(ranked.first?.count == 2)
+    }
+
+    @Test func skipsLocalLLM() {
+        var llm = LocalLLMIdentity.profile
+        llm.interests = [.technology]
+        let ranked = NearbyInterestRanking.ranked(from: [llm], limit: 5)
+        #expect(ranked.isEmpty)
+    }
+}
+
+struct InterestVenueQueryTests {
+    @Test func lgbtqSearchesGayBars() {
+        #expect(InterestVenueQuery.searchTerm(for: .gay) == "gay bars")
+        #expect(InterestVenueQuery.rowTitle(for: .gay) == "Gay bars nearby")
+        #expect(InterestVenueQuery.searchTerm(for: .lgbtq) == "gay bars")
+        #expect(InterestVenueQuery.rowTitle(for: .lgbtq) == "Gay bars nearby")
+        #expect(InterestVenueQuery.searchTerm(for: .comedy, kind: .events) == InterestVenueQuery.searchTerm(for: .comedy, kind: .places))
+        #expect(InterestVenueQuery.rowTitle(for: .comedy, kind: .events) == "Comedy events nearby")
+        #expect(InterestVenueQuery.searchTerm(for: .comedy, kind: .venues) == "Comedy venues")
+        #expect(InterestVenueQuery.rowTitle(for: .comedy, kind: .venues) == "Comedy venues nearby")
+    }
+}
+
+struct GridPeopleTabPagingTests {
+
+    @Test func swipeLeftFromAllOpensFavorites() {
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -120, velocity: -200, width: 390, current: .all) == .favorites)
+    }
+
+    @Test func swipeRightFromFavoritesOpensAll() {
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: 120, velocity: 200, width: 390, current: .favorites) == .all)
+    }
+
+    @Test func shortSwipeStaysOnCurrentTab() {
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -20, velocity: 0, width: 390, current: .all) == .all)
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: 20, velocity: 0, width: 390, current: .favorites) == .favorites)
+    }
+
+    @Test func pageOffsetMovesByFullWidth() {
+        #expect(GridPeopleTabPaging.pageOffset(tab: .all, width: 390, drag: 0) == 0)
+        #expect(GridPeopleTabPaging.pageOffset(tab: .favorites, width: 390, drag: 0) == -390)
+    }
+
+    @Test func orderedTabsIncludeCustomGroups() {
+        let group = PeopleGroup(name: "Gym")
+        let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [group])
+        #expect(tabs == [.all, .favorites, .custom(group.id)])
+    }
+
+    @Test func swipeMovesThroughCustomGroups() {
+        let group = PeopleGroup(name: "Gym")
+        let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [group])
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -80, current: .favorites, tabs: tabs) == .custom(group.id))
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: 80, current: .custom(group.id), tabs: tabs) == .favorites)
+    }
+
+    @Test func orderedTabsAppendInterestPages() {
+        let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [], interestPages: [.coffee])
+        #expect(tabs == [.all, .favorites, .interest(Interest.coffee.rawValue)])
+    }
+
+    @Test func swipePastLastTabOpensInterestSearch() {
+        let tabs: [GridPeopleTab] = [.all, .favorites]
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: -80, current: .favorites, tabs: tabs))
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: -80, current: .all, tabs: tabs) == false)
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: 80, current: .favorites, tabs: tabs) == false)
+    }
+
+    @Test func swipePastInterestPageOpensSearch() {
+        let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [], interestPages: [.coffee])
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(
+            translation: -80,
+            current: .interest(Interest.coffee.rawValue),
+            tabs: tabs
+        ))
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(
+            translation: -80,
+            current: .interest(Interest.coffee.rawValue),
+            tabs: GridPeopleTabPaging.orderedTabs(
+                customGroups: [],
+                interestPages: [.coffee, .music, .hiking]
+            ),
+            canAddInterestPage: false
+        ) == false)
+        #expect(GridPeopleTabPaging.tabAfterSwipe(
+            translation: -80,
+            current: .interest(Interest.coffee.rawValue),
+            tabs: tabs
+        ) == .interest(Interest.coffee.rawValue))
+    }
+}
+
+struct InterestPageStoreTests {
+    @Test func insertingSkipsDuplicatesCaseInsensitively() {
+        let first = InterestPageStore.inserting(.coffee, into: [])
+        #expect(first == [.coffee])
+        let again = InterestPageStore.inserting(Interest(rawValue: "coffee"), into: first)
+        #expect(again == [.coffee])
+        let extra = InterestPageStore.inserting(.music, into: first)
+        #expect(extra == [.coffee, .music])
+        #expect(InterestPageStore.removing(.coffee, from: extra) == [.music])
+        #expect(InterestPageStore.contains(.music, in: extra))
+    }
+
+    @Test func insertingStopsAtThreePages() {
+        let three = InterestPageStore.inserting(
+            .hiking,
+            into: InterestPageStore.inserting(.music, into: InterestPageStore.inserting(.coffee, into: []))
+        )
+        #expect(three == [.coffee, .music, .hiking])
+        #expect(InterestPageStore.canAdd(to: three) == false)
+        #expect(InterestPageStore.inserting(.yoga, into: three) == three)
+        #expect(InterestPageStore.inserting(.coffee, into: three) == three)
+    }
+
+    @Test func saveAndLoadRoundTripsPages() {
+        let defaults = UserDefaults(suiteName: "grid.interestPageStore.tests")!
+        defaults.removePersistentDomain(forName: "grid.interestPageStore.tests")
+        InterestPageStore.save([.coffee, .music], userID: "u1", defaults: defaults)
+        #expect(InterestPageStore.load(userID: "u1", defaults: defaults) == [.coffee, .music])
+    }
+}
+
+struct PeopleGroupStoreTests {
+    @Test func saveAndLoadRoundTripsMembers() {
+        let defaults = UserDefaults(suiteName: "grid.peopleGroupStore.tests")!
+        defaults.removePersistentDomain(forName: "grid.peopleGroupStore.tests")
+        let group = PeopleGroup(name: "Gym", memberUserIDs: ["u1"])
+        PeopleGroupStore.save([group], userID: "me", defaults: defaults)
+        let loaded = PeopleGroupStore.load(userID: "me", defaults: defaults)
+        #expect(loaded.count == 1)
+        #expect(loaded.first?.name == "Gym")
+        #expect(loaded.first?.memberUserIDs == ["u1"])
+    }
 }
 
 // MARK: - Interest matching logic
@@ -197,7 +424,275 @@ struct InterestMatchingLogicTests {
     }
 }
 
+struct CustomInterestStoreTests {
+    @Test func addPersistsNameAndEmoji() {
+        let defaults = UserDefaults(suiteName: "grid.customInterest.tests")!
+        defaults.removePersistentDomain(forName: "grid.customInterest.tests")
+        let added = CustomInterestStore.add(name: "Dodgeball", emoji: "🏐", defaults: defaults)
+        #expect(added?.rawValue == "Dodgeball")
+        #expect(CustomInterestStore.emoji(for: "Dodgeball", defaults: defaults) == "🏐")
+        #expect(CustomInterestStore.add(name: "Fitness", emoji: "🔥", defaults: defaults) == .fitness)
+    }
+}
+
 // MARK: - Message read logic
+
+struct ProfileCreationLogicTests {
+    @Test func promptsForICloudWhenThereIsNoAccount() {
+        let message = ProfileCreationLogic.userFacingCloudKitError(accountStatus: .noAccount, saveError: nil)
+        #expect(message.contains("iCloud"))
+    }
+
+    @Test func mapsNotAuthenticatedSaveError() {
+        let error = NSError(domain: CKError.errorDomain, code: CKError.notAuthenticated.rawValue)
+        let message = ProfileCreationLogic.userFacingCloudKitError(accountStatus: .available, saveError: error)
+        #expect(message.contains("iCloud"))
+    }
+}
+
+struct TestPeerIdentityTests {
+    @Test func recognizesAndPersistsTestUser() {
+        let defaults = UserDefaults(suiteName: "grid.testPeer.tests")!
+        defaults.removePersistentDomain(forName: "grid.testPeer.tests")
+        let first = TestPeerIdentity.userID(defaults: defaults, environment: ["SIMULATOR_UDID": "PEERTEST-1234"])
+        #expect(TestPeerIdentity.isTest(first))
+        #expect(first.contains("PEERTEST"))
+        #expect(TestPeerIdentity.userID(defaults: defaults, environment: [:]) == first)
+        #expect(!TestPeerIdentity.isTest("001234.real-apple-id"))
+    }
+}
+
+struct DeviceIdentityLogicTests {
+    @Test func peerTokenPrefersLaunchNameThenSimulatorUDID() {
+        let defaults = UserDefaults(suiteName: "grid.deviceIdentity.tests")!
+        defaults.removePersistentDomain(forName: "grid.deviceIdentity.tests")
+        defaults.set("Alice!", forKey: DeviceIdentityLogic.peerNameDefaultsKey)
+        #expect(DeviceIdentityLogic.peerToken(defaults: defaults, environment: ["SIMULATOR_UDID": "AAAAAAAA-BBBB"]) == "Alice")
+        defaults.removeObject(forKey: DeviceIdentityLogic.peerNameDefaultsKey)
+        #expect(DeviceIdentityLogic.peerToken(defaults: defaults, environment: ["SIMULATOR_UDID": "AAAAAAAA-BBBB"]) == "AAAAAAAA")
+        #expect(DeviceIdentityLogic.peerToken(defaults: defaults, environment: [:]) == nil)
+    }
+
+    @Test func resolvedIDPersistsPerPeer() {
+        let defaults = UserDefaults(suiteName: "grid.deviceIdentity.persist")!
+        defaults.removePersistentDomain(forName: "grid.deviceIdentity.persist")
+        defaults.set("Alice", forKey: DeviceIdentityLogic.peerNameDefaultsKey)
+        let first = DeviceIdentityLogic.resolvedDeviceID(forAppleUserID: "001.user", defaults: defaults, environment: [:])
+        let second = DeviceIdentityLogic.resolvedDeviceID(forAppleUserID: "001.user", defaults: defaults, environment: [:])
+        #expect(first == second)
+        #expect(first.contains("Alice"))
+    }
+}
+
+struct MessageBannerLogicTests {
+
+    private func message(
+        text: String = "hello",
+        encrypted: Bool = false,
+        image: Bool = false
+    ) -> Message {
+        var message = Message(
+            id: "m1",
+            senderDeviceID: "bob",
+            recipientDeviceID: "me",
+            senderUserID: "u-bob",
+            recipientUserID: "u-me",
+            text: text,
+            status: .received
+        )
+        message.isEncrypted = encrypted
+        if image {
+            message.encryptedImageData = "abc"
+        }
+        return message
+    }
+
+    @Test func titleUsesSenderName() {
+        #expect(MessageBannerLogic.title(senderName: "Alex") == "Alex")
+        #expect(MessageBannerLogic.title(senderName: "  ") == MessageBannerLogic.fallbackTitle)
+        #expect(MessageBannerLogic.title(senderName: nil) == MessageBannerLogic.fallbackTitle)
+        #expect(MessageBannerLogic.title(senderName: "iPhone") == MessageBannerLogic.fallbackTitle)
+    }
+
+    @Test func previewUsesDecryptedText() {
+        let preview = MessageBannerLogic.previewText(
+            message: message(text: "[Encrypted Message]", encrypted: true),
+            decryptedText: "want to get coffee?"
+        )
+        #expect(preview == "want to get coffee?")
+    }
+
+    @Test func previewHidesEncryptionPlaceholder() {
+        let preview = MessageBannerLogic.previewText(
+            message: message(text: "[Encrypted Message]", encrypted: true),
+            decryptedText: nil
+        )
+        #expect(preview == MessageBannerLogic.genericBody)
+    }
+
+    @Test func previewUsesPhotoLabel() {
+        let preview = MessageBannerLogic.previewText(
+            message: message(text: "[Encrypted Image]", encrypted: true, image: true),
+            decryptedText: nil
+        )
+        #expect(preview == MessageBannerLogic.photoBody)
+    }
+
+    @Test func previewTruncatesLongText() {
+        let long = String(repeating: "a", count: 200)
+        let preview = MessageBannerLogic.previewText(message: message(text: long), decryptedText: long)
+        #expect(preview.count == MessageBannerLogic.maxPreviewLength)
+        #expect(preview.hasSuffix("…"))
+    }
+
+    @Test func doesNotAnnounceOwnOrOpenChat() {
+        #expect(MessageBannerLogic.shouldAnnounce(senderDeviceID: "bob", currentDeviceID: "me", viewingDeviceID: nil))
+        #expect(!MessageBannerLogic.shouldAnnounce(senderDeviceID: "me", currentDeviceID: "me", viewingDeviceID: nil))
+        #expect(!MessageBannerLogic.shouldAnnounce(senderDeviceID: "bob", currentDeviceID: "me", viewingDeviceID: "bob"))
+        #expect(!MessageBannerLogic.shouldAnnounce(senderDeviceID: LocalLLMIdentity.deviceID, currentDeviceID: "me", viewingDeviceID: nil))
+    }
+
+    @Test func senderNameCacheRoundTrip() {
+        let defaults = UserDefaults(suiteName: "grid.senderName.tests")!
+        defaults.removePersistentDomain(forName: "grid.senderName.tests")
+        SenderNameCache.store("Sam Phone", for: "sam", defaults: defaults)
+        #expect(SenderNameCache.name(for: "sam", defaults: defaults) == "Sam Phone")
+    }
+}
+
+struct MessageReactionLogicTests {
+    private func message(reactions: [MessageReaction] = [], updatedAt: Date? = nil) -> Message {
+        var item = Message(
+            id: "m1",
+            senderDeviceID: "alice",
+            recipientDeviceID: "me",
+            senderUserID: "u-a",
+            recipientUserID: "u-me",
+            text: "hi",
+            status: .received
+        )
+        item.reactions = reactions
+        item.reactionsUpdatedAt = updatedAt
+        return item
+    }
+
+    @Test func toggleAddsThenRemovesTheSameEmoji() {
+        let added = MessageReactionLogic.toggle(emoji: "❤️", reactorDeviceID: "me", in: [])
+        #expect(added == [MessageReaction(emoji: "❤️", reactorDeviceID: "me")])
+        let removed = MessageReactionLogic.toggle(emoji: "❤️", reactorDeviceID: "me", in: added)
+        #expect(removed.isEmpty)
+    }
+
+    @Test func toggleReplacesAPersonsPreviousEmoji() {
+        let heart = [MessageReaction(emoji: "❤️", reactorDeviceID: "me")]
+        let thumbs = MessageReactionLogic.toggle(emoji: "👍", reactorDeviceID: "me", in: heart)
+        #expect(thumbs == [MessageReaction(emoji: "👍", reactorDeviceID: "me")])
+    }
+
+    @Test func toggleIgnoresUnknownEmoji() {
+        #expect(MessageReactionLogic.toggle(emoji: "🍕", reactorDeviceID: "me", in: []).isEmpty)
+    }
+
+    @Test func groupedCountsAndMarksMine() {
+        let reactions = [
+            MessageReaction(emoji: "❤️", reactorDeviceID: "me"),
+            MessageReaction(emoji: "❤️", reactorDeviceID: "bob"),
+            MessageReaction(emoji: "👍", reactorDeviceID: "bob"),
+        ]
+        let groups = MessageReactionLogic.grouped(reactions, currentDeviceID: "me")
+        #expect(groups.map(\.emoji) == ["❤️", "👍"])
+        #expect(groups[0].count == 2)
+        #expect(groups[0].includesMe)
+        #expect(groups[1].count == 1)
+        #expect(!groups[1].includesMe)
+    }
+
+    @Test func newerLocalReactionsSurviveStaleFetch() {
+        let local = message(
+            reactions: [MessageReaction(emoji: "😂", reactorDeviceID: "me")],
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        let stale = message(reactions: [], updatedAt: Date(timeIntervalSince1970: 50))
+        #expect(MessageReactionLogic.pick(local: local, incoming: stale) == local.reactions)
+        let merged = MessageInboxLogic.merge(local: [local], incoming: [stale])
+        #expect(merged[0].reactions == local.reactions)
+    }
+}
+
+struct MessageInboxLogicTests {
+
+    private func message(
+        id: String,
+        text: String,
+        status: MessageStatus,
+        at timestamp: Date = Date(timeIntervalSince1970: 100)
+    ) -> Message {
+        Message(
+            id: id,
+            senderDeviceID: "bob",
+            recipientDeviceID: "me",
+            senderUserID: "u-bob",
+            recipientUserID: "u-me",
+            text: text,
+            timestamp: timestamp,
+            status: status
+        )
+    }
+
+    @Test func mergeKeepsLocalMessageMissingFromStaleQuery() {
+        let pushed = message(id: "push-1", text: "just arrived", status: .received)
+        let older = message(id: "old-1", text: "earlier", status: .received, at: Date(timeIntervalSince1970: 50))
+        let merged = MessageInboxLogic.merge(local: [older, pushed], incoming: [older])
+        #expect(merged.map(\.id) == ["old-1", "push-1"])
+    }
+
+    @Test func mergeAddsNewlyFetchedRecord() {
+        let older = message(id: "old-1", text: "earlier", status: .received, at: Date(timeIntervalSince1970: 50))
+        let incoming = message(id: "push-1", text: "just arrived", status: .received)
+        let merged = MessageInboxLogic.merge(local: [older], incoming: [incoming])
+        #expect(Set(merged.map(\.id)) == ["old-1", "push-1"])
+    }
+
+    @Test func mergeDoesNotClobberOptimisticSend() {
+        let sending = message(id: "temp", text: "hello", status: .sending)
+        let stale = message(id: "temp", text: "hello", status: .sending)
+        let merged = MessageInboxLogic.merge(local: [sending], incoming: [stale])
+        #expect(merged[0].status == .sending)
+    }
+
+    @Test func mergeAcceptsServerConfirmationOfOptimisticSend() {
+        let sending = message(id: "temp", text: "[Encrypted Message]", status: .sending)
+        let saved = message(id: "temp", text: "[Encrypted Message]", status: .sent)
+        let merged = MessageInboxLogic.merge(local: [sending], incoming: [saved])
+        #expect(merged[0].status == .sent)
+    }
+
+    @Test func persistableDropsSendingAndLocalLLM() {
+        let keep = message(id: "1", text: "hi", status: .received)
+        let sending = message(id: "2", text: "soon", status: .sending)
+        let llm = Message(
+            id: "3",
+            senderDeviceID: LocalLLMIdentity.deviceID,
+            recipientDeviceID: "me",
+            senderUserID: LocalLLMIdentity.userID,
+            recipientUserID: "u-me",
+            text: "ok",
+            status: .received
+        )
+        #expect(MessageInboxLogic.persistable([keep, sending, llm]).map(\.id) == ["1"])
+    }
+
+    @Test func pendingStoreEnqueuesAndRemoves() {
+        let defaults = UserDefaults(suiteName: "grid.pendingMessage.tests")!
+        defaults.removePersistentDomain(forName: "grid.pendingMessage.tests")
+        PendingMessageFetchStore.enqueue("rec-1", defaults: defaults)
+        PendingMessageFetchStore.enqueue("rec-1", defaults: defaults)
+        PendingMessageFetchStore.enqueue("rec-2", defaults: defaults)
+        #expect(Set(PendingMessageFetchStore.all(defaults: defaults)) == ["rec-1", "rec-2"])
+        PendingMessageFetchStore.remove("rec-1", defaults: defaults)
+        #expect(PendingMessageFetchStore.all(defaults: defaults) == ["rec-2"])
+    }
+}
 
 struct MessageReadLogicTests {
 
@@ -215,6 +710,104 @@ struct MessageReadLogicTests {
 
 // MARK: - Grid placement logic
 
+@MainActor
+struct GridPopulationServiceTests {
+
+    @Test func placesLocalLLMBesideCurrentUser() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me],
+            currentUser: me,
+            display: GridDisplayState(
+                blockedUserIDs: [],
+                usersWhoBlockedMe: [],
+                selectedInterestFilter: [],
+                showsLocalLLM: true
+            )
+        )
+        #expect(grid[0][0].userProfile?.deviceID == LocalLLMIdentity.deviceID)
+        #expect(grid.flatMap { $0 }.compactMap(\.userProfile).contains { $0.deviceID == "me" } == false)
+    }
+
+    @Test func omitsLocalLLMWhenDisabled() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me],
+            currentUser: me,
+            display: GridDisplayState(blockedUserIDs: [], usersWhoBlockedMe: [], selectedInterestFilter: [])
+        )
+        #expect(grid[0][0].userProfile == nil)
+        #expect(grid.flatMap { $0 }.compactMap(\.userProfile).isEmpty)
+    }
+
+    @Test func placesCurrentUserWhenShowSelfIsEnabled() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me],
+            currentUser: me,
+            display: GridDisplayState(
+                blockedUserIDs: [],
+                usersWhoBlockedMe: [],
+                selectedInterestFilter: [],
+                showsSelfOnGrid: true
+            )
+        )
+        #expect(grid[0][0].userProfile?.deviceID == "me")
+    }
+
+    @Test func localLLMSurvivesInterestFilter() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me],
+            currentUser: me,
+            display: GridDisplayState(
+                blockedUserIDs: [],
+                usersWhoBlockedMe: [],
+                selectedInterestFilter: [.technology],
+                showsLocalLLM: true
+            )
+        )
+        #expect(grid[0][0].userProfile?.deviceID == LocalLLMIdentity.deviceID)
+        #expect(grid.flatMap { $0 }.compactMap(\.userProfile).contains { $0.deviceID == "me" } == false)
+    }
+
+    @Test func favoritesLayoutOmitsLocalLLMAndUnstarredPeers() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        let fave = UserProfile(userID: "star", deviceID: "s1", deviceName: "Star")
+        let other = UserProfile(userID: "other", deviceID: "o1", deviceName: "Other")
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me, fave, other],
+            currentUser: me,
+            display: GridDisplayState(
+                blockedUserIDs: [],
+                usersWhoBlockedMe: [],
+                selectedInterestFilter: [],
+                starredUserIDs: ["star"],
+                favoritesOnly: true
+            )
+        )
+        let placed = grid.flatMap { $0 }.compactMap(\.userProfile)
+        #expect(placed.map(\.deviceID) == ["s1"])
+        #expect(!placed.contains { $0.deviceID == LocalLLMIdentity.deviceID })
+        #expect(!placed.contains { $0.deviceID == "o1" })
+    }
+}
+
 struct GridPlacementLogicTests {
 
     @Test func placesInFirstEmptySlotSkippingOrigin() {
@@ -227,6 +820,8 @@ struct GridPlacementLogicTests {
         #expect(slot.row == 0 && slot.col == 1)
         GridPlacementLogic.place(profile: profile, in: &grid, at: slot.row, col: slot.col)
         #expect(grid[0][1].userProfile?.deviceID == "d")
+        #expect(grid[0][1].id == PersonIdentity.id(forDeviceID: "d"))
+        #expect(grid[0][0].id == PersonIdentity.emptySlotID(x: 0, y: 0))
         #expect(grid[0][0].userProfile == nil)
     }
 }
@@ -264,32 +859,48 @@ struct ProfileDisplayNameLogicTests {
         return grid
     }
 
-    @Test func selfChatUsesMyNotes() {
+    @Test func selfChatUsesYou() {
         let title = ProfileDisplayNameLogic.chatTitle(
             recipientDeviceID: "me-device",
             currentDeviceID: "me-device",
             gridNodes: []
         )
-        #expect(title == "My Notes")
+        #expect(title == "You")
     }
 
-    @Test func usesProfileDisplayNameWhenOnGrid() {
-        let grid = gridWithPeer(deviceID: "bob-device", deviceName: "Bob Phone")
+    @Test func usesPersonNameWhenOnGrid() {
+        let grid = gridWithPeer(deviceID: "bob-device", deviceName: "Bob")
         let title = ProfileDisplayNameLogic.chatTitle(
             recipientDeviceID: "bob-device",
             currentDeviceID: "me-device",
             gridNodes: grid
         )
-        #expect(title == "Bob Phone (user-bob...)")
+        #expect(title == "Bob")
     }
 
-    @Test func fallsBackToDevicePrefixWhenMissing() {
-        let title = ProfileDisplayNameLogic.chatTitle(
+    @Test func rejectsDeviceNamesAndFallsBackToSomeone() {
+        let grid = gridWithPeer(deviceID: "iphone-peer", deviceName: "iPhone")
+        let titled = ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: "iphone-peer",
+            currentDeviceID: "me-device",
+            gridNodes: grid
+        )
+        let missing = ProfileDisplayNameLogic.chatTitle(
             recipientDeviceID: "abcdefgh-xyz",
             currentDeviceID: "me-device",
             gridNodes: GridPlacementLogic.makeEmptyGrid(size: 2)
         )
-        #expect(title == "Device abcdefgh")
+        #expect(titled == ProfileDisplayNameLogic.fallbackTitle)
+        #expect(missing == ProfileDisplayNameLogic.fallbackTitle)
+    }
+
+    @Test func localLLMUsesPlainName() {
+        let title = ProfileDisplayNameLogic.chatTitle(
+            recipientDeviceID: LocalLLMIdentity.deviceID,
+            currentDeviceID: "me-device",
+            gridNodes: []
+        )
+        #expect(title == "Local LLM")
     }
 
     @Test func findsProfileInGrid() {
@@ -318,5 +929,102 @@ struct GridMessagingLogicTests {
 
         let allowed = GridMessagingLogic.canMessage(isBlocked: false, proximityAllowed: true, proximityReason: "Ready to message")
         #expect(allowed == (true, "Ready to message"))
+    }
+}
+
+struct AgeGateLogicTests {
+    @Test func signInRequiresConfirmation() {
+        #expect(AgeGateLogic.canProceedToSignIn(confirmedMinimumAge: false) == false)
+        #expect(AgeGateLogic.canProceedToSignIn(confirmedMinimumAge: true) == true)
+        #expect(AgeGateLogic.minimumAge == 17)
+    }
+}
+
+struct ChatOverlaySessionTests {
+    @Test func firstOpenDoesNotDefaultToSelf() {
+        let session = ChatOverlaySession()
+        #expect(session.activePartnerDeviceID == nil)
+        #expect(session.isPresented == false)
+    }
+
+    @Test func openingSecondPersonReplacesTheFirst() {
+        var session = ChatOverlaySession()
+        session.open(with: "1713-DEVICE")
+        #expect(session.activePartnerDeviceID == "1713-DEVICE")
+        session.hide()
+        session.open(with: "0041-DEVICE")
+        #expect(session.activePartnerDeviceID == "0041-DEVICE")
+        #expect(session.recipientDeviceID == "0041-DEVICE")
+    }
+
+    @Test func openingWithoutHideStillSwitchesPartner() {
+        var session = ChatOverlaySession()
+        session.open(with: "8ACEF559-DEVICE")
+        session.open(with: "1713-DEVICE")
+        #expect(session.activePartnerDeviceID == "1713-DEVICE")
+    }
+
+    @Test func overlayIdentityChangesWhenSwitchingPeople() {
+        var session = ChatOverlaySession()
+        session.open(with: "1713-DEVICE")
+        let first = session.overlayIdentity
+        session.open(with: "0041-DEVICE")
+        let second = session.overlayIdentity
+        #expect(first != second)
+        #expect(second == "0041-DEVICE-2")
+        session.hide()
+        #expect(session.overlayIdentity == nil)
+        #expect(session.recipientDeviceID == nil)
+    }
+}
+
+struct MessageSubscriptionLogicTests {
+    @Test func productionDesiredKeysStayWithinSchemaLimit() {
+        #expect(MessageSubscriptionLogic.desiredKeys == ["senderDeviceID"])
+        #expect(MessageSubscriptionLogic.desiredKeys.count <= MessageSubscriptionLogic.productionDesiredKeyLimit)
+    }
+}
+
+@MainActor
+struct ChatOverlayViewModelTests {
+    @Test func openThenOpenAnotherSwitchesPartner() {
+        let viewModel = GridViewModel()
+        viewModel.openChatOverlay(with: "1713-DEVICE")
+        #expect(viewModel.chatOverlaySession.activePartnerDeviceID == "1713-DEVICE")
+        viewModel.hideChatOverlay()
+        viewModel.openChatOverlay(with: "0041-DEVICE")
+        #expect(viewModel.chatOverlaySession.activePartnerDeviceID == "0041-DEVICE")
+        #expect(viewModel.currentChatRecipientDeviceID == "0041-DEVICE")
+    }
+}
+
+@MainActor
+struct GridUITestHarnessTests {
+    @Test func fixturesPlaceAliceAndBobOnTheGrid() {
+        let viewModel = GridViewModel()
+        viewModel.installUITestFixtures()
+        let ids = Set(viewModel.gridNodes.flatMap { $0 }.compactMap(\.userProfile?.deviceID))
+        #expect(viewModel.currentUserProfile?.deviceID == GridUITestHarness.me.deviceID)
+        #expect(ids.contains(GridUITestHarness.alice.deviceID))
+        #expect(ids.contains(GridUITestHarness.bob.deviceID))
+        #expect(GridUITestHarness.cellIdentifier(for: GridUITestHarness.alice.deviceID) == "grid.cell.uitest-alice-DEVICE")
+        #expect(viewModel.isStarred(GridUITestHarness.alice.deviceID))
+        #expect(viewModel.getMessagesForConversation(with: GridUITestHarness.alice.deviceID).map(\.text) == [GridUITestHarness.aliceMessageText])
+        #expect(viewModel.getMessagesForConversation(with: GridUITestHarness.bob.deviceID).map(\.text) == [GridUITestHarness.bobMessageText])
+    }
+}
+
+struct AccountDeletionCoverageTests {
+    @Test func deletesStoriesAlbumsReceiptsAndFiledReports() {
+        let types = Set(AccountDeletionService.deletableRecordQueries.map(\.recordType))
+        #expect(types.contains("UserProfiles"))
+        #expect(types.contains("Messages"))
+        #expect(types.contains("UserRelationships"))
+        #expect(types.contains("EncryptionProfiles"))
+        #expect(types.contains("Stories"))
+        #expect(types.contains("StoryViews"))
+        #expect(types.contains("Albums"))
+        #expect(types.contains("ReadReceipts"))
+        #expect(types.contains("Reports"))
     }
 }

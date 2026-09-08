@@ -32,7 +32,7 @@ struct Album: Identifiable {
     var recordID: CKRecord.ID?
     
     // Constants
-    static let maxPhotos = 3
+    static let maxPhotos = 5
     
     // Computed properties
     var photosCount: Int {

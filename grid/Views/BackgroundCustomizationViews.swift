@@ -1,32 +1,6 @@
 import SwiftUI
 import PhotosUI
 
-// MARK: - Color Picker Sheet
-
-struct BackgroundColorPickerView: View {
-    @Binding var selectedColor: Color
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationView {
-            VStack {
-                ColorPicker("Select Background Color", selection: $selectedColor, supportsOpacity: true)
-                    .padding()
-                Spacer()
-            }
-            .navigationTitle("Background Color")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-        .navigationViewStyle(StackNavigationViewStyle())
-    }
-}
-
-// MARK: - Photo Picker Sheet
-
 struct BackgroundPhotoPickerView: View {
     @Binding var selectedItem: PhotosPickerItem?
     @Binding var backgroundImage: Image?

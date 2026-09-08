@@ -7,7 +7,7 @@ struct DynamicClipShape: ViewModifier {
         if useCircular {
             content.clipShape(Circle())
         } else {
-            content.clipShape(Rectangle())
+            content.clipShape(RoundedRectangle(cornerRadius: GridCellLayout.cornerRadius, style: .continuous))
         }
     }
 }

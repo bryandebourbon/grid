@@ -16,11 +16,18 @@ final class GridColumnZoom {
     var isLongPressing = false
     var longPressStarted = false
     var doubleTapDetected = false
+    private var cellConsumedDoubleTap = false
 
     private(set) var lastTapTime = Date()
     private var dragStartTime = Date()
 
     var scrollDisabled: Bool { isScaling || isDragging }
+
+    func resetPressState() {
+        isLongPressing = false
+        longPressStarted = false
+        isDragging = false
+    }
 
     func previewColumns(for scale: CGFloat) -> Int {
         GridColumnZoomLogic.previewColumns(base: baseColumns, scale: scale)
@@ -55,8 +62,19 @@ final class GridColumnZoom {
     }
 
     func handleDoubleTapGesture(cancelRecentOverlay: (() -> Void)? = nil) {
-        guard !isDragging, !isLongPressing else { return }
+        guard !isDragging, !isLongPressing, !cellConsumedDoubleTap else { return }
         handleDoubleTap(cancelRecentOverlay: cancelRecentOverlay)
+    }
+
+    /// A person cell handled the double-tap (profile). Don't also cycle zoom.
+    func markCellConsumedDoubleTap() {
+        cellConsumedDoubleTap = true
+        doubleTapDetected = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            cellConsumedDoubleTap = false
+            doubleTapDetected = false
+        }
     }
 
     private func handleDragZoom(_ dragValue: DragGesture.Value) {
@@ -106,39 +124,43 @@ final class GridColumnZoom {
             }
     }
 
-    var longPressGesture: some Gesture {
+    /// Long-press, then drag to zoom. A normal swipe is not claimed.
+    var pressThenDragZoomGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.3)
-            .onEnded { [self] _ in
-                isLongPressing = true
-                longPressStarted = true
-                baseColumns = gridColumns
-                haptic(.medium)
-            }
-    }
-
-    var dragZoomGesture: some Gesture {
-        DragGesture(minimumDistance: 5)
+            .sequenced(before: DragGesture(minimumDistance: 0))
             .onChanged { [self] value in
-                guard isLongPressing || longPressStarted else { return }
-                if !isDragging {
-                    isDragging = true
-                    dragStartTime = Date()
-                    haptic(.light)
+                switch value {
+                case .second(true, let drag?):
+                    let isHorizontal = abs(drag.translation.width) > abs(drag.translation.height)
+                    if isHorizontal {
+                        resetPressState()
+                        return
+                    }
+                    if !isLongPressing {
+                        isLongPressing = true
+                        longPressStarted = true
+                        baseColumns = gridColumns
+                        haptic(.medium)
+                    }
+                    if !isDragging {
+                        isDragging = true
+                        dragStartTime = Date()
+                        haptic(.light)
+                    }
+                    handleDragZoom(drag)
+                default:
+                    break
                 }
-                handleDragZoom(value)
             }
             .onEnded { [self] _ in
                 if isDragging {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
                         baseColumns = gridColumns
-                        isDragging = false
-                        isLongPressing = false
-                        longPressStarted = false
+                        resetPressState()
                     }
                     haptic(.light)
                 } else {
-                    isLongPressing = false
-                    longPressStarted = false
+                    resetPressState()
                 }
             }
     }

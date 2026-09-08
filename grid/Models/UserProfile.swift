@@ -120,7 +120,10 @@ struct UserProfile: Codable {
         
         // Handle interests from CloudKit - stored as array of strings
         if let interestStrings = record["interests"] as? [String] {
-            self.interests = interestStrings.compactMap { Interest(rawValue: $0) }
+            self.interests = interestStrings
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { Interest(rawValue: $0) }
         } else {
             self.interests = []
         }
@@ -133,8 +136,10 @@ struct UserProfile: Codable {
         record["userID"] = self.userID
         record["deviceID"] = self.deviceID
         record["deviceName"] = self.deviceName
-        record["latitude"] = self.latitude
-        record["longitude"] = self.longitude
+        if let lat = self.latitude, let lon = self.longitude, lat != 0.0, lon != 0.0 {
+            record["latitude"] = lat
+            record["longitude"] = lon
+        }
         record["lastActiveTimestamp"] = self.lastActiveTimestamp
         record["isCurrentlyActive"] = self.isCurrentlyActive
         record["bio"] = self.bio
@@ -156,18 +161,12 @@ struct UserProfile: Codable {
         return toPublicCKRecord() // Same structure for now
     }
     
-    // Display name that shows both device info and user
     var displayName: String {
-        return "\(deviceName) (\(userID.prefix(8))...)"
+        ProfileDisplayNameLogic.personName(from: deviceName) ?? ProfileDisplayNameLogic.fallbackTitle
     }
-    
-    // Display name for grid - shows "Me" if this is the current user's device
+
     func gridDisplayName(isCurrentUser: Bool) -> String {
-        if isCurrentUser {
-            return "Me (\(deviceName))"
-        } else {
-            return displayName
-        }
+        isCurrentUser ? "Me" : displayName
     }
     
     // Update location

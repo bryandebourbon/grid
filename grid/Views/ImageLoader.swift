@@ -7,6 +7,7 @@ import UIKit
 @MainActor
 final class ImageLoader: ObservableObject {
     @Published var image: Image?
+    @Published var imageSize: CGSize?
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -16,6 +17,7 @@ final class ImageLoader: ObservableObject {
     func loadImage(from asset: CKAsset?) {
         guard let asset = asset else {
             image = nil
+            imageSize = nil
             currentAsset = nil
             return
         }
@@ -43,6 +45,7 @@ final class ImageLoader: ObservableObject {
                 }
                 await MainActor.run {
                     self.image = Image(uiImage: uiImage)
+                    self.imageSize = uiImage.size
                     self.isLoading = false
                 }
                 #else
@@ -53,6 +56,7 @@ final class ImageLoader: ObservableObject {
                 }
                 await MainActor.run {
                     self.image = Image(nsImage: nsImage)
+                    self.imageSize = nsImage.size
                     self.isLoading = false
                 }
                 #endif
@@ -60,6 +64,7 @@ final class ImageLoader: ObservableObject {
                 await MainActor.run {
                     self.errorMessage = "Could not load image."
                     self.image = nil
+                    self.imageSize = nil
                     self.isLoading = false
                 }
             }
