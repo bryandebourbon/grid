@@ -62,18 +62,6 @@ struct MessagingAppSuiteTests {
         #expect(GridCellTapLogic.chatPartnerDeviceID(for: grid[0][0]) != GridCellTapLogic.chatPartnerDeviceID(for: grid[0][1]))
     }
 
-    @Test func simulatorTestPeerIsHiddenFromRealAccounts() {
-        let real = profile(deviceID: me, name: "Bryan")
-        let peer = UserProfile(
-            userID: TestPeerIdentity.debugSenderUserID,
-            deviceID: TestPeerIdentity.debugSenderDeviceID,
-            deviceName: "Test Peer",
-            bio: "Simulator test peer"
-        )
-        #expect(TestPeerIdentity.belongsOnRealUserGrid(peer, currentUser: real) == false)
-        #expect(TestPeerIdentity.belongsOnRealUserGrid(profile(deviceID: alice, name: "Alice"), currentUser: real))
-    }
-
     @Test func occupiedCellUsesThePersonsDeviceID() {
         var grid = GridPlacementLogic.makeEmptyGrid(size: 2)
         #expect(grid[0][1].id == PersonIdentity.emptySlotID(x: 0, y: 1))

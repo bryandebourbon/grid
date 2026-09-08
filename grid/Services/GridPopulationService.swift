@@ -10,13 +10,19 @@ struct GridDisplayState {
     var favoritesOnly: Bool = false
     var showsLocalLLM: Bool = false
     var showsSelfOnGrid: Bool = false
+    var showsNearbyPeople: Bool = true
 }
 
 @MainActor
 final class GridPopulationService {
 
     func profilesToDisplay(nearby: [UserProfile], currentUser: UserProfile? = nil) -> [UserProfile] {
-        nearby.filter { TestPeerIdentity.belongsOnRealUserGrid($0, currentUser: currentUser) }
+        nearby.filter { profile in
+            if let currentUser, profile.deviceID == currentUser.deviceID {
+                return true
+            }
+            return GridPresenceLogic.shouldShowPeer(profile)
+        }
     }
 
     func layoutProfiles(
@@ -52,6 +58,8 @@ final class GridPopulationService {
         if display.showsSelfOnGrid, let current = currentUser {
             GridPlacementLogic.place(profile: current, in: &grid, at: 0, col: 0)
         }
+
+        guard display.showsNearbyPeople else { return }
 
         let peers = others.filter { !LocalLLMIdentity.isLLM($0.deviceID) }
         if display.showsLocalLLM && !display.favoritesOnly {

@@ -11,10 +11,54 @@ import UIKit
 extension GridViewModel {
     // MARK: - Grid Refresh Methods
     
+    /// Pull-to-refresh: reload nearby people and every conversation, then drop the spinner.
+    func refreshPeopleAndMessages() async {
+        guard !locksGridToFixtures else { return }
+        locationService.requestLocationOnce()
+        async let people: Void = refreshNearbyPeople()
+        async let messages: Void = refreshAllConversations()
+        async let catalog: Void = refreshSharedInterestCatalogAsync()
+        _ = await (people, messages, catalog)
+    }
+
+    private func refreshSharedInterestCatalogAsync() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            refreshSharedInterestCatalog {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func refreshNearbyPeople() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            guard hasLocationAccess else {
+                continuation.resume()
+                return
+            }
+            let location = locationService.currentLocation ?? currentUserProfile?.location
+            proximityService.fetchAllUsers(currentUserLocation: location) {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func refreshAllConversations() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            guard let deviceID = currentUserProfile?.deviceID else {
+                continuation.resume()
+                return
+            }
+            fetchAllMessagesForCurrentDevice(deviceID: deviceID) {
+                continuation.resume()
+            }
+        }
+    }
+
     // Simplified refresh - upload my location, get all users sorted by distance
     func refreshPublicGrid() {
         print("GridViewModel: Starting simple refresh - upload my location, get all users sorted by distance")
         if locksGridToFixtures { return }
+        guard hasLocationAccess else { return }
 
         guard let profile = currentUserProfile else {
             print("No current user profile for refresh")
@@ -41,7 +85,7 @@ extension GridViewModel {
                     switch result {
                     case .success(let updatedProfile):
                         print("Successfully uploaded my status to CloudKit")
-                        self.currentUserProfile = updatedProfile
+                        self.currentUserProfile = self.mergingSavedProfile(updatedProfile)
                         
                         // Get all users sorted by distance
                         self.proximityService.fetchAllUsers(currentUserLocation: updatedProfile.location)
@@ -103,6 +147,16 @@ extension GridViewModel {
             readReceipts: readReceipts
         )
     }
+
+    func incomingUnreadCount(excludingDeviceID: String? = nil) -> Int {
+        guard let currentDeviceID = currentUserProfile?.deviceID else { return 0 }
+        return MessageReadLogic.incomingUnreadCount(
+            currentDeviceID: currentDeviceID,
+            messages: messages,
+            readReceipts: readReceipts,
+            excludingSenderDeviceID: excludingDeviceID
+        )
+    }
     
     // NEW: Mark messages as read when opening a chat
     func markMessagesAsRead(from deviceID: String) {
@@ -114,6 +168,7 @@ extension GridViewModel {
                 messages[index].status = .sent
                 readReceipts.insert(messages[index].id)
             }
+            ReadReceiptStore.save(readReceipts)
             objectWillChange.send()
             return
         }
@@ -135,8 +190,8 @@ extension GridViewModel {
             }
         }
         
-        // Trigger UI update immediately
         objectWillChange.send()
+        ReadReceiptStore.save(readReceipts)
         
         // Persist the new receipts
         readReceiptService.saveReceipts(newReadReceipts)
@@ -165,7 +220,8 @@ extension GridViewModel {
                 completion()
                 return
             }
-            self.readReceipts = messageIDs
+            self.readReceipts.formUnion(messageIDs)
+            ReadReceiptStore.save(self.readReceipts)
             print("GridViewModel: loaded \(self.readReceipts.count) read receipts")
 
             // Update message statuses based on read receipts
@@ -298,6 +354,7 @@ extension GridViewModel {
         #if DEBUG
         print("GridViewModel: forceRefreshGrid blocked=\(blockedUsers.count) blockedMe=\(usersWhoBlockedMe.count)")
         #endif
+        guard hasLocationAccess else { return }
 
         if let currentLocation = locationService.currentLocation {
             proximityService.fetchAllUsers(currentUserLocation: currentLocation)
@@ -315,6 +372,7 @@ extension GridViewModel {
     }
     
     func checkAndAddNewSenderToGrid(senderDeviceID: String, senderUserID: String) {
+        guard hasLocationAccess else { return }
         if LocalLLMIdentity.isLLM(senderDeviceID) { return }
         if hasProfileOnAnyGrid(deviceID: senderDeviceID) { return }
         guard senderProfileFetchesInFlight.insert(senderDeviceID).inserted else { return }
@@ -355,7 +413,6 @@ extension GridViewModel {
     }
 
     func addProfileToGrid(_ profile: UserProfile) {
-        guard TestPeerIdentity.belongsOnRealUserGrid(profile, currentUser: currentUserProfile) else { return }
         guard profile.deviceID != currentUserProfile?.deviceID else { return }
         guard !hasProfileOnAnyGrid(deviceID: profile.deviceID) else { return }
         if allGridNodes.isEmpty {

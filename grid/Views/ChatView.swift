@@ -16,6 +16,7 @@ struct ChatView: View {
     @AppStorage("grid.chatPartnerPins") private var showPartnerPins = false
     @State private var fullScreenImage: FullScreenImageData? = nil
     @State private var reactingMessageID: String?
+    @State private var ignoreReactionScrollDismissUntil = Date.distantPast
 
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
@@ -126,12 +127,11 @@ struct ChatView: View {
                                         },
                                         isReactionPickerVisible: reactingMessageID == message.id,
                                         onToggleReactionPicker: {
-                                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                                                reactingMessageID = reactingMessageID == message.id ? nil : message.id
-                                            }
+                                            toggleReactionPicker(for: message.id)
                                         }
                                     )
                                     .id(message.id)
+                                    .zIndex(reactingMessageID == message.id ? 1 : 0)
                                     .environmentObject(viewModel)
                                 }
                             }
@@ -148,14 +148,14 @@ struct ChatView: View {
                     .onScrollGeometryChange(for: CGFloat.self) { geometry in
                         geometry.contentOffset.y
                     } action: { oldOffset, newOffset in
-                        if reactingMessageID != nil, abs(newOffset - oldOffset) > 1 {
-                            reactingMessageID = nil
-                        }
+                        dismissReactionPickerIfUserScrolled(from: oldOffset, to: newOffset)
                     }
                     .onChange(of: chatMessages.count) { _ in
+                        guard reactingMessageID == nil else { return }
                         pinToLatest(scrollViewProxy)
                     }
                     .onChange(of: latestMessageID) { _ in
+                        guard reactingMessageID == nil else { return }
                         pinToLatest(scrollViewProxy)
                     }
                     .onChange(of: recipientDeviceID) { _ in
@@ -221,7 +221,7 @@ struct ChatView: View {
     private static let bottomAnchorID = "chat-bottom"
 
     private func pinToLatest(_ scrollViewProxy: ScrollViewProxy) {
-        guard isPresented else { return }
+        guard isPresented, reactingMessageID == nil else { return }
         ChatOpenTrace.mark("scroll pin latest=\(latestMessageID ?? "none") count=\(chatMessages.count)")
         let target = latestMessageID ?? Self.bottomAnchorID
         var transaction = Transaction()
@@ -231,7 +231,7 @@ struct ChatView: View {
             scrollViewProxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
         }
         DispatchQueue.main.async {
-            guard isPresented else { return }
+            guard isPresented, reactingMessageID == nil else { return }
             var next = Transaction()
             next.disablesAnimations = true
             withTransaction(next) {
@@ -253,11 +253,26 @@ struct ChatView: View {
         }
     }
 
+    private func toggleReactionPicker(for messageID: String) {
+        ignoreReactionScrollDismissUntil = Date().addingTimeInterval(0.55)
+        if reactingMessageID == messageID {
+            reactingMessageID = nil
+        } else {
+            reactingMessageID = messageID
+        }
+    }
+
+    private func dismissReactionPickerIfUserScrolled(from oldOffset: CGFloat, to newOffset: CGFloat) {
+        guard reactingMessageID != nil else { return }
+        guard Date() >= ignoreReactionScrollDismissUntil else { return }
+        guard abs(newOffset - oldOffset) > 24 else { return }
+        reactingMessageID = nil
+    }
+
     private func sendMessage() {
         let trimmed = newMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, currentDeviceID != nil else { return }
         newMessageText = ""
         viewModel.sendMessageWithModeration(text: trimmed, to: recipientDeviceID)
-        isTextFieldFocused = true
     }
 }

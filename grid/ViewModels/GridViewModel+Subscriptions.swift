@@ -27,18 +27,19 @@ extension GridViewModel {
     }
     
     func setupLocationHandlers() {
-        // Listen for location updates
-        // REMOVED: We don't want automatic grid refresh on every location update
-        // locationService.$currentLocation
-        //     .sink { [weak self] location in
-        //         self?.handleLocationUpdate(location)
-        //     }
-        //     .store(in: &cancellables)
-        
-        // Listen for authorization status changes
         locationService.$authorizationStatus
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 self?.handleLocationAuthorizationChange(status)
+            }
+            .store(in: &cancellables)
+
+        locationService.$currentLocation
+            .compactMap { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] location in
+                guard let self, self.hasLocationAccess else { return }
+                self.handleLocationUpdate(location)
             }
             .store(in: &cancellables)
     }
@@ -95,12 +96,13 @@ extension GridViewModel {
         
         print("DEBUG: Profile after location update - lat: \(profile.latitude ?? 0), lon: \(profile.longitude ?? 0)")
         
-        // IMMEDIATELY share location to iCloud when we get it
         updateUserActivityAndLocation(profile)
-        
-        // Auto-refresh to get all users sorted by distance
-        autoRefreshGrid(with: location)
-        
+
+        if shouldRefreshGridOnNextLocation {
+            shouldRefreshGridOnNextLocation = false
+            proximityService.fetchAllUsers(currentUserLocation: location)
+        }
+
         print("Location updated and shared to iCloud: \(location.coordinate.latitude), \(location.coordinate.longitude)")
     }
     
@@ -116,6 +118,16 @@ extension GridViewModel {
             locationPermissionStatus = "Location permission granted (always)"
         @unknown default:
             locationPermissionStatus = "Unknown location permission status"
+        }
+
+        guard !locksGridToFixtures else { return }
+
+        needsLocationOnboarding = LocationOnboardingLogic.shouldShowWelcome(status: status)
+
+        if LocationOnboardingLogic.shouldShowNearbyPeople(status: status) {
+            refreshGridAfterLocationAccessGranted()
+        } else {
+            updateGridWithAllProfiles([])
         }
     }
 }

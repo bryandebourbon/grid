@@ -44,3 +44,41 @@ struct OverlayBackdrop: View {
         #endif
     }
 }
+
+extension View {
+    /// Left or right edge swipe, matching chat-thread back. Used to close the chats sheet.
+    func horizontalEdgeDismiss(enabled: Bool = true, onDismiss: @escaping () -> Void) -> some View {
+        overlay(alignment: .leading) {
+            if enabled {
+                HorizontalEdgeDismissStrip(isBackSwipe: { $0 > 70 }, onDismiss: onDismiss)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if enabled {
+                HorizontalEdgeDismissStrip(isBackSwipe: { $0 < -70 }, onDismiss: onDismiss)
+            }
+        }
+    }
+}
+
+private struct HorizontalEdgeDismissStrip: View {
+    let isBackSwipe: (CGFloat) -> Bool
+    let onDismiss: () -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 36)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 20)
+                    .onEnded { value in
+                        let isMostlyHorizontal = abs(value.translation.width) > abs(value.translation.height)
+                        if isMostlyHorizontal && isBackSwipe(value.translation.width) {
+                            onDismiss()
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
+    }
+}

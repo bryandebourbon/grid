@@ -71,7 +71,7 @@ struct GridInterestBrowseSection: View {
                 nameText = viewModel.currentUserProfile?.displayName ?? ""
             }
             .onChange(of: viewModel.currentUserProfile?.profileImage?.fileURL) { _ in
-                profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
+                profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage, force: true)
             }
             .onChange(of: viewModel.currentUserProfile?.bio) { newBio in
                 if !bioIsDirty {
@@ -476,6 +476,10 @@ struct GridInterestBrowseSection: View {
 
     private var peekInterests: some View {
         HStack(spacing: 6) {
+            peekCircleButton(systemImage: "square.grid.2x2", label: "All", isSelected: viewModel.peopleTab == .all) {
+                viewModel.peopleTab = .all
+            }
+
             ForEach(viewModel.interestPages) { interest in
                 Button {
                     viewModel.peopleTab = .interest(interest.rawValue)
@@ -483,12 +487,46 @@ struct GridInterestBrowseSection: View {
                     Text(interest.emoji)
                         .font(.body)
                         .frame(width: 32, height: 32)
-                        .background(Color.primary.opacity(0.08), in: Circle())
+                        .background(peekChipFill(isSelected: isInterestSelected(interest)), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(interest.rawValue)
+                .accessibilityAddTraits(isInterestSelected(interest) ? [.isSelected] : [])
+            }
+
+            if viewModel.canAddInterestPage {
+                peekCircleButton(systemImage: "plus", label: "Add interest", isSelected: false) {
+                    viewModel.showingInterestSearch = true
+                }
             }
         }
+    }
+
+    private func isInterestSelected(_ interest: Interest) -> Bool {
+        guard case .interest(let raw) = viewModel.peopleTab else { return false }
+        return raw.compare(interest.rawValue, options: .caseInsensitive) == .orderedSame
+    }
+
+    private func peekChipFill(isSelected: Bool) -> Color {
+        Color.primary.opacity(isSelected ? 0.18 : 0.08)
+    }
+
+    private func peekCircleButton(
+        systemImage: String,
+        label: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                .frame(width: 32, height: 32)
+                .background(peekChipFill(isSelected: isSelected), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private var profileAvatar: some View {

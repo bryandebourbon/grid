@@ -69,6 +69,12 @@ extension GridViewModel {
                 senderDeviceID: message.senderDeviceID,
                 senderUserID: message.senderUserID
             )
+            if message.timestamp > sessionStartedAt.addingTimeInterval(-5) {
+                considerNotificationPermission(for: .received(
+                    fromCurrentUser: false,
+                    isLLM: LocalLLMIdentity.isLLM(message.senderDeviceID)
+                ))
+            }
         }
     }
 
@@ -131,13 +137,24 @@ extension GridViewModel {
         )
     }
 
-    func getConversationList() -> [(deviceID: String, displayName: String, lastMessage: Message?, messageCount: Int)] {
-        guard let currentDeviceID = currentUserProfile?.deviceID else { return [] }
-        return MessageConversationLogic.conversationList(
-            currentDeviceID: currentDeviceID,
+    func getConversationList() -> [MessageConversationLogic.ConversationSummary] {
+        getMessagesHome().conversations
+    }
+
+    func getMessagesHome() -> (
+        pinned: [MessageConversationLogic.PinnedPerson],
+        conversations: [MessageConversationLogic.ConversationSummary]
+    ) {
+        guard let current = currentUserProfile else { return ([], []) }
+        return MessageConversationLogic.messagesHome(
+            currentDeviceID: current.deviceID,
+            currentUserID: current.userID,
             messages: messages,
+            readReceipts: readReceipts,
+            starredUserIDs: starredUsers,
+            profiles: knownProfiles(),
             displayNameLookup: { [weak self] otherDeviceID in
-                guard let self = self else {
+                guard let self else {
                     return ProfileDisplayNameLogic.chatTitle(
                         recipientDeviceID: otherDeviceID,
                         currentDeviceID: nil,
@@ -147,17 +164,70 @@ extension GridViewModel {
                 return self.displayName(forDeviceID: otherDeviceID)
             }
         )
-        .map { ($0.deviceID, $0.displayName, $0.lastMessage, $0.messageCount) }
+    }
+
+    func knownProfiles() -> [UserProfile] {
+        var seen = Set<String>()
+        var result: [UserProfile] = []
+        if let currentUserProfile {
+            result.append(currentUserProfile)
+            seen.insert(currentUserProfile.deviceID)
+        }
+        let grids = [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values)
+        for grid in grids {
+            for node in grid.flatMap({ $0 }) {
+                guard let profile = node.userProfile, seen.insert(profile.deviceID).inserted else { continue }
+                result.append(profile)
+            }
+        }
+        return result
+    }
+
+    func profile(forDeviceID deviceID: String) -> UserProfile? {
+        if deviceID == currentUserProfile?.deviceID {
+            return currentUserProfile
+        }
+        if LocalLLMIdentity.isLLM(deviceID) {
+            return LocalLLMIdentity.profile
+        }
+        let grids = [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values)
+        for grid in grids {
+            if let profile = ProfileDisplayNameLogic.profile(forDeviceID: deviceID, in: grid) {
+                return profile
+            }
+        }
+        return nil
+    }
+
+    func refreshCurrentUserPhotoOnGrid() {
+        updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+    }
+
+    func mergingSavedProfile(_ saved: UserProfile) -> UserProfile {
+        guard let local = currentUserProfile else { return saved }
+        var merged = saved
+        if ProfileImageRefreshLogic.shouldKeepLocalPhoto(
+            localURL: local.profileImage?.fileURL,
+            savedURL: saved.profileImage?.fileURL
+        ) {
+            merged.profileImage = local.profileImage
+        }
+        if merged.deviceName.isEmpty {
+            merged.deviceName = local.deviceName
+        }
+        return merged
     }
     
     func updateCurrentProfileImage(newPhotoData: Data?) {
-        guard currentUserProfile != nil else {
+        guard var profile = currentUserProfile else {
             print("Cannot update profile image, currentUserProfile is nil.")
             return
         }
         guard let photoData = newPhotoData else {
-            currentUserProfile?.profileImage = nil
+            profile.profileImage = nil
+            currentUserProfile = profile
             print("Profile image removed.")
+            refreshCurrentUserPhotoOnGrid()
             persistAndUpdateProfileAndGrid()
             return
         }
@@ -165,13 +235,14 @@ extension GridViewModel {
         let tempFileURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
         do {
             try photoData.write(to: tempFileURL)
-            let photoAsset = CKAsset(fileURL: tempFileURL)
-            currentUserProfile?.profileImage = photoAsset
+            profile.profileImage = CKAsset(fileURL: tempFileURL)
+            currentUserProfile = profile
             print("Profile image updated. Temp file: \(tempFileURL.path)")
+            refreshCurrentUserPhotoOnGrid()
             persistAndUpdateProfileAndGrid()
         } catch {
-            print("Error creating CKAsset for profile image: \\(error.localizedDescription)")
-             try? FileManager.default.removeItem(at: tempFileURL)
+            print("Error creating CKAsset for profile image: \(error.localizedDescription)")
+            try? FileManager.default.removeItem(at: tempFileURL)
         }
     }
     
@@ -203,8 +274,8 @@ extension GridViewModel {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let savedProfile):
-                    self.currentUserProfile = savedProfile
-                    self.placeCurrentUserOnGrid()
+                    self.currentUserProfile = self.mergingSavedProfile(savedProfile)
+                    self.refreshCurrentUserPhotoOnGrid()
                     print("User profile successfully updated in CloudKit and local grid refreshed.")
                     completion?(true)
                 case .failure(let error):

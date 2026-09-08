@@ -11,303 +11,6 @@ import UIKit
 extension GridViewModel {
     // MARK: - Messaging Methods
 
-    /// Writes real CloudKit text + image messages to this device and walks
-    /// save → fetch-by-ID → inbox → banner → query comparison.
-    func sendDebugCloudKitIncomingPing() {
-        runDebugIncomingExperience(.fullSuite)
-    }
-
-    func sendDebugIncomingTextBanner() {
-        runDebugIncomingExperience(.textBanner)
-    }
-
-    func sendDebugIncomingPhotoBanner() {
-        runDebugIncomingExperience(.photoBanner)
-    }
-
-    /// CloudKit save only. Lock the phone to wait for the real APNs banner.
-    func sendDebugIncomingPushThenLock() {
-        runDebugIncomingExperience(.textPushOnly)
-    }
-
-    /// Sends while that chat is open so the banner should be suppressed.
-    func sendDebugIncomingWhileInThatChat() {
-        runDebugIncomingExperience(.textWhileViewingSender)
-    }
-
-    private enum DebugIncomingExperience {
-        case fullSuite
-        case textBanner
-        case photoBanner
-        case textPushOnly
-        case textWhileViewingSender
-
-        var announceBanner: Bool {
-            switch self {
-            case .textPushOnly: return false
-            default: return true
-            }
-        }
-
-        var showReport: Bool {
-            self == .fullSuite
-        }
-    }
-
-    private func runDebugIncomingExperience(_ experience: DebugIncomingExperience) {
-        guard let me = currentUserProfile else {
-            presentUserFacingAlert("No profile loaded.")
-            return
-        }
-
-        SenderNameCache.store("Test Peer", for: TestPeerIdentity.debugSenderDeviceID)
-        if experience == .textWhileViewingSender {
-            selectChatPartner(partnerDeviceID: TestPeerIdentity.debugSenderDeviceID)
-        } else {
-            deselectChatPartner()
-        }
-
-        MessageDeliveryTrace.start("experience \(experience) → \(me.deviceID)")
-        MessageDeliveryTrace.log("peer=\(TestPeerIdentity.debugSenderDeviceID) announce=\(experience.announceBanner)")
-
-        let finish: (MessageDeliverySuiteReport) -> Void = { [weak self] report in
-            guard let self else { return }
-            if experience.showReport {
-                self.presentUserFacingAlert(report.summary)
-            } else if experience == .textPushOnly {
-                self.presentUserFacingAlert("Saved to CloudKit. Lock the phone now and watch for the Test Peer banner. Filter Xcode for [msg-test].")
-            }
-        }
-
-        switch experience {
-        case .photoBanner:
-            runDebugImagePing(to: me, report: MessageDeliverySuiteReport(), announceBanner: true, completion: finish)
-        case .fullSuite:
-            runDebugTextPing(to: me, report: MessageDeliverySuiteReport(), announceBanner: true) { [weak self] report in
-                guard let self else { return }
-                self.runDebugImagePing(to: me, report: report, announceBanner: true, completion: finish)
-            }
-        case .textBanner, .textPushOnly, .textWhileViewingSender:
-            runDebugTextPing(to: me, report: MessageDeliverySuiteReport(), announceBanner: experience.announceBanner, completion: finish)
-        }
-    }
-
-    private func runDebugTextPing(
-        to me: UserProfile,
-        report: MessageDeliverySuiteReport,
-        announceBanner: Bool = true,
-        completion: @escaping (MessageDeliverySuiteReport) -> Void
-    ) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        let plaintext = "Debug ping \(stamp)"
-        let built = EncryptedMessageBuilder.buildTextMessage(
-            text: plaintext,
-            sender: TestPeerIdentity.debugSenderProfile,
-            recipientDeviceID: me.deviceID,
-            recipient: me,
-            encryptionProfiles: encryptionProfiles
-        )
-        var report = report
-        report.add(
-            name: "text.encrypt",
-            ok: built.isEncrypted,
-            detail: built.isEncrypted ? "key=\(built.encryptionKeyID ?? "?")" : "plaintext fallback"
-        )
-
-        let saveStarted = Date()
-        messagingService.sendMessage(built) { [weak self] result in
-            guard let self else { return }
-            var report = report
-            switch result {
-            case .failure(let error):
-                report.add(
-                    name: "text.save",
-                    ok: false,
-                    detail: error.localizedDescription,
-                    milliseconds: Self.elapsedMS(since: saveStarted)
-                )
-                completion(report)
-            case .success(let saved):
-                report.add(
-                    name: "text.save",
-                    ok: true,
-                    detail: "id=\(saved.id.prefix(8))",
-                    milliseconds: Self.elapsedMS(since: saveStarted)
-                )
-                self.finishDebugPing(
-                    saved: saved,
-                    expectedKind: "text",
-                    me: me,
-                    announceBanner: announceBanner,
-                    report: report,
-                    completion: completion
-                )
-            }
-        }
-    }
-
-    private func runDebugImagePing(
-        to me: UserProfile,
-        report: MessageDeliverySuiteReport,
-        announceBanner: Bool = true,
-        completion: @escaping (MessageDeliverySuiteReport) -> Void
-    ) {
-        let imageData = MessageDeliveryTestImage.jpeg()
-        let built = EncryptedMessageBuilder.buildImageMessage(
-            imageData: imageData,
-            sender: TestPeerIdentity.debugSenderProfile,
-            recipientDeviceID: me.deviceID,
-            recipient: me,
-            encryptionProfiles: encryptionProfiles
-        )
-        var next = report
-        next.add(
-            name: "image.encrypt",
-            ok: built.message.encryptedImageData != nil,
-            detail: built.message.isEncrypted
-                ? "\(imageData.count)b key=\(built.message.encryptionKeyID ?? "?")"
-                : "unencrypted asset fallback"
-        )
-
-        let saveStarted = Date()
-        messagingService.sendMessage(built.message) { [weak self] result in
-            if let url = built.cleanupURL { try? FileManager.default.removeItem(at: url) }
-            guard let self else { return }
-            switch result {
-            case .failure(let error):
-                next.add(
-                    name: "image.save",
-                    ok: false,
-                    detail: error.localizedDescription,
-                    milliseconds: Self.elapsedMS(since: saveStarted)
-                )
-                completion(next)
-            case .success(let saved):
-                next.add(
-                    name: "image.save",
-                    ok: true,
-                    detail: "id=\(saved.id.prefix(8))",
-                    milliseconds: Self.elapsedMS(since: saveStarted)
-                )
-                self.finishDebugPing(
-                    saved: saved,
-                    expectedKind: "image",
-                    me: me,
-                    announceBanner: announceBanner,
-                    report: next,
-                    completion: completion
-                )
-            }
-        }
-    }
-
-    private func finishDebugPing(
-        saved: Message,
-        expectedKind: String,
-        me: UserProfile,
-        announceBanner: Bool,
-        report: MessageDeliverySuiteReport,
-        completion: @escaping (MessageDeliverySuiteReport) -> Void
-    ) {
-        let recordID = saved.recordID ?? CKRecord.ID(recordName: saved.id)
-        PendingMessageFetchStore.enqueue(saved.id)
-        let fetchStarted = Date()
-        messagingService.fetchMessage(
-            withRecordID: recordID,
-            currentDeviceID: me.deviceID,
-            announce: false
-        ) { [weak self] result in
-            guard let self else { return }
-            var report = report
-            switch result {
-            case .failure(let error):
-                report.add(
-                    name: "\(expectedKind).fetchByID",
-                    ok: false,
-                    detail: error.localizedDescription,
-                    milliseconds: Self.elapsedMS(since: fetchStarted)
-                )
-                completion(report)
-            case .success(let fetched):
-                report.add(
-                    name: "\(expectedKind).fetchByID",
-                    ok: true,
-                    detail: "encrypted=\(fetched.isEncrypted)",
-                    milliseconds: Self.elapsedMS(since: fetchStarted)
-                )
-                self.ingestIncomingMessage(fetched)
-                let inInbox = self.messages.contains { $0.id == fetched.id }
-                report.add(name: "\(expectedKind).inbox", ok: inInbox, detail: inInbox ? "present" : "missing")
-
-                if expectedKind == "image" {
-                    let bytes = self.decryptImageMessage(fetched)?.count ?? 0
-                    report.add(
-                        name: "image.decrypt",
-                        ok: bytes > 0,
-                        detail: bytes > 0 ? "\(bytes)b" : "Failed to decrypt image"
-                    )
-                }
-
-                let preview = MessageBannerLogic.previewText(
-                    message: fetched,
-                    decryptedText: MessageBannerNotifier.decryptedPreview(for: fetched)
-                )
-                let expectedPreview = expectedKind == "image"
-                    ? MessageBannerLogic.photoBody
-                    : preview
-                if announceBanner {
-                    MessageBannerNotifier.announce(fetched, currentDeviceID: me.deviceID)
-                    report.add(
-                        name: "\(expectedKind).banner",
-                        ok: expectedKind == "image" ? preview == MessageBannerLogic.photoBody : preview.isEmpty == false,
-                        detail: "\"\(expectedPreview)\""
-                    )
-                } else {
-                    report.add(name: "\(expectedKind).banner", ok: true, detail: "skipped; wait for APNs")
-                }
-
-                self.compareQueryAgainstFetch(savedID: fetched.id, me: me, kind: expectedKind, report: report, completion: completion)
-            }
-        }
-    }
-
-    private func compareQueryAgainstFetch(
-        savedID: String,
-        me: UserProfile,
-        kind: String,
-        report: MessageDeliverySuiteReport,
-        completion: @escaping (MessageDeliverySuiteReport) -> Void
-    ) {
-        let queryStarted = Date()
-        messagingService.fetchMessages(forDeviceID: me.deviceID) { [weak self] result in
-            guard let self else { return }
-            var report = report
-            switch result {
-            case .failure(let error):
-                report.add(
-                    name: "\(kind).query",
-                    ok: false,
-                    detail: error.localizedDescription,
-                    milliseconds: Self.elapsedMS(since: queryStarted)
-                )
-            case .success(let queried):
-                let queryHasIt = queried.contains { $0.id == savedID }
-                report.add(
-                    name: "\(kind).query",
-                    ok: true,
-                    detail: queryHasIt ? "query already sees it" : "query still stale; inbox kept fetch-by-ID",
-                    milliseconds: Self.elapsedMS(since: queryStarted)
-                )
-                self.applyIncomingMessages(queried)
-            }
-            completion(report)
-        }
-    }
-
-    private static func elapsedMS(since date: Date) -> Int {
-        Int(Date().timeIntervalSince(date) * 1000)
-    }
-
     func selectChatPartner(partnerDeviceID: String) {
         self.currentChatRecipientDeviceID = partnerDeviceID
         ForegroundChatState.partnerDeviceID = partnerDeviceID
@@ -370,6 +73,7 @@ extension GridViewModel {
         let temporaryID = optimisticMessage.id
         messages.append(optimisticMessage)
         messages.sort { $0.timestamp < $1.timestamp }
+        considerNotificationPermission(for: .sent(isLLM: false))
 
         messagingService.sendMessage(optimisticMessage) { [weak self] result in
             guard let self else { return }
@@ -447,6 +151,7 @@ extension GridViewModel {
 
     // NEW: Auto-refresh when location is obtained or app state changes
     func autoRefreshGrid(with location: CLLocation? = nil) {
+        guard hasLocationAccess else { return }
         print("Auto-refreshing grid with current location...")
         let locationToUse = location ?? locationService.currentLocation
         proximityService.fetchAllUsers(currentUserLocation: locationToUse)
@@ -454,25 +159,20 @@ extension GridViewModel {
 
     // NEW: Call this when grid appears (from GridView)
     func handleGridAppeared() {
-        print("Grid appeared - getting current location and refreshing...")
+        print("Grid appeared - refreshing if location is already allowed")
         if locksGridToFixtures { return }
+        guard hasLocationAccess else {
+            updateGridWithAllProfiles([])
+            return
+        }
 
-        // Ensure location services are active
-        locationService.requestLocationPermission()
-        
-        // Request location once for this grid refresh
         locationService.requestLocationOnce()
-        
-        // Wait a moment for location to be available, then refresh
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
-            
             if let currentLocation = self.locationService.currentLocation {
-                // Manually trigger location update and grid refresh
                 self.handleLocationUpdate(currentLocation)
             } else {
-                // No location yet, just refresh with existing data
-                print("No location available yet, refreshing with existing data")
                 self.autoRefreshGrid()
             }
         }
@@ -505,6 +205,7 @@ extension GridViewModel {
         let temporaryID = built.message.id
         messages.append(built.message)
         messages.sort { $0.timestamp < $1.timestamp }
+        considerNotificationPermission(for: .sent(isLLM: false))
 
         messagingService.sendMessage(built.message) { [weak self] result in
             guard let self else {
