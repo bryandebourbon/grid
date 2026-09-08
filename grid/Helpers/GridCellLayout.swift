@@ -54,8 +54,6 @@ enum GridCellLayout {
     static let portraitHeightToWidth: CGFloat = 1.6
     static let gutter: CGFloat = 8
     static let cornerRadius: CGFloat = 14
-    /// TEMP: 1.5× crop so current circle-framed photos look better in rounded rects. Delete later.
-    static let temporaryPhotoZoom: CGFloat = 1.5
 
     /// SwiftUI `aspectRatio` is width / height. Square and circle stay 1∶1.
     static func widthOverHeight(square: Bool) -> CGFloat {

@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Underline tabs for All / Favorites / custom groups, plus a trailing add button.
+/// Underline tabs for All / custom groups / interest pages, plus a trailing search button.
 struct GridPeopleTabBar: View {
     @Binding var selection: GridPeopleTab
     let groups: [PeopleGroup]
     var interestPages: [Interest] = []
     var canAddInterestPage = true
+    @Binding var showingInterestCapPopover: Bool
     var onSearchInterests: () -> Void
     var onDeleteInterest: (Interest) -> Void = { _ in }
 
@@ -16,37 +17,57 @@ struct GridPeopleTabBar: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(tabs, id: \.self) { tab in
-                        tabButton(for: tab)
-                            .id(tab)
-                    }
-
-                    if canAddInterestPage {
-                        Button(action: onSearchInterests) {
-                            accessoryLabel(systemImage: "magnifyingglass")
+        HStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(tabs, id: \.self) { tab in
+                            tabButton(for: tab)
+                                .id(tab)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Search interests")
-                        .id("tab.accessory.search")
                     }
+                    .padding(.trailing, 8)
                 }
+                .onAppear {
+                    scrollSelectedTab(intoView: proxy)
+                }
+                .onChange(of: selection) { _ in
+                    scrollSelectedTab(intoView: proxy)
+                }
+                .onChange(of: tabs) { _ in
+                    scrollSelectedTab(intoView: proxy)
+                }
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
             }
-            .padding(.top, 10)
-            .onAppear {
-                scrollSelectedTab(intoView: proxy)
-            }
-            .onChange(of: selection) { _ in
-                scrollSelectedTab(intoView: proxy)
-            }
-            .onChange(of: tabs) { _ in
-                scrollSelectedTab(intoView: proxy)
-            }
+
+            searchButton
         }
+        .padding(.top, 10)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("People filter")
+    }
+
+    private var searchButton: some View {
+        Button {
+            if canAddInterestPage {
+                onSearchInterests()
+            } else {
+                showingInterestCapPopover = true
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Search interests")
+        .accessibilityIdentifier("people.tab.search")
+        .popover(isPresented: $showingInterestCapPopover) {
+            interestCapPopover
+        }
     }
 
     private func scrollSelectedTab(intoView proxy: ScrollViewProxy) {
@@ -114,17 +135,26 @@ struct GridPeopleTabBar: View {
         return Interest(rawValue: raw)
     }
 
-    private func accessoryLabel(systemImage: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.subheadline.weight(.semibold))
+    private var interestCapPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Remove an interest to add a new interest")
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("You can keep three interest pages. Delete one from a tab, then tap search to add another.")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Rectangle()
-                .fill(Color.clear)
-                .frame(height: 2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("OK") {
+                    showingInterestCapPopover = false
+                }
+                .fontWeight(.semibold)
+            }
         }
-        .padding(.horizontal, 16)
-        .contentShape(Rectangle())
+        .padding(16)
+        .frame(minWidth: 260)
+        .presentationCompactAdaptation(.popover)
     }
 
     private func deletePopoverPresented(for tab: GridPeopleTab) -> Binding<Bool> {

@@ -75,7 +75,7 @@ struct ChatMessageComposer: View {
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(.white)
                             .frame(width: sendSize, height: sendSize)
-                            .background(Circle().fill(Color.green))
+                            .background(Circle().fill(Color.blue))
                     }
                     .accessibilityLabel("Send message")
                     .padding(sendInset)

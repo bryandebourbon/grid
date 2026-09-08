@@ -11,6 +11,7 @@ struct GridNodeView: View {
     let useSquarePhotos: Bool
     let storiesMode: Bool
     let showBioBubbles: Bool
+    var gridColumns: Int = 3
     let onChatTapped: (String) -> Void
     let onStoriesTapped: (UserProfile) -> Void
     @StateObject private var imageLoader = ImageLoader()
@@ -27,8 +28,6 @@ struct GridNodeView: View {
                     loadedImage
                         .resizable()
                         .scaledToFill()
-                        // TEMP: delete GridCellLayout.temporaryPhotoZoom when photos are recropped.
-                        .scaleEffect(GridCellLayout.temporaryPhotoZoom)
                 } else {
                     let isLocalLLM = node.userProfile.map { LocalLLMIdentity.isLLM($0.deviceID) } ?? false
                     Image(systemName: isLocalLLM ? "sparkles" : "person.fill")
@@ -69,7 +68,11 @@ struct GridNodeView: View {
                     isMe: isMe
                 ) {
                     VStack {
-                        BioStatusBubble(text: content.text, isPlaceholder: content.isPlaceholder)
+                        BioStatusBubble(
+                            text: content.text,
+                            isPlaceholder: content.isPlaceholder,
+                            fontSize: BioStatusBubbleLogic.fontSize(forGridColumns: gridColumns)
+                        )
                             .padding(.top, useCircularPhotos ? 12 : 6)
                             .padding(.horizontal, 6)
                         Spacer()

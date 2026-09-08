@@ -7,7 +7,8 @@ struct ProfilePinnedStoriesRow: View {
     @ObservedObject var viewModel: GridViewModel
     let userProfile: UserProfile
     var showsTitle = true
-    var photoShape: GridPhotoShape = .card
+    var showsAddSlots = true
+    var onSelectImage: ((Image) -> Void)? = nil
 
     @State private var album: Album?
     @State private var pickerItem: PhotosPickerItem?
@@ -20,7 +21,7 @@ struct ProfilePinnedStoriesRow: View {
     }
 
     private var slotAspect: CGFloat {
-        GridCellLayout.widthOverHeight(square: photoShape.usesSquareProportion)
+        GridCellLayout.widthOverHeight(square: false)
     }
 
     private let tileHeight: CGFloat = 88
@@ -28,6 +29,14 @@ struct ProfilePinnedStoriesRow: View {
 
     private var tileWidth: CGFloat {
         tileHeight * slotAspect
+    }
+
+    private var visibleSlotIndices: [Int] {
+        if showsAddSlots {
+            return Array(0..<Album.maxPhotos)
+        }
+        let filled = min(album?.photosCount ?? 0, Album.maxPhotos)
+        return Array(0..<filled)
     }
 
     var body: some View {
@@ -41,14 +50,16 @@ struct ProfilePinnedStoriesRow: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(0..<Album.maxPhotos, id: \.self) { index in
+                    ForEach(visibleSlotIndices, id: \.self) { index in
                         slot(at: index)
-                            .frame(height: tileHeight)
                     }
                 }
             }
-            .animation(.easeInOut(duration: 0.28), value: photoShape)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
+            .frame(height: tileHeight)
         }
+        .background(Color.clear)
         .task(id: userProfile.deviceID) {
             album = await viewModel.getAlbum(for: userProfile.deviceID)
         }
@@ -72,20 +83,24 @@ struct ProfilePinnedStoriesRow: View {
             index < album.pinnedPhotos.count ? album.pinnedPhotos[index] : nil
         }
 
-        if let metadata, let asset {
-            PinnedStoryThumbnail(
-                asset: asset,
-                fallbackAspect: slotAspect,
-                cornerRadius: albumCorner,
-                onRemove: isOwner ? { Task { await unpin(storyID: metadata.storyID) } } : nil
-            )
-        } else if isOwner {
-            PhotosPicker(selection: $pickerItem, matching: .images) {
+        Group {
+            if let metadata, let asset {
+                PinnedStoryThumbnail(
+                    asset: asset,
+                    height: tileHeight,
+                    fallbackAspect: slotAspect,
+                    cornerRadius: albumCorner,
+                    onRemove: showsAddSlots && isOwner ? { Task { await unpin(storyID: metadata.storyID) } } : nil,
+                    onSelect: onSelectImage
+                )
+            } else if showsAddSlots, isOwner {
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    emptySlot
+                }
+                .buttonStyle(.plain)
+            } else if showsAddSlots {
                 emptySlot
             }
-            .buttonStyle(.plain)
-        } else {
-            emptySlot
         }
     }
 
@@ -138,9 +153,11 @@ struct ProfilePinnedStoriesRow: View {
 
 private struct PinnedStoryThumbnail: View {
     let asset: CKAsset
-    var fallbackAspect: CGFloat = 1
+    let height: CGFloat
+    var fallbackAspect: CGFloat = GridCellLayout.widthOverHeight(square: false)
     var cornerRadius: CGFloat = 12
     var onRemove: (() -> Void)? = nil
+    var onSelect: ((Image) -> Void)? = nil
 
     @StateObject private var loader = ImageLoader()
 
@@ -151,13 +168,15 @@ private struct PinnedStoryThumbnail: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
+            Color.primary.opacity(0.06)
 
             if let image = loader.image {
                 image
                     .resizable()
                     .scaledToFit()
+                    .onTapGesture {
+                        onSelect?(image)
+                    }
             }
 
             if onRemove != nil {
@@ -165,9 +184,9 @@ private struct PinnedStoryThumbnail: View {
                     onRemove?()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 16, weight: .semibold))
                         .symbolRenderingMode(.palette)
-                        .foregroundStyle(Color.primary.opacity(0.7), Color.white.opacity(0.92))
+                        .foregroundStyle(.black, .white)
                 }
                 .buttonStyle(.plain)
                 .padding(4)
@@ -175,7 +194,9 @@ private struct PinnedStoryThumbnail: View {
             }
         }
         .aspectRatio(photoAspect, contentMode: .fit)
+        .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .onAppear { loader.loadImage(from: asset) }
         .onChange(of: asset.fileURL) { _ in
             loader.loadImage(from: asset)

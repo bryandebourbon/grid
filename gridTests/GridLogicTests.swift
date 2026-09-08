@@ -15,9 +15,14 @@ struct GridCellLayoutTests {
     }
 
     @Test func bioBubbleUsesStatusTextAndMePlaceholder() {
+        #expect(BioStatusBubbleLogic.fontSize(forGridColumns: 3) == 13)
+        #expect(BioStatusBubbleLogic.fontSize(forGridColumns: 4) == 11)
+        #expect(BioStatusBubbleLogic.fontSize(forGridColumns: 5) == 9)
+        #expect(BioStatusBubbleLogic.fontSize(forGridColumns: 2) == 15)
         #expect(BioStatusBubbleLogic.content(bio: "Hangover", isMe: false)?.text == "Hangover")
         #expect(BioStatusBubbleLogic.content(bio: "  ", isMe: false) == nil)
-        #expect(BioStatusBubbleLogic.content(bio: nil, isMe: true)?.isPlaceholder == true)
+        #expect(BioStatusBubbleLogic.content(bio: nil, isMe: true) == nil)
+        #expect(BioStatusBubbleLogic.content(bio: "  ", isMe: true) == nil)
         #expect(BioStatusBubbleLogic.content(bio: "Out", isMe: true)?.isPlaceholder == false)
     }
 
@@ -301,8 +306,8 @@ struct InterestVenueQueryTests {
 
 struct GridPeopleTabPagingTests {
 
-    @Test func swipeLeftFromAllOpensFavorites() {
-        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -120, velocity: -200, width: 390, current: .all) == .favorites)
+    @Test func swipeLeftFromAllStaysOnAllWithoutOtherTabs() {
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -120, velocity: -200, width: 390, current: .all) == .all)
     }
 
     @Test func swipeRightFromFavoritesOpensAll() {
@@ -322,26 +327,25 @@ struct GridPeopleTabPagingTests {
     @Test func orderedTabsIncludeCustomGroups() {
         let group = PeopleGroup(name: "Gym")
         let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [group])
-        #expect(tabs == [.all, .favorites, .custom(group.id)])
+        #expect(tabs == [.all, .custom(group.id)])
     }
 
     @Test func swipeMovesThroughCustomGroups() {
         let group = PeopleGroup(name: "Gym")
         let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [group])
-        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -80, current: .favorites, tabs: tabs) == .custom(group.id))
-        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: 80, current: .custom(group.id), tabs: tabs) == .favorites)
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: -80, current: .all, tabs: tabs) == .custom(group.id))
+        #expect(GridPeopleTabPaging.tabAfterSwipe(translation: 80, current: .custom(group.id), tabs: tabs) == .all)
     }
 
     @Test func orderedTabsAppendInterestPages() {
         let tabs = GridPeopleTabPaging.orderedTabs(customGroups: [], interestPages: [.coffee])
-        #expect(tabs == [.all, .favorites, .interest(Interest.coffee.rawValue)])
+        #expect(tabs == [.all, .interest(Interest.coffee.rawValue)])
     }
 
     @Test func swipePastLastTabOpensInterestSearch() {
-        let tabs: [GridPeopleTab] = [.all, .favorites]
-        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: -80, current: .favorites, tabs: tabs))
-        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: -80, current: .all, tabs: tabs) == false)
-        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: 80, current: .favorites, tabs: tabs) == false)
+        let tabs: [GridPeopleTab] = [.all]
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: -80, current: .all, tabs: tabs))
+        #expect(GridPeopleTabPaging.shouldOpenInterestSearch(translation: 80, current: .all, tabs: tabs) == false)
     }
 
     @Test func swipePastInterestPageOpensSearch() {
@@ -365,6 +369,31 @@ struct GridPeopleTabPagingTests {
             current: .interest(Interest.coffee.rawValue),
             tabs: tabs
         ) == .interest(Interest.coffee.rawValue))
+    }
+
+    @Test func swipePastLastTabAtCapPromptsRemoveInterest() {
+        let tabs = GridPeopleTabPaging.orderedTabs(
+            customGroups: [],
+            interestPages: [.coffee, .music, .hiking]
+        )
+        #expect(GridPeopleTabPaging.shouldPromptRemoveInterestToAdd(
+            translation: -80,
+            current: .interest(Interest.hiking.rawValue),
+            tabs: tabs,
+            canAddInterestPage: false
+        ))
+        #expect(GridPeopleTabPaging.shouldPromptRemoveInterestToAdd(
+            translation: -80,
+            current: .interest(Interest.hiking.rawValue),
+            tabs: tabs,
+            canAddInterestPage: true
+        ) == false)
+        #expect(GridPeopleTabPaging.shouldPromptRemoveInterestToAdd(
+            translation: 80,
+            current: .interest(Interest.hiking.rawValue),
+            tabs: tabs,
+            canAddInterestPage: false
+        ) == false)
     }
 }
 

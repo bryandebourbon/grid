@@ -1,6 +1,5 @@
 import SwiftUI
 import Photos
-import CloudKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -22,6 +21,8 @@ struct ChatRecentPhotoStrip: View {
             }
         }
         .frame(height: tileSize + 12)
+        .scrollContentBackground(.hidden)
+        .background(Color.clear)
         .task {
             await library.prepare()
         }
@@ -49,6 +50,10 @@ struct ChatRecentPhotoStrip: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+        .scrollContentBackground(.hidden)
+        .modifier(HiddenScrollEdgeEffect())
+        .background(Color.clear)
+        .background(ClearScrollViewChrome())
     }
 
     private var permissionRow: some View {
@@ -65,81 +70,6 @@ struct ChatRecentPhotoStrip: View {
             .font(.caption.weight(.semibold))
         }
         .padding(.horizontal, 16)
-    }
-}
-
-struct ChatPartnerPinnedPhotoStrip: View {
-    @ObservedObject var viewModel: GridViewModel
-    let deviceID: String
-    let onSelect: (Image) -> Void
-
-    @State private var album: Album?
-
-    private let tileHeight: CGFloat = 80
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<Album.maxPhotos, id: \.self) { index in
-                slot(at: index)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(height: tileHeight + 12)
-        .onAppear { album = viewModel.userAlbums[deviceID] }
-        .onChange(of: viewModel.userAlbums[deviceID]?.photosCount) { _ in
-            album = viewModel.userAlbums[deviceID]
-        }
-        .task(id: deviceID) {
-            if let cached = viewModel.userAlbums[deviceID] {
-                album = cached
-                return
-            }
-            album = await viewModel.getAlbum(for: deviceID)
-        }
-    }
-
-    @ViewBuilder
-    private func slot(at index: Int) -> some View {
-        let asset = album.flatMap { album in
-            index < album.pinnedPhotos.count ? album.pinnedPhotos[index] : nil
-        }
-        ChatPartnerPinTile(asset: asset, onSelect: onSelect)
-            .frame(maxWidth: .infinity)
-            .frame(height: tileHeight)
-    }
-}
-
-private struct ChatPartnerPinTile: View {
-    let asset: CKAsset?
-    let onSelect: (Image) -> Void
-    @StateObject private var loader = ImageLoader()
-
-    var body: some View {
-        Button {
-            if let image = loader.image {
-                onSelect(image)
-            }
-        } label: {
-            Group {
-                if let image = loader.image {
-                    image.resizable().scaledToFill()
-                } else {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(0.06))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(asset == nil || loader.image == nil)
-        .task(id: asset?.fileURL?.path) {
-            if let asset {
-                loader.loadImage(from: asset)
-            }
-        }
     }
 }
 
@@ -220,3 +150,55 @@ private struct RecentPhotoTile: View {
         }
     }
 }
+
+private struct HiddenScrollEdgeEffect: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.scrollEdgeEffectHidden(true, for: .all)
+        } else {
+            content
+        }
+    }
+}
+
+#if canImport(UIKit)
+private struct ClearScrollViewChrome: UIViewRepresentable {
+    func makeUIView(context: Context) -> ProbeView {
+        ProbeView()
+    }
+
+    func updateUIView(_ uiView: ProbeView, context: Context) {
+        uiView.clearAncestors()
+    }
+
+    final class ProbeView: UIView {
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isOpaque = false
+            backgroundColor = .clear
+            isUserInteractionEnabled = false
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            clearAncestors()
+        }
+
+        func clearAncestors() {
+            var view: UIView? = superview
+            while let current = view {
+                if let scroll = current as? UIScrollView {
+                    scroll.backgroundColor = .clear
+                    scroll.isOpaque = false
+                    break
+                }
+                view = current.superview
+            }
+        }
+    }
+}
+#endif
