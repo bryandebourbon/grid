@@ -18,9 +18,14 @@ final class RecentPhotoLibrary: ObservableObject {
     private var didPrepare = false
 
     func prepare() async {
-        if !didPrepare {
+        if didPrepare { return }
+        didPrepare = true
+
+        let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if current == .notDetermined {
             authorization = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-            didPrepare = true
+        } else {
+            authorization = current
         }
         guard authorization == .authorized || authorization == .limited else {
             assets = []
@@ -31,6 +36,7 @@ final class RecentPhotoLibrary: ObservableObject {
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         options.includeHiddenAssets = false
+        options.fetchLimit = pageSize
         fetchResult = PHAsset.fetchAssets(with: .image, options: options)
         nextIndex = 0
         assets = []

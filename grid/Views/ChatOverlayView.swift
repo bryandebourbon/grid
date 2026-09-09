@@ -103,7 +103,7 @@ struct ChatOverlayView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground).ignoresSafeArea())
-        .horizontalEdgeDismiss(onDismiss: onClose)
+        .horizontalEdgeDismiss(bottomInset: 64, onDismiss: onClose)
         .onAppear {
             if isPresented { activateVisibleThread() }
         }

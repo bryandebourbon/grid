@@ -10,6 +10,7 @@ struct ChatMessageComposer: View {
     var isPhotoStripOpen: Bool = false
     var isPartnerPinsOpen: Bool = false
     var showsPartnerPinsButton: Bool = false
+    var keyboardActivation: Int = 0
     let onBack: () -> Void
     let onAdd: () -> Void
     var onTogglePartnerPins: () -> Void = {}
@@ -19,20 +20,17 @@ struct ChatMessageComposer: View {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private let pillHeight: CGFloat = 36
-
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            Button {
-                onBack()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color(.systemGray2)))
-            }
-            .accessibilityLabel("Back")
+            ComposerHitButton(
+                systemName: "chevron.left",
+                tint: .white,
+                background: UIColor.systemGray2,
+                circular: true,
+                accessibilityLabel: "Back",
+                action: onBack
+            )
+            .frame(width: 44, height: 44)
 
             if showsPartnerPinsButton {
                 Button(action: onTogglePartnerPins) {
@@ -47,32 +45,34 @@ struct ChatMessageComposer: View {
             }
 
             HStack(spacing: 4) {
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(.primary)
-                        .rotationEffect(.degrees(isPhotoStripOpen ? 45 : 0))
-                        .frame(width: 28, height: 28)
-                }
-                .accessibilityLabel(isPhotoStripOpen ? "Close photos" : "Add photo")
-                .padding(.leading, 4)
+                ComposerHitButton(
+                    systemName: "plus",
+                    rotation: isPhotoStripOpen ? .pi / 4 : 0,
+                    tint: .label,
+                    accessibilityLabel: isPhotoStripOpen ? "Close photos" : "Add photo",
+                    action: onAdd
+                )
+                .frame(width: 44, height: 44)
+                .padding(.leading, 2)
+                .zIndex(1)
 
                 ChatSendField(
                     text: $text,
                     isFocused: $isFocused,
+                    activation: keyboardActivation,
                     onSend: {
                         if canSend { onSend() }
                     }
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .focused($isFocused)
+                .frame(maxWidth: .infinity)
                 .padding(.trailing, 8)
             }
-            .frame(maxWidth: .infinity, minHeight: pillHeight, maxHeight: pillHeight)
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
             .background(
                 Capsule()
                     .strokeBorder(Color(.systemGray4), lineWidth: 1)
             )
-            .clipShape(Capsule())
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -80,10 +80,90 @@ struct ChatMessageComposer: View {
 }
 
 #if canImport(UIKit)
+private struct ComposerHitButton: UIViewRepresentable {
+    var systemName: String
+    var rotation: CGFloat = 0
+    var tint: UIColor
+    var background: UIColor? = nil
+    var circular: Bool = false
+    var accessibilityLabel: String
+    var action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> ComposerHitHost {
+        let host = ComposerHitHost()
+        host.button.addTarget(context.coordinator, action: #selector(Coordinator.tapped), for: .touchUpInside)
+        apply(to: host)
+        return host
+    }
+
+    func updateUIView(_ host: ComposerHitHost, context: Context) {
+        context.coordinator.action = action
+        apply(to: host)
+    }
+
+    private func apply(to host: ComposerHitHost) {
+        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        host.button.setImage(UIImage(systemName: systemName, withConfiguration: config), for: .normal)
+        host.button.tintColor = tint
+        host.button.backgroundColor = background
+        host.button.layer.cornerRadius = circular ? 22 : 0
+        host.button.clipsToBounds = circular
+        host.button.transform = CGAffineTransform(rotationAngle: rotation)
+        host.button.accessibilityLabel = accessibilityLabel
+        host.button.isAccessibilityElement = true
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func tapped() {
+            action()
+        }
+    }
+}
+
+final class ComposerHitHost: UIView {
+    let button = UIButton(type: .custom)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: 44, height: 44)
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.contains(point)
+    }
+}
+
 /// Send does not resign. Opening a chat sets focus so the keyboard comes up.
 private struct ChatSendField: UIViewRepresentable {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
+    var activation: Int
     var onSend: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -110,12 +190,19 @@ private struct ChatSendField: UIViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.isFocused = isFocused
         context.coordinator.onSend = onSend
-        field.wantsFocus = isFocused.wrappedValue
+        let justActivated = field.activation != activation
+        if justActivated {
+            field.activation = activation
+            field.wantsFocus = true
+        }
+        if isFocused.wrappedValue {
+            field.wantsFocus = true
+        }
         if field.text != text {
             field.text = text
         }
-        if isFocused.wrappedValue, field.window != nil, !field.isFirstResponder {
-            field.becomeFirstResponder()
+        if justActivated {
+            field.claimFocus(from: "update")
         }
     }
 
@@ -155,12 +242,16 @@ private struct ChatSendField: UIViewRepresentable {
 
 private final class ExpandingChatField: UITextField {
     var wantsFocus = false
+    var activation = 0
+
+    func claimFocus(from source: String) {
+        guard wantsFocus, window != nil, !isFirstResponder else { return }
+        becomeFirstResponder()
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil, wantsFocus, !isFirstResponder {
-            becomeFirstResponder()
-        }
+        claimFocus(from: "window")
     }
 
     override var intrinsicContentSize: CGSize {

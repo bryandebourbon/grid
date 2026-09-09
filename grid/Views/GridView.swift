@@ -17,6 +17,7 @@ struct GridView: View {
     @State private var storiesMode = GridUITestHarness.isActive
         ? false
         : UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false
+    @AppStorage("grid.chatAlbumButton") private var showChatAlbumButton = false
     @State private var showBioBubbles = {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "grid.bioBubbles") == nil {
@@ -77,12 +78,14 @@ struct GridView: View {
     }
 
     private func hideChat() {
-        ChatOpenTrace.start("hide")
-        isChatComposerFocused = false
-        viewModel.hideChatOverlay()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            viewModel.hideChatOverlay()
+            isChatComposerFocused = false
+        }
         zoom.resetPressState()
         KeyboardPresentation.dismissKeyboard()
-        ChatOpenTrace.mark("hideChat showing grid view")
     }
 
     private func warmChatIfNeeded() {
@@ -430,6 +433,10 @@ struct GridView: View {
                 Label("Status bubbles", systemImage: "text.bubble")
             }
 
+            Toggle(isOn: $showChatAlbumButton) {
+                Label("Album button in chat", systemImage: "photo.on.rectangle")
+            }
+
             Button {
                 withAnimation(.easeInOut(duration: 0.3)) {
                     viewModel.showsLocalLLM.toggle()
@@ -649,6 +656,7 @@ struct GridView: View {
                 )
                 .id(recipientID)
                 .zIndex(20)
+                .transaction { $0.disablesAnimations = true }
                 .accessibilityIdentifier("chat.overlay")
             }
         }

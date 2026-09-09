@@ -21,7 +21,6 @@ struct ChatRecentPhotoStrip: View {
             }
         }
         .frame(height: tileSize + 12)
-        .scrollContentBackground(.hidden)
         .background(Color.clear)
         .task {
             await library.prepare()
@@ -30,7 +29,7 @@ struct ChatRecentPhotoStrip: View {
 
     private var photoScroll: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 8) {
+            HStack(spacing: 8) {
                 ForEach(Array(library.assets.enumerated()), id: \.element.localIdentifier) { index, asset in
                     RecentPhotoTile(asset: asset, size: tileSize) { data in
                         onSelect(data)
@@ -50,10 +49,6 @@ struct ChatRecentPhotoStrip: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
-        .scrollContentBackground(.hidden)
-        .modifier(HiddenScrollEdgeEffect())
-        .background(Color.clear)
-        .background(ClearScrollViewChrome())
     }
 
     private var permissionRow: some View {
@@ -107,6 +102,7 @@ private struct RecentPhotoTile: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .disabled(isSending)
+        .accessibilityIdentifier("grid.album.item")
         .accessibilityLabel("Recent photo")
         .task {
             thumbnail = await loadThumbnail()
@@ -150,55 +146,3 @@ private struct RecentPhotoTile: View {
         }
     }
 }
-
-private struct HiddenScrollEdgeEffect: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.scrollEdgeEffectHidden(true, for: .all)
-        } else {
-            content
-        }
-    }
-}
-
-#if canImport(UIKit)
-private struct ClearScrollViewChrome: UIViewRepresentable {
-    func makeUIView(context: Context) -> ProbeView {
-        ProbeView()
-    }
-
-    func updateUIView(_ uiView: ProbeView, context: Context) {
-        uiView.clearAncestors()
-    }
-
-    final class ProbeView: UIView {
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            isOpaque = false
-            backgroundColor = .clear
-            isUserInteractionEnabled = false
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            clearAncestors()
-        }
-
-        func clearAncestors() {
-            var view: UIView? = superview
-            while let current = view {
-                if let scroll = current as? UIScrollView {
-                    scroll.backgroundColor = .clear
-                    scroll.isOpaque = false
-                    break
-                }
-                view = current.superview
-            }
-        }
-    }
-}
-#endif

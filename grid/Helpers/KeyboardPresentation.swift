@@ -34,7 +34,6 @@ enum KeyboardPresentation {
     }
 
     static func dismissKeyboard() {
-        ChatOpenTrace.mark("keyboard.dismiss")
         #if os(iOS)
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         #endif
@@ -48,7 +47,6 @@ enum KeyboardPresentation {
         let overlap = max(0, UIScreen.main.bounds.height - frame.minY)
         if overlap > 80 {
             overlapHeight = overlap
-            ChatOpenTrace.mark("keyboard.height \(Int(overlap))")
         }
     }
     #endif

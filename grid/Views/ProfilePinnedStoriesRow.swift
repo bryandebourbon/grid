@@ -48,18 +48,15 @@ struct ProfilePinnedStoriesRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(visibleSlotIndices, id: \.self) { index in
-                        slot(at: index)
-                    }
+            ViewThatFits(in: .horizontal) {
+                photoRow
+                ScrollView(.horizontal, showsIndicators: false) {
+                    photoRow
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
             .frame(height: tileHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color.clear)
         .task(id: userProfile.deviceID) {
             album = await viewModel.getAlbum(for: userProfile.deviceID)
         }
@@ -71,6 +68,14 @@ struct ProfilePinnedStoriesRow: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(pinAlertMessage)
+        }
+    }
+
+    private var photoRow: some View {
+        HStack(spacing: 8) {
+            ForEach(visibleSlotIndices, id: \.self) { index in
+                slot(at: index)
+            }
         }
     }
 
@@ -197,6 +202,7 @@ private struct PinnedStoryThumbnail: View {
         .frame(height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .accessibilityIdentifier("grid.album.item")
         .onAppear { loader.loadImage(from: asset) }
         .onChange(of: asset.fileURL) { _ in
             loader.loadImage(from: asset)

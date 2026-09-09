@@ -78,12 +78,16 @@ struct ConversationsListView: View {
                     isPresented: true,
                     isComposerFocused: $isComposerFocused,
                     onClose: {
-                        isComposerFocused = false
-                        KeyboardPresentation.dismissKeyboard()
-                        viewModel.deselectChatPartner()
-                        if path.isEmpty == false {
-                            path.removeLast()
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            isComposerFocused = false
+                            viewModel.deselectChatPartner()
+                            if path.isEmpty == false {
+                                path.removeLast()
+                            }
                         }
+                        KeyboardPresentation.dismissKeyboard()
                     }
                 )
                 .navigationBarBackButtonHidden(true)

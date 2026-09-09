@@ -13,10 +13,12 @@ struct ChatView: View {
     @State private var newMessageText: String = ""
     @StateObject private var photoLibrary = RecentPhotoLibrary()
     @State private var showPhotoStrip = false
-    @AppStorage("grid.chatPartnerPins") private var showPartnerPins = false
+    @AppStorage("grid.chatPartnerPins") private var showPartnerPins = true
+    @AppStorage("grid.chatAlbumButton") private var showChatAlbumButton = false
     @State private var fullScreenImage: FullScreenImageData? = nil
     @State private var reactingMessageID: String?
     @State private var ignoreReactionScrollDismissUntil = Date.distantPast
+    @State private var keyboardActivation = 0
 
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
@@ -35,13 +37,12 @@ struct ChatView: View {
     }
 
     private var showsPartnerPinStrip: Bool {
-        showPartnerPins && hasPartnerPins && partnerProfile != nil
+        hasPartnerPins && partnerProfile != nil && (showChatAlbumButton ? showPartnerPins : true)
     }
 
     private var accessoryHeight: CGFloat {
         var height: CGFloat = 0
         if showsPartnerPinStrip { height += 100 }
-        if showPhotoStrip { height += 92 }
         return height
     }
 
@@ -81,7 +82,6 @@ struct ChatView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.clear)
     }
 
     private var partnerProfile: UserProfile? {
@@ -178,12 +178,11 @@ struct ChatView: View {
                 isFocused: $isTextFieldFocused,
                 isPhotoStripOpen: showPhotoStrip,
                 isPartnerPinsOpen: showPartnerPins,
-                showsPartnerPinsButton: hasPartnerPins,
+                showsPartnerPinsButton: showChatAlbumButton && hasPartnerPins,
+                keyboardActivation: keyboardActivation,
                 onBack: onBack,
                 onAdd: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showPhotoStrip.toggle()
-                    }
+                    showPhotoStrip.toggle()
                 },
                 onTogglePartnerPins: {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -196,21 +195,18 @@ struct ChatView: View {
         }
         .task(id: recipientDeviceID) {
             _ = await viewModel.getAlbum(for: recipientDeviceID)
+            await photoLibrary.prepare()
         }
         .onAppear {
-            ChatOpenTrace.mark("ChatView.onAppear presented=\(isPresented) focused=\(isTextFieldFocused) messages=\(chatMessages.count)")
             if isPresented {
                 isTextFieldFocused = true
+                keyboardActivation += 1
             }
         }
         .onChange(of: isPresented) { presented in
-            ChatOpenTrace.mark("ChatView.isPresented=\(presented)")
             if !presented {
                 showPhotoStrip = false
             }
-        }
-        .onChange(of: isTextFieldFocused) { focused in
-            ChatOpenTrace.mark("ChatView.focus=\(focused) presented=\(isPresented)")
         }
         .overlay {
             if let imageData = fullScreenImage {
@@ -235,7 +231,6 @@ struct ChatView: View {
 
     private func pinToLatest(_ scrollViewProxy: ScrollViewProxy) {
         guard isPresented, reactingMessageID == nil else { return }
-        ChatOpenTrace.mark("scroll pin latest=\(latestMessageID ?? "none") count=\(chatMessages.count)")
         let target = latestMessageID ?? Self.bottomAnchorID
         var transaction = Transaction()
         transaction.disablesAnimations = true
