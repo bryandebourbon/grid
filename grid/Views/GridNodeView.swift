@@ -97,6 +97,9 @@ struct GridNodeView: View {
                                 .foregroundColor(.yellow)
                                 .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 18, height: 18))
                         }
+                        if profile.isDiscoverable == false, viewModel.seesHiddenPeople {
+                            HiddenUserBadge(size: 18)
+                        }
                         
                         Spacer()
                         
@@ -225,5 +228,18 @@ struct GridNodeView: View {
                 hasUnviewedStories = unviewed
             }
         }
+    }
+}
+
+struct HiddenUserBadge: View {
+    var size: CGFloat = 18
+
+    var body: some View {
+        Image(systemName: "eye.slash.fill")
+            .font(.system(size: size * 0.52, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(Color.black.opacity(0.62), in: Circle())
+            .accessibilityLabel("Hidden")
     }
 }

@@ -44,6 +44,7 @@ class GridViewModel: ObservableObject {
         }
         return defaults.bool(forKey: "grid.showSelfOnGrid")
     }()
+    @Published var showsHiddenPeople = false
 
     @Published var peopleTab: GridPeopleTab = .all {
         didSet {
@@ -410,6 +411,37 @@ class GridViewModel: ObservableObject {
         objectWillChange.send()
     }
 
+    var isDiscoverable: Bool {
+        currentUserProfile?.isDiscoverable == true
+    }
+
+    var seesHiddenPeople: Bool {
+        showsHiddenPeople
+    }
+
+    func setShowsHiddenPeople(_ visible: Bool) {
+        guard showsHiddenPeople != visible else { return }
+        showsHiddenPeople = visible
+        updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+        objectWillChange.send()
+    }
+
+    func setDiscoverable(_ visible: Bool) {
+        guard var profile = currentUserProfile else { return }
+        guard profile.isDiscoverable != visible else { return }
+        profile.isDiscoverable = visible
+        if visible {
+            profile.markAsActive()
+        }
+        currentUserProfile = profile
+        persistAndUpdateProfileAndGrid()
+        objectWillChange.send()
+    }
+
+    func toggleDiscoverable() {
+        setDiscoverable(!isDiscoverable)
+    }
+
     func interestPinIDs(for raw: String) -> [String] {
         if let exact = interestPins[raw] { return exact }
         if let match = interestPins.first(where: {
@@ -506,7 +538,8 @@ class GridViewModel: ObservableObject {
             ? source
             : gridPopulationService.profilesToDisplay(
                 nearby: source,
-                currentUser: currentUserProfile
+                currentUser: currentUserProfile,
+                includeHidden: seesHiddenPeople
             )
         var all = GridPlacementLogic.makeEmptyGrid()
         var favorites = GridPlacementLogic.makeEmptyGrid()

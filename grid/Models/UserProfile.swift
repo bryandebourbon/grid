@@ -19,6 +19,8 @@ struct UserProfile: Codable {
     var longitude: Double?          // Current longitude
     var lastActiveTimestamp: Date   // Last time the user was active (app open)
     var isCurrentlyActive: Bool     // Whether the user currently has the app open
+    /// When false, other people do not see this profile on the grid or map.
+    var isDiscoverable: Bool
     
     // Computed property for CLLocation
     var location: CLLocation? {
@@ -34,6 +36,7 @@ struct UserProfile: Codable {
         case longitude  
         case lastActiveTimestamp
         case isCurrentlyActive
+        case isDiscoverable
         case bio
         case interests
     }
@@ -48,7 +51,8 @@ struct UserProfile: Codable {
          latitude: Double? = nil,
          longitude: Double? = nil,
          lastActiveTimestamp: Date = Date(),
-         isCurrentlyActive: Bool = true) {
+         isCurrentlyActive: Bool = true,
+         isDiscoverable: Bool = false) {
         self.userID = userID
         self.deviceID = deviceID
         self.deviceName = deviceName
@@ -60,6 +64,7 @@ struct UserProfile: Codable {
         self.longitude = longitude
         self.lastActiveTimestamp = lastActiveTimestamp
         self.isCurrentlyActive = isCurrentlyActive
+        self.isDiscoverable = isDiscoverable
     }
     
     // Custom init for Decodable
@@ -77,6 +82,9 @@ struct UserProfile: Codable {
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
         self.isCurrentlyActive = try container.decodeIfPresent(Bool.self, forKey: .isCurrentlyActive) ?? false
+        self.isDiscoverable = VisibilityOnboardingLogic.discoverable(
+            stored: try container.decodeIfPresent(Bool.self, forKey: .isDiscoverable)
+        )
     }
 
     // Custom encode for Encodable
@@ -89,6 +97,7 @@ struct UserProfile: Codable {
         try container.encodeIfPresent(self.longitude, forKey: .longitude)
         try container.encode(self.lastActiveTimestamp, forKey: .lastActiveTimestamp)
         try container.encode(self.isCurrentlyActive, forKey: .isCurrentlyActive)
+        try container.encode(self.isDiscoverable, forKey: .isDiscoverable)
         try container.encodeIfPresent(self.bio, forKey: .bio)
         try container.encode(self.interests, forKey: .interests)
     }
@@ -116,6 +125,9 @@ struct UserProfile: Codable {
         self.longitude = record["longitude"] as? Double
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
         self.isCurrentlyActive = record["isCurrentlyActive"] as? Bool ?? false
+        self.isDiscoverable = VisibilityOnboardingLogic.discoverable(
+            stored: Self.optionalBool(from: record["isDiscoverable"])
+        )
         self.bio = record["bio"] as? String
         
         // Handle interests from CloudKit - stored as array of strings
@@ -142,6 +154,7 @@ struct UserProfile: Codable {
         }
         record["lastActiveTimestamp"] = self.lastActiveTimestamp
         record["isCurrentlyActive"] = self.isCurrentlyActive
+        record["isDiscoverable"] = self.isDiscoverable
         record["bio"] = self.bio
         
         // Store interests as array of strings for CloudKit compatibility
@@ -161,6 +174,15 @@ struct UserProfile: Codable {
         return toPublicCKRecord() // Same structure for now
     }
     
+    private static func optionalBool(from value: Any?) -> Bool? {
+        if value == nil { return nil }
+        if let flag = value as? Bool { return flag }
+        if let number = value as? NSNumber { return number.boolValue }
+        if let number = value as? Int64 { return number != 0 }
+        if let number = value as? Int { return number != 0 }
+        return nil
+    }
+
     var displayName: String {
         ProfileDisplayNameLogic.personName(from: deviceName) ?? ProfileDisplayNameLogic.fallbackTitle
     }

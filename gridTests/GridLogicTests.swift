@@ -103,9 +103,37 @@ struct GridColumnZoomLogicTests {
         #expect(!GridPresenceLogic.shouldShowPeer(harnessMe))
         #expect(!GridPresenceLogic.isLeftoverDebugPeer(person))
         #expect(GridPresenceLogic.shouldShowPeer(person))
+        #expect(!GridPresenceLogic.isVisibleToOthers(person))
+        var visible = UserProfile(userID: "v", deviceID: "vis", deviceName: "Vis", isDiscoverable: true)
+        #expect(GridPresenceLogic.isVisibleToOthers(visible))
+        visible.isDiscoverable = false
+        #expect(!GridPresenceLogic.isVisibleToOthers(visible))
         #expect(InitialsAvatarLogic.initials(from: "Test Peer") == "TP")
         #expect(InitialsAvatarLogic.initials(from: "Bryan") == "BR")
         #expect(InitialsAvatarLogic.initials(from: "Josh B") == "JB")
+    }
+
+    @Test func accountsAreHiddenWhenDiscoverableIsUnset() {
+        #expect(VisibilityOnboardingLogic.discoverable(stored: nil) == false)
+        #expect(VisibilityOnboardingLogic.discoverable(stored: true) == true)
+        #expect(VisibilityOnboardingLogic.discoverable(stored: false) == false)
+        #expect(VisibilityOnboardingLogic.shouldAskOnLogin(isNewAccount: false) == false)
+        #expect(VisibilityOnboardingLogic.shouldAskOnLogin(isNewAccount: true) == false)
+    }
+
+    @Test func passwordUnlocksHiddenPeople() {
+        #expect(GridMasterViewerLogic.acceptsPassword("+ywoyd!"))
+        #expect(GridMasterViewerLogic.acceptsPassword(" +ywoyd! ") == false)
+        #expect(GridMasterViewerLogic.acceptsPassword("wrong") == false)
+        #expect(GridMasterViewerLogic.acceptsPassword(nil) == false)
+        #expect(GridMasterViewerLogic.unlocking(enabled: true, password: "+ywoyd!"))
+        #expect(GridMasterViewerLogic.unlocking(enabled: true, password: "wrong") == false)
+        #expect(GridMasterViewerLogic.unlocking(enabled: false, password: "+ywoyd!") == false)
+        let hidden = UserProfile(userID: "h", deviceID: "hid", deviceName: "Hid")
+        #expect(GridMasterViewerLogic.shouldShowPeer(hidden, includeHidden: false) == false)
+        #expect(GridMasterViewerLogic.shouldShowPeer(hidden, includeHidden: true))
+        #expect(GridMasterViewerLogic.showsHiddenBadge(isDiscoverable: false, unlocked: true))
+        #expect(GridMasterViewerLogic.showsHiddenBadge(isDiscoverable: false, unlocked: false) == false)
     }
 
     @Test func occupiedRowsHidesEmptySlots() {
@@ -549,7 +577,8 @@ struct GridPeopleMapLogicTests {
             deviceID: "c",
             deviceName: "Casey",
             latitude: 37.77,
-            longitude: -122.41
+            longitude: -122.41,
+            isDiscoverable: true
         )
         let pins = GridPeopleMapLogic.pins(
             from: [[node(missing), node(zero), node(llm), node(placed)]],
@@ -573,14 +602,51 @@ struct GridPeopleMapLogicTests {
     }
 
     @Test func regionFitsMultiplePins() {
-        let a = UserProfile(userID: "a", deviceID: "a", deviceName: "A", latitude: 37.77, longitude: -122.42)
-        let b = UserProfile(userID: "b", deviceID: "b", deviceName: "B", latitude: 37.78, longitude: -122.41)
+        let a = UserProfile(userID: "a", deviceID: "a", deviceName: "A", latitude: 37.77, longitude: -122.42, isDiscoverable: true)
+        let b = UserProfile(userID: "b", deviceID: "b", deviceName: "B", latitude: 37.78, longitude: -122.41, isDiscoverable: true)
         let pins = GridPeopleMapLogic.pins(from: [[node(a), node(b)]], currentDeviceID: nil)
         let region = GridPeopleMapLogic.region(for: pins)
         #expect(region != nil)
         #expect(region!.center.latitude > 37.77)
         #expect(region!.center.latitude < 37.78)
         #expect(region!.span.latitudeDelta >= 0.012)
+    }
+
+    @Test func skipsHiddenPeersButKeepsCurrentUser() {
+        let me = UserProfile(
+            userID: "u",
+            deviceID: "me",
+            deviceName: "Me",
+            latitude: 37.7,
+            longitude: -122.4
+        )
+        let hidden = UserProfile(
+            userID: "h",
+            deviceID: "hid",
+            deviceName: "Hid",
+            latitude: 37.71,
+            longitude: -122.41
+        )
+        let shown = UserProfile(
+            userID: "s",
+            deviceID: "show",
+            deviceName: "Show",
+            latitude: 37.72,
+            longitude: -122.42,
+            isDiscoverable: true
+        )
+        let pins = GridPeopleMapLogic.pins(
+            from: [[node(me), node(hidden), node(shown)]],
+            currentDeviceID: "me"
+        )
+        #expect(Set(pins.map(\.deviceID)) == ["me", "show"])
+        let adminPins = GridPeopleMapLogic.pins(
+            from: [[node(me), node(hidden), node(shown)]],
+            currentDeviceID: "me",
+            includeHidden: true
+        )
+        #expect(Set(adminPins.map(\.deviceID)) == ["me", "hid", "show"])
+        #expect(adminPins.first { $0.deviceID == "hid" }?.isHidden == true)
     }
 }
 
@@ -1245,6 +1311,21 @@ struct GridPopulationServiceTests {
         #expect(placed.map(\.deviceID) == ["s1"])
         #expect(!placed.contains { $0.deviceID == LocalLLMIdentity.deviceID })
         #expect(!placed.contains { $0.deviceID == "o1" })
+    }
+
+    @Test func profilesToDisplayOmitsHiddenPeers() {
+        let service = GridPopulationService()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone")
+        let hidden = UserProfile(userID: "h", deviceID: "hid", deviceName: "Hid")
+        let shown = UserProfile(userID: "s", deviceID: "show", deviceName: "Show", isDiscoverable: true)
+        let visible = service.profilesToDisplay(nearby: [me, hidden, shown], currentUser: me)
+        #expect(visible.map(\.deviceID) == ["me", "show"])
+        let admin = service.profilesToDisplay(
+            nearby: [me, hidden, shown],
+            currentUser: me,
+            includeHidden: true
+        )
+        #expect(admin.map(\.deviceID) == ["me", "hid", "show"])
     }
 }
 

@@ -95,7 +95,9 @@ struct ContentView: View {
                         }
                     ))
                 } else {
-                    AnyView(GridView(viewModel: gridViewModel, signOutAction: signOut, deleteAccountAction: deleteAccount))
+                    AnyView(
+                        GridView(viewModel: gridViewModel, signOutAction: signOut, deleteAccountAction: deleteAccount)
+                    )
                 }
             } else {
                 AnyView(loadingScreen("Initializing..."))
@@ -155,7 +157,8 @@ struct ContentView: View {
         let profile = UserProfile(
             userID: userID,
             deviceID: deviceID,
-            deviceName: name
+            deviceName: name,
+            isDiscoverable: false
         )
         userProfile = profile
         showAskDisplayName = false
@@ -197,7 +200,8 @@ struct ContentView: View {
             "latitude",
             "longitude",
             "lastActiveTimestamp",
-            "isCurrentlyActive"
+            "isCurrentlyActive",
+            "isDiscoverable"
         ]
         fetchOperation.fetchRecordsCompletionBlock = { recordsByRecordID, error in
             DispatchQueue.main.async {
@@ -285,6 +289,7 @@ struct ContentView: View {
         appleUserID = nil
         userProfile = nil
         gridViewModel.currentUserProfile = nil
+        gridViewModel.setShowsHiddenPeople(false)
         showSignInView = true
         showAskDisplayName = false
         isLoadingProfile = false

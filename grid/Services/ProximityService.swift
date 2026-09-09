@@ -58,7 +58,7 @@ class ProximityService: ObservableObject {
                 
                 let fetched = records?.compactMap { UserProfile(record: $0) } ?? []
                 let leftover = fetched.filter(GridPresenceLogic.isLeftoverDebugPeer)
-                let allProfiles = fetched.filter { !GridPresenceLogic.isLeftoverDebugPeer($0) }
+                let allProfiles = fetched.filter(GridPresenceLogic.shouldShowPeer)
                 print("ProximityService: Successfully parsed \(allProfiles.count) UserProfile objects from \(records?.count ?? 0) CloudKit records")
                 self.deleteLeftoverDebugPeers(leftover)
                 

@@ -9,6 +9,7 @@ enum GridPeopleMapLogic {
         let latitude: Double
         let longitude: Double
         let isCurrentUser: Bool
+        let isHidden: Bool
 
         var id: String { deviceID }
 
@@ -23,11 +24,19 @@ enum GridPeopleMapLogic {
         return latitude != 0 || longitude != 0
     }
 
-    static func pins(from nodes: [[GridNode]], currentDeviceID: String?) -> [Pin] {
-        pins(fromProfiles: nodes.flatMap { $0 }.compactMap(\.userProfile), currentDeviceID: currentDeviceID)
+    static func pins(from nodes: [[GridNode]], currentDeviceID: String?, includeHidden: Bool = false) -> [Pin] {
+        pins(
+            fromProfiles: nodes.flatMap { $0 }.compactMap(\.userProfile),
+            currentDeviceID: currentDeviceID,
+            includeHidden: includeHidden
+        )
     }
 
-    static func pins(fromProfiles profiles: [UserProfile], currentDeviceID: String?) -> [Pin] {
+    static func pins(
+        fromProfiles profiles: [UserProfile],
+        currentDeviceID: String?,
+        includeHidden: Bool = false
+    ) -> [Pin] {
         var seen = Set<String>()
         var pins: [Pin] = []
         for profile in profiles {
@@ -35,13 +44,18 @@ enum GridPeopleMapLogic {
             let deviceID = PersonIdentity.id(forDeviceID: profile.deviceID)
             guard deviceID.isEmpty == false, seen.insert(deviceID).inserted else { continue }
             let isCurrentUser = deviceID == currentDeviceID
+            if isCurrentUser == false
+                && GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: includeHidden) == false {
+                continue
+            }
             pins.append(
                 Pin(
                     deviceID: deviceID,
                     name: isCurrentUser ? "Me" : profile.displayName,
                     latitude: profile.latitude ?? 0,
                     longitude: profile.longitude ?? 0,
-                    isCurrentUser: isCurrentUser
+                    isCurrentUser: isCurrentUser,
+                    isHidden: profile.isDiscoverable == false
                 )
             )
         }

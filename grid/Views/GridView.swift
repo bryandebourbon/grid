@@ -49,6 +49,9 @@ struct GridView: View {
     var deleteAccountAction: () -> Void
 
     @State private var showingDeleteConfirmation = false
+    @State private var showingMasterPassword = false
+    @State private var showingWrongMasterPassword = false
+    @State private var masterPassword = ""
     private static let aboveDrawerControlsHeight: CGFloat = 52
 
     private var gridScrollBottomInset: CGFloat {
@@ -63,6 +66,32 @@ struct GridView: View {
                 UserDefaults.standard.set(newValue, forKey: "grid.bioBubbles")
             }
         )
+    }
+
+    private var showHiddenPeopleBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.showsHiddenPeople },
+            set: { newValue in
+                if newValue {
+                    masterPassword = ""
+                    DispatchQueue.main.async {
+                        showingMasterPassword = true
+                    }
+                } else {
+                    viewModel.setShowsHiddenPeople(false)
+                }
+            }
+        )
+    }
+
+    private func unlockHiddenPeopleIfPasswordMatches() {
+        let password = masterPassword
+        masterPassword = ""
+        if GridMasterViewerLogic.unlocking(enabled: true, password: password) {
+            viewModel.setShowsHiddenPeople(true)
+        } else {
+            showingWrongMasterPassword = true
+        }
     }
 
     private var showSelfOnGridBinding: Binding<Bool> {
@@ -354,6 +383,10 @@ struct GridView: View {
 
             Divider()
 
+            Toggle(isOn: showHiddenPeopleBinding) {
+                Label("See hidden people", systemImage: "eye.slash")
+            }
+
             Toggle(isOn: showSelfOnGridBinding) {
                 Label("Show me on the grid", systemImage: "person.crop.square")
             }
@@ -463,6 +496,22 @@ struct GridView: View {
         .accessibilityLabel(homePane == .map ? "Show grid" : "Map")
         .accessibilityAddTraits(homePane == .map ? [.isSelected] : [])
         .accessibilityIdentifier("grid.map")
+    }
+
+    private var visibilityButton: some View {
+        Button {
+            viewModel.toggleDiscoverable()
+        } label: {
+            paneCircleLabel(
+                systemImage: viewModel.isDiscoverable ? "eye.fill" : "eye.slash",
+                isActive: viewModel.isDiscoverable == false
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(viewModel.isDiscoverable ? "Visible to everyone" : "Hidden from everyone")
+        .accessibilityValue(viewModel.isDiscoverable ? "Visible" : "Hidden")
+        .accessibilityAddTraits(viewModel.isDiscoverable ? [] : [.isSelected])
+        .accessibilityIdentifier("grid.visibility")
     }
 
     private var uiTestHarnessBar: some View {
@@ -642,6 +691,7 @@ struct GridView: View {
                         HStack {
                             conversationsButton
                             peopleMapButton
+                            visibilityButton
                             Spacer()
                             if homePane == .people {
                                 zoomControls
@@ -725,6 +775,18 @@ struct GridView: View {
             }
             .sheet(isPresented: $showingBackgroundPhotoPicker) {
                 BackgroundPhotoPickerView(selectedItem: $selectedBackgroundPhotoItem, backgroundImage: $backgroundImage)
+            }
+            .alert("See hidden people", isPresented: $showingMasterPassword) {
+                SecureField("Password", text: $masterPassword)
+                Button("Unlock") { unlockHiddenPeopleIfPasswordMatches() }
+                Button("Cancel", role: .cancel) { masterPassword = "" }
+            } message: {
+                Text("Enter the password to show everyone, including hidden people.")
+            }
+            .alert("Wrong password", isPresented: $showingWrongMasterPassword) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("That password didn’t unlock hidden people.")
             }
             .alert("Log Out?", isPresented: $showingSignOutConfirmation) {
                 Button("Log Out", role: .destructive) { signOutAction() }

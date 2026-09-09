@@ -220,6 +220,7 @@ extension GridViewModel {
         if merged.deviceName.isEmpty {
             merged.deviceName = local.deviceName
         }
+        merged.isDiscoverable = local.isDiscoverable
         return merged
     }
     

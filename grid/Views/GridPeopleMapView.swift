@@ -10,11 +10,15 @@ struct GridPeopleMapView: View {
     private var pins: [GridPeopleMapLogic.Pin] {
         let me = viewModel.currentUserProfile
         let tabProfiles = viewModel.nodes(for: viewModel.peopleTab).flatMap { $0 }.compactMap(\.userProfile)
-        let nearby = viewModel.proximityService.activeNearbyProfiles
+        let nearby = viewModel.proximityService.activeNearbyProfiles.filter { profile in
+            profile.deviceID == me?.deviceID
+                || GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: viewModel.seesHiddenPeople)
+        }
         let profiles = tabProfiles.isEmpty ? nearby : tabProfiles
         return GridPeopleMapLogic.pins(
             fromProfiles: profiles + [me].compactMap { $0 },
-            currentDeviceID: me?.deviceID
+            currentDeviceID: me?.deviceID,
+            includeHidden: viewModel.seesHiddenPeople
         )
     }
 
@@ -43,7 +47,8 @@ struct GridPeopleMapView: View {
                                 name: pin.name,
                                 deviceID: pin.deviceID,
                                 profileImage: profile(for: pin)?.profileImage,
-                                isCurrentUser: pin.isCurrentUser
+                                isCurrentUser: pin.isCurrentUser,
+                                isHidden: pin.isHidden
                             )
                         }
                         .buttonStyle(.plain)
@@ -103,6 +108,7 @@ private struct MapPersonPin: View {
     let deviceID: String
     let profileImage: CKAsset?
     let isCurrentUser: Bool
+    var isHidden: Bool = false
     @StateObject private var imageLoader = ImageLoader()
 
     var body: some View {
@@ -113,6 +119,12 @@ private struct MapPersonPin: View {
                 .overlay {
                     Circle()
                         .stroke(.white, lineWidth: isCurrentUser ? 3 : 2)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if isHidden {
+                        HiddenUserBadge(size: 14)
+                            .offset(x: 2, y: 2)
+                    }
                 }
                 .shadow(color: .black.opacity(0.28), radius: 3, y: 1)
 

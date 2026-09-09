@@ -16,12 +16,16 @@ struct GridDisplayState {
 @MainActor
 final class GridPopulationService {
 
-    func profilesToDisplay(nearby: [UserProfile], currentUser: UserProfile? = nil) -> [UserProfile] {
+    func profilesToDisplay(
+        nearby: [UserProfile],
+        currentUser: UserProfile? = nil,
+        includeHidden: Bool = false
+    ) -> [UserProfile] {
         nearby.filter { profile in
             if let currentUser, profile.deviceID == currentUser.deviceID {
                 return true
             }
-            return GridPresenceLogic.shouldShowPeer(profile)
+            return GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: includeHidden)
         }
     }
 
