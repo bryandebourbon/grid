@@ -104,6 +104,44 @@ enum InterestPageStore {
     }
 }
 
+enum HiddenConversationStore {
+    static func defaultsKey(userID: String) -> String {
+        "grid.hiddenConversations.\(userID)"
+    }
+
+    static func load(userID: String, defaults: UserDefaults = .standard) -> [String: Date] {
+        guard let stored = defaults.dictionary(forKey: defaultsKey(userID: userID)) as? [String: Double] else {
+            return [:]
+        }
+        return stored.mapValues { Date(timeIntervalSince1970: $0) }
+    }
+
+    static func save(_ hiddenAt: [String: Date], userID: String, defaults: UserDefaults = .standard) {
+        let stored = hiddenAt.mapValues { $0.timeIntervalSince1970 }
+        defaults.set(stored, forKey: defaultsKey(userID: userID))
+    }
+}
+
+enum CategoryPinStore {
+    static func defaultsKey(userID: String) -> String {
+        "grid.interestPins.\(userID)"
+    }
+
+    static func load(userID: String, defaults: UserDefaults = .standard) -> [String: [String]] {
+        guard let data = defaults.data(forKey: defaultsKey(userID: userID)),
+              let pins = try? JSONDecoder().decode([String: [String]].self, from: data) else {
+            return [:]
+        }
+        return pins
+    }
+
+    static func save(_ pins: [String: [String]], userID: String, defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(pins) {
+            defaults.set(data, forKey: defaultsKey(userID: userID))
+        }
+    }
+}
+
 enum GridPeopleTabPaging {
     static func orderedTabs(
         customGroups: [PeopleGroup],

@@ -313,6 +313,99 @@ struct MessageConversationLogicTests {
         #expect(home.conversations.isEmpty)
     }
 
+    @Test func drawerFilterHidesOtherChatsAndUsesCategoryPins() {
+        let coffee = UserProfile(
+            userID: "u-coffee",
+            deviceID: "coffee",
+            deviceName: "Cafe",
+            interests: [.coffee]
+        )
+        let music = UserProfile(
+            userID: "u-music",
+            deviceID: "music",
+            deviceName: "Tunes",
+            interests: [.music]
+        )
+        let home = MessageConversationLogic.messagesHome(
+            currentDeviceID: "me",
+            currentUserID: "u-me",
+            messages: [
+                message(id: "1", from: "coffee", to: "me", text: "latte", at: Date(timeIntervalSince1970: 100)),
+                message(id: "2", from: "music", to: "me", text: "song", at: Date(timeIntervalSince1970: 200)),
+            ],
+            starredUserIDs: ["u-music"],
+            profiles: [coffee, music],
+            displayNameLookup: { $0 == "coffee" ? "Cafe" : "Tunes" },
+            filter: MessageConversationLogic.HomeFilter(
+                visibleUserIDs: ["u-coffee"],
+                pinnedUserIDs: ["u-coffee"]
+            )
+        )
+        #expect(home.pinned.map(\.deviceID) == ["coffee"])
+        #expect(home.conversations.isEmpty)
+    }
+
+    @Test func hiddenThreadStaysGoneUntilANewerMessage() {
+        let hiddenAt = Date(timeIntervalSince1970: 150)
+        let home = MessageConversationLogic.messagesHome(
+            currentDeviceID: "me",
+            currentUserID: "u-me",
+            messages: [
+                message(id: "1", from: "bob", to: "me", text: "old", at: Date(timeIntervalSince1970: 100)),
+            ],
+            starredUserIDs: [],
+            profiles: [UserProfile(userID: "u-bob", deviceID: "bob", deviceName: "Bob")],
+            displayNameLookup: { _ in "Bob" },
+            filter: MessageConversationLogic.HomeFilter(
+                pinnedUserIDs: [],
+                hiddenAt: ["bob": hiddenAt]
+            )
+        )
+        #expect(home.conversations.isEmpty)
+
+        let reopened = MessageConversationLogic.messagesHome(
+            currentDeviceID: "me",
+            currentUserID: "u-me",
+            messages: [
+                message(id: "1", from: "bob", to: "me", text: "old", at: Date(timeIntervalSince1970: 100)),
+                message(id: "2", from: "bob", to: "me", text: "new", at: Date(timeIntervalSince1970: 200)),
+            ],
+            starredUserIDs: [],
+            profiles: [UserProfile(userID: "u-bob", deviceID: "bob", deviceName: "Bob")],
+            displayNameLookup: { _ in "Bob" },
+            filter: MessageConversationLogic.HomeFilter(
+                pinnedUserIDs: [],
+                hiddenAt: ["bob": hiddenAt]
+            )
+        )
+        #expect(reopened.conversations.map(\.deviceID) == ["bob"])
+    }
+
+    @Test func pinRowCapsAtThreeEvenIfMoreAreStarred() {
+        let profiles = (1...4).map { index in
+            UserProfile(userID: "u-\(index)", deviceID: "d-\(index)", deviceName: "P\(index)")
+        }
+        let home = MessageConversationLogic.messagesHome(
+            currentDeviceID: "me",
+            currentUserID: "u-me",
+            messages: [],
+            starredUserIDs: Set(profiles.map(\.userID)),
+            profiles: profiles,
+            displayNameLookup: { $0 },
+            filter: MessageConversationLogic.HomeFilter(
+                pinnedUserIDs: Set(profiles.map(\.userID))
+            )
+        )
+        #expect(home.pinned.count == 3)
+    }
+
+    @Test func favoritePinLogicBlocksAFourthPin() {
+        #expect(FavoritePinLogic.toggling("d", in: ["a", "b", "c"]) == nil)
+        #expect(FavoritePinLogic.toggling("b", in: ["a", "b", "c"]) == ["a", "c"])
+        #expect(FavoritePinLogic.toggling("a", in: Set(["a", "b"])) == Set(["b"]))
+        #expect(FavoritePinLogic.toggling("c", in: Set(["a", "b"])) == Set(["a", "b", "c"]))
+    }
+
     @Test func listTimestampUsesYesterday() {
         let now = Date()
         let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
@@ -442,16 +535,52 @@ struct NearbyInterestRankingTests {
     }
 }
 
-struct InterestVenueQueryTests {
-    @Test func lgbtqSearchesGayBars() {
-        #expect(InterestVenueQuery.searchTerm(for: .gay) == "gay bars")
-        #expect(InterestVenueQuery.rowTitle(for: .gay) == "Gay bars nearby")
-        #expect(InterestVenueQuery.searchTerm(for: .lgbtq) == "gay bars")
-        #expect(InterestVenueQuery.rowTitle(for: .lgbtq) == "Gay bars nearby")
-        #expect(InterestVenueQuery.searchTerm(for: .comedy, kind: .events) == InterestVenueQuery.searchTerm(for: .comedy, kind: .places))
-        #expect(InterestVenueQuery.rowTitle(for: .comedy, kind: .events) == "Comedy events nearby")
-        #expect(InterestVenueQuery.searchTerm(for: .comedy, kind: .venues) == "Comedy venues")
-        #expect(InterestVenueQuery.rowTitle(for: .comedy, kind: .venues) == "Comedy venues nearby")
+struct GridPeopleMapLogicTests {
+    private func node(_ profile: UserProfile?, x: Int = 0, y: Int = 0) -> GridNode {
+        GridNode(x: x, y: y, userProfile: profile)
+    }
+
+    @Test func skipsMissingZeroAndLocalLLM() {
+        let missing = UserProfile(userID: "a", deviceID: "a", deviceName: "Ada")
+        let zero = UserProfile(userID: "b", deviceID: "b", deviceName: "Bea", latitude: 0, longitude: 0)
+        let llm = LocalLLMIdentity.profile
+        let placed = UserProfile(
+            userID: "c",
+            deviceID: "c",
+            deviceName: "Casey",
+            latitude: 37.77,
+            longitude: -122.41
+        )
+        let pins = GridPeopleMapLogic.pins(
+            from: [[node(missing), node(zero), node(llm), node(placed)]],
+            currentDeviceID: "me"
+        )
+        #expect(pins.map(\.deviceID) == ["c"])
+        #expect(pins.first?.name == "Casey")
+    }
+
+    @Test func labelsCurrentUserAsMe() {
+        let me = UserProfile(
+            userID: "u",
+            deviceID: "me",
+            deviceName: "Bryan",
+            latitude: 37.7,
+            longitude: -122.4
+        )
+        let pins = GridPeopleMapLogic.pins(from: [[node(me)]], currentDeviceID: "me")
+        #expect(pins.first?.name == "Me")
+        #expect(pins.first?.isCurrentUser == true)
+    }
+
+    @Test func regionFitsMultiplePins() {
+        let a = UserProfile(userID: "a", deviceID: "a", deviceName: "A", latitude: 37.77, longitude: -122.42)
+        let b = UserProfile(userID: "b", deviceID: "b", deviceName: "B", latitude: 37.78, longitude: -122.41)
+        let pins = GridPeopleMapLogic.pins(from: [[node(a), node(b)]], currentDeviceID: nil)
+        let region = GridPeopleMapLogic.region(for: pins)
+        #expect(region != nil)
+        #expect(region!.center.latitude > 37.77)
+        #expect(region!.center.latitude < 37.78)
+        #expect(region!.span.latitudeDelta >= 0.012)
     }
 }
 

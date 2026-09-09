@@ -7,7 +7,13 @@ import UIKit
 
 struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
-    @State private var showingConversationsList = false  // NEW: For conversations list
+    private enum HomePane {
+        case people
+        case map
+        case messages
+    }
+
+    @State private var homePane: HomePane = .people
     @State private var isProfileDrawerExpanded = false
     @State private var showingInterestCapPopover = false
     @FocusState private var isChatComposerFocused: Bool
@@ -71,10 +77,8 @@ struct GridView: View {
     }
 
     private func openChat(with deviceID: String) {
-        ChatOpenTrace.mark("open \(deviceID.prefix(8))")
         viewModel.openChatOverlay(with: deviceID)
         isChatComposerFocused = true
-        ChatOpenTrace.mark("openChat presented focus requested")
     }
 
     private func hideChat() {
@@ -223,7 +227,6 @@ struct GridView: View {
             tabs: viewModel.orderedPeopleTabs,
             canAddInterestPage: viewModel.canAddInterestPage
         ) {
-            PeopleTabSwipeTrace.log("decision swipe -> interest cap popover")
             showingInterestCapPopover = true
             return
         }
@@ -233,7 +236,6 @@ struct GridView: View {
             tabs: viewModel.orderedPeopleTabs,
             canAddInterestPage: viewModel.canAddInterestPage
         ) {
-            PeopleTabSwipeTrace.log("decision swipe -> interest search")
             openInterestSearch()
             return
         }
@@ -261,11 +263,7 @@ struct GridView: View {
     }
 
     private func movePeopleTab(to tab: GridPeopleTab) {
-        if viewModel.peopleTab == tab {
-            PeopleTabSwipeTrace.log("move skipped already=\(tab.rawValue)")
-            return
-        }
-        PeopleTabSwipeTrace.log("move \(viewModel.peopleTab.rawValue) -> \(tab.rawValue)")
+        guard viewModel.peopleTab != tab else { return }
         withAnimation(.easeInOut(duration: 0.22)) {
             viewModel.peopleTab = tab
         }
@@ -273,25 +271,30 @@ struct GridView: View {
 
     private var conversationsButton: some View {
         Button {
-            showingConversationsList = true
+            toggleHomePane(.messages)
         } label: {
-            mapsCircleButtonLabel(systemImage: "bubble.left.and.bubble.right.fill")
-                .overlay(alignment: .topTrailing) {
-                    let unread = viewModel.incomingUnreadCount()
-                    if unread > 0 {
-                        Text(unread > 99 ? "99+" : "\(unread)")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.black)
-                            .frame(minWidth: 20, minHeight: 20)
-                            .padding(.horizontal, unread > 9 ? 4 : 0)
-                            .background(Color.white, in: Capsule())
-                            .offset(x: 6, y: -4)
-                    }
+            paneCircleLabel(
+                systemImage: "bubble.left.and.bubble.right.fill",
+                isActive: homePane == .messages
+            )
+            .overlay(alignment: .topTrailing) {
+                let unread = viewModel.incomingUnreadCount()
+                if unread > 0 {
+                    Text(unread > 99 ? "99+" : "\(unread)")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(minWidth: 20, minHeight: 20)
+                        .padding(.horizontal, unread > 9 ? 4 : 0)
+                        .background(Color.white, in: Capsule())
+                        .offset(x: 6, y: -4)
                 }
+            }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Messages")
+        .accessibilityLabel(homePane == .messages ? "Show grid" : "Messages")
+        .accessibilityAddTraits(homePane == .messages ? [.isSelected] : [])
         .accessibilityValue(viewModel.incomingUnreadCount() > 0 ? "\(viewModel.incomingUnreadCount()) unread" : "No unread")
+        .accessibilityIdentifier("grid.messages")
     }
 
     private var zoomControls: some View {
@@ -328,7 +331,7 @@ struct GridView: View {
     private var settingsMenu: some View {
         Menu {
             Button {
-                showingConversationsList = true
+                homePane = .messages
             } label: {
                 Label("Conversations", systemImage: "bubble.left.and.bubble.right.fill")
             }
@@ -450,6 +453,18 @@ struct GridView: View {
         .accessibilityIdentifier(GridUITestHarness.settingsIdentifier)
     }
 
+    private var peopleMapButton: some View {
+        Button {
+            toggleHomePane(.map)
+        } label: {
+            paneCircleLabel(systemImage: "map.fill", isActive: homePane == .map)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(homePane == .map ? "Show grid" : "Map")
+        .accessibilityAddTraits(homePane == .map ? [.isSelected] : [])
+        .accessibilityIdentifier("grid.map")
+    }
+
     private var uiTestHarnessBar: some View {
         VStack(spacing: 6) {
             HStack(spacing: 8) {
@@ -491,16 +506,29 @@ struct GridView: View {
     }
 
     private func mapsCircleButtonLabel(systemImage: String, foreground: Color = .primary) -> some View {
+        paneCircleLabel(systemImage: systemImage, isActive: false, foreground: foreground)
+    }
+
+    private func paneCircleLabel(
+        systemImage: String,
+        isActive: Bool,
+        foreground: Color = .primary
+    ) -> some View {
         Image(systemName: systemImage)
             .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(foreground)
+            .foregroundStyle(isActive ? Color.white : foreground)
             .frame(width: 44, height: 44)
+            .background(isActive ? Color.blue : Color.clear, in: Circle())
             .background(.ultraThinMaterial, in: Circle())
             .overlay {
                 Circle()
-                    .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+                    .stroke(Color.white.opacity(isActive ? 0.35 : 0.14), lineWidth: 0.5)
             }
             .shadow(color: .black.opacity(0.22), radius: 8, y: 2)
+    }
+
+    private func toggleHomePane(_ pane: HomePane) {
+        homePane = homePane == pane ? .people : pane
     }
 
     private var peopleTabPager: some View {
@@ -509,16 +537,6 @@ struct GridView: View {
             showsFavoritesHint: viewModel.peopleTab != .all
         )
         .id(viewModel.peopleTab)
-        .onAppear {
-            PeopleTabSwipeTrace.log(
-                "pager.appear tab=\(viewModel.peopleTab.rawValue) " +
-                "canSwipe=\(canSwipePeopleTabs) all=\(viewModel.allGridNodes.flatMap { $0 }.count) " +
-                "faves=\(viewModel.favoriteGridNodes.flatMap { $0 }.count)"
-            )
-        }
-        .onChange(of: viewModel.peopleTab) { tab in
-            PeopleTabSwipeTrace.log("pager.tabNow \(tab.rawValue)")
-        }
     }
 
     private func hasFavoritePeers(in nodes: [[GridNode]]) -> Bool {
@@ -598,19 +616,36 @@ struct GridView: View {
         NavigationView {
             VStack(spacing: 0) {
                 ZStack(alignment: .bottom) {
-                    if viewModel.currentUserProfile != nil {
-                        peopleTabPager
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        Text("Loading profile or no profile set...")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Group {
+                        switch homePane {
+                        case .map:
+                            GridPeopleMapView(viewModel: viewModel) { deviceID in
+                                openChat(with: deviceID)
+                            }
+                        case .messages:
+                            ConversationsListView(
+                                viewModel: viewModel,
+                                bottomInset: gridScrollBottomInset,
+                                onSelect: openChat(with:)
+                            )
+                        case .people:
+                            if viewModel.currentUserProfile != nil {
+                                peopleTabPager
+                            } else {
+                                Text("Loading profile or no profile set...")
+                            }
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     VStack(spacing: 8) {
                         HStack {
                             conversationsButton
+                            peopleMapButton
                             Spacer()
-                            zoomControls
+                            if homePane == .people {
+                                zoomControls
+                            }
                             aboveDrawerControls
                         }
                         .padding(.horizontal, 16)
@@ -666,9 +701,6 @@ struct GridView: View {
                 // Clean up any pending single tap timer
                 singleTapTimer?.invalidate()
                 singleTapTimer = nil
-            }
-            .sheet(isPresented: $showingConversationsList) {
-                ConversationsListView(viewModel: viewModel)
             }
             .sheet(item: $viewModel.selectedUserProfileForReport) { profileUser in // NEW: Sheet for Report Dialog
                 ReportUserView(viewModel: viewModel, userProfile: profileUser.userProfile)

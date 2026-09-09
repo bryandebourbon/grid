@@ -59,6 +59,8 @@ class GridViewModel: ObservableObject {
     @Published var customGroupNodes: [UUID: [[GridNode]]] = [:]
     @Published var interestPages: [Interest] = []
     @Published var interestGridNodes: [String: [[GridNode]]] = [:]
+    @Published var interestPins: [String: [String]] = [:]
+    @Published var hiddenConversations: [String: Date] = [:]
     @Published var pendingStarDeviceID: String?
     
     // NEW: Interest search properties
@@ -151,6 +153,8 @@ class GridViewModel: ObservableObject {
             bootstrapSession(for: profile)
             loadCustomGroups()
             loadInterestPages()
+            loadInterestPins()
+            loadHiddenConversations()
             messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
         }
         
@@ -233,6 +237,26 @@ class GridViewModel: ObservableObject {
         InterestPageStore.save(interestPages, userID: userID)
     }
 
+    func loadInterestPins() {
+        guard let userID = currentUserProfile?.userID else { return }
+        interestPins = CategoryPinStore.load(userID: userID)
+    }
+
+    func persistInterestPins() {
+        guard let userID = currentUserProfile?.userID else { return }
+        CategoryPinStore.save(interestPins, userID: userID)
+    }
+
+    func loadHiddenConversations() {
+        guard let userID = currentUserProfile?.userID else { return }
+        hiddenConversations = HiddenConversationStore.load(userID: userID)
+    }
+
+    func persistHiddenConversations() {
+        guard let userID = currentUserProfile?.userID else { return }
+        HiddenConversationStore.save(hiddenConversations, userID: userID)
+    }
+
     func openInterestPage(_ interest: Interest) {
         let alreadyOpen = InterestPageStore.contains(interest, in: interestPages)
         let nextPages = InterestPageStore.inserting(interest, into: interestPages)
@@ -260,6 +284,12 @@ class GridViewModel: ObservableObject {
         let remainingPages = InterestPageStore.removing(interest, from: interestPages)
         interestPages = remainingPages
         persistInterestPages()
+        interestPins = interestPins.filter { key, _ in
+            remainingPages.contains {
+                $0.rawValue.compare(key, options: .caseInsensitive) == .orderedSame
+            }
+        }
+        persistInterestPins()
         if case .interest(let raw) = peopleTab,
            raw.compare(interest.rawValue, options: .caseInsensitive) == .orderedSame {
             peopleTab = .all
@@ -289,11 +319,77 @@ class GridViewModel: ObservableObject {
     }
 
     func requestStar(for deviceID: String) {
-        if hasMultipleStarGroups {
+        if peopleTab == .all, hasMultipleStarGroups {
             pendingStarDeviceID = deviceID
             return
         }
-        toggleStar(for: deviceID)
+        toggleFavoriteInCurrentCategory(for: deviceID)
+    }
+
+    func pinnedUserIDs(for tab: GridPeopleTab) -> Set<String> {
+        switch tab {
+        case .all, .favorites:
+            return starredUsers
+        case .interest(let raw):
+            return Set(interestPinIDs(for: raw))
+        case .custom(let id):
+            return customGroups.first(where: { $0.id == id })?.memberUserIDs ?? []
+        }
+    }
+
+    func visibleUserIDs(for tab: GridPeopleTab) -> Set<String>? {
+        switch tab {
+        case .all:
+            return nil
+        case .favorites:
+            return starredUsers
+        case .interest(let raw):
+            let interest = Interest(rawValue: raw)
+            return Set(knownProfiles().compactMap { profile in
+                let matches = profile.interests.contains {
+                    $0.rawValue.compare(interest.rawValue, options: .caseInsensitive) == .orderedSame
+                }
+                return matches ? profile.userID : nil
+            })
+        case .custom(let id):
+            return customGroups.first(where: { $0.id == id })?.memberUserIDs ?? []
+        }
+    }
+
+    func isFavoritedInCurrentCategory(_ deviceID: String) -> Bool {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return false }
+        return pinnedUserIDs(for: peopleTab).contains(userID)
+    }
+
+    func toggleFavoriteInCurrentCategory(for deviceID: String) {
+        switch peopleTab {
+        case .all, .favorites:
+            toggleStar(for: deviceID)
+        case .interest(let raw):
+            toggleInterestPin(deviceID: deviceID, interestRaw: raw)
+        case .custom(let id):
+            toggleMembership(deviceID: deviceID, groupID: id)
+        }
+    }
+
+    func hideConversation(with deviceID: String, unpin: Bool = true) {
+        hiddenConversations[deviceID] = Date()
+        persistHiddenConversations()
+        if unpin {
+            removePinInCurrentCategory(deviceID: deviceID)
+        }
+        if chatOverlaySession.activePartnerDeviceID == deviceID {
+            hideChatOverlay()
+        }
+        objectWillChange.send()
+    }
+
+    func blockConversation(with deviceID: String) {
+        hideConversation(with: deviceID, unpin: false)
+        removePinsEverywhere(deviceID: deviceID)
+        if isBlocked(deviceID) == false {
+            toggleBlock(for: deviceID)
+        }
     }
 
     func isInCustomGroup(_ groupID: UUID, deviceID: String) -> Bool {
@@ -311,6 +407,64 @@ class GridViewModel: ObservableObject {
         }
         persistCustomGroups()
         updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+        objectWillChange.send()
+    }
+
+    func interestPinIDs(for raw: String) -> [String] {
+        if let exact = interestPins[raw] { return exact }
+        if let match = interestPins.first(where: {
+            $0.key.compare(raw, options: .caseInsensitive) == .orderedSame
+        }) {
+            return match.value
+        }
+        return []
+    }
+
+    func toggleInterestPin(deviceID: String, interestRaw: String) {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return }
+        let current = interestPinIDs(for: interestRaw)
+        guard let next = FavoritePinLogic.toggling(userID, in: current) else {
+            presentUserFacingAlert(FavoritePinLogic.pinLimitMessage)
+            return
+        }
+        interestPins[interestRaw] = next
+        persistInterestPins()
+        objectWillChange.send()
+    }
+
+    func removePinInCurrentCategory(deviceID: String) {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return }
+        switch peopleTab {
+        case .all, .favorites:
+            if starredUsers.contains(userID) {
+                toggleStar(for: deviceID)
+            }
+        case .interest(let raw):
+            let current = interestPinIDs(for: raw)
+            if current.contains(userID) {
+                toggleInterestPin(deviceID: deviceID, interestRaw: raw)
+            }
+        case .custom(let id):
+            if isInCustomGroup(id, deviceID: deviceID) {
+                toggleMembership(deviceID: deviceID, groupID: id)
+            }
+        }
+    }
+
+    func removePinsEverywhere(deviceID: String) {
+        guard let userID = getUserID(forDeviceID: deviceID) else { return }
+        if starredUsers.contains(userID) {
+            toggleStar(for: deviceID)
+        }
+        var pins = interestPins
+        for (raw, ids) in pins where ids.contains(userID) {
+            pins[raw] = ids.filter { $0 != userID }
+        }
+        interestPins = pins
+        persistInterestPins()
+        for group in customGroups where group.memberUserIDs.contains(userID) {
+            toggleMembership(deviceID: deviceID, groupID: group.id)
+        }
         objectWillChange.send()
     }
 

@@ -7,7 +7,7 @@
 		<string>remote-notification</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>The Grid uses your location to show nearby active users and enable proximity-based messaging. Location is only used while the app is open.</string>
+	<string>Grid uses your location to show nearby people on the grid and map. Location is only used while the app is open.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Grid uses the camera so you can take a photo for your story.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

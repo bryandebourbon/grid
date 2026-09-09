@@ -295,6 +295,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = grid/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Grid uses the camera so you can take a photo for your story.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Grid uses your location to show nearby people on the grid and map. Location is only used while the app is open.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Grid uses your photo library so you can choose a profile photo, chat image, story, or background.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -326,6 +327,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = grid/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Grid uses the camera so you can take a photo for your story.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Grid uses your location to show nearby people on the grid and map. Location is only used while the app is open.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Grid uses your photo library so you can choose a profile photo, chat image, story, or background.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

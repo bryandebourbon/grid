@@ -241,16 +241,20 @@ extension GridViewModel {
     func toggleStar(for deviceID: String) {
         guard let currentUserID = currentUserProfile?.userID,
               let targetUserID = getUserID(forDeviceID: deviceID) else { return }
-        
-        if starredUsers.contains(targetUserID) {
-            // Unstar
-            starredUsers.remove(targetUserID)
+
+        guard let next = FavoritePinLogic.toggling(targetUserID, in: starredUsers) else {
+            presentUserFacingAlert(FavoritePinLogic.pinLimitMessage)
+            return
+        }
+
+        let wasStarred = starredUsers.contains(targetUserID)
+        starredUsers = next
+
+        if wasStarred {
             relationshipService.deleteRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .star) { success in
                 print("Star deletion \(success ? "successful" : "failed") for user: \(targetUserID)")
             }
         } else {
-            // Star
-            starredUsers.insert(targetUserID)
             relationshipService.saveRelationship(userID: currentUserID, targetUserID: targetUserID, actionType: .star)
         }
 
@@ -289,7 +293,9 @@ extension GridViewModel {
             return currentProfile.userID
         }
         
-        for grid in [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values) {
+        for grid in [allGridNodes, favoriteGridNodes, gridNodes]
+            + Array(customGroupNodes.values)
+            + Array(interestGridNodes.values) {
             for row in grid {
                 for node in row {
                     if let profile = node.userProfile, profile.deviceID == deviceID {
@@ -297,6 +303,13 @@ extension GridViewModel {
                     }
                 }
             }
+        }
+
+        if let message = messages.last(where: { $0.senderDeviceID == deviceID }) {
+            return message.senderUserID
+        }
+        if let message = messages.last(where: { $0.recipientDeviceID == deviceID }) {
+            return message.recipientUserID
         }
 
         return nil
@@ -406,7 +419,9 @@ extension GridViewModel {
     }
 
     func hasProfileOnAnyGrid(deviceID: String) -> Bool {
-        let grids = [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values)
+        let grids = [allGridNodes, favoriteGridNodes, gridNodes]
+            + Array(customGroupNodes.values)
+            + Array(interestGridNodes.values)
         return grids.contains { grid in
             grid.flatMap { $0 }.contains { $0.userProfile?.deviceID == deviceID }
         }

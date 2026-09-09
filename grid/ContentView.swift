@@ -12,20 +12,6 @@ import CloudKit
 import UIKit
 #endif
 
-// UserProfile and CreateProfileView should be defined in their own files
-// (e.g., Models/UserProfile.swift and Views/CreateProfileView.swift)
-// and included in the app target.
-
-// Ensure UserProfile is imported if it's in a different module or file structure needs it
-// If UserProfile is in the Models directory, you might not need an explicit import 
-// if your project structure and target membership are set up correctly.
-// However, to be explicit, especially if issues arise:
-// import Models // Or the specific module name if you have one for Models
-
-// Assuming UserProfile is in the main app target and Models group, direct import might not be needed
-// but if it were in a separate module or framework, it would be.
-// For now, we'll rely on Swift's module system to find UserProfile.swift
-
 struct ContentView: View {
     @StateObject private var gridViewModel = GridViewModel()
 
@@ -36,7 +22,7 @@ struct ContentView: View {
 
     // Profile State
     @State private var userProfile: UserProfile? = nil
-    @State private var showCreateProfileView = false
+    @State private var showAskDisplayName = false
     @State private var isLoadingProfile = false
     @State private var profileLoadFailed = false  // Transient load failure (network/server) — offer retry instead of signing out
     @State private var deletionErrorMessage: String?
@@ -85,7 +71,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .padding())
-            } else if showCreateProfileView {
+            } else if showAskDisplayName {
                 if let userID = appleUserID {
                     AnyView(AskDisplayNameView(
                         initialName: ProfileDisplayNameLogic.pendingPersonName() ?? "",
@@ -118,7 +104,7 @@ struct ContentView: View {
         .task {
             if isCheckingCredentials {
                 checkExistingCredentials()
-            } else if userProfile == nil, let userID = appleUserID, !isLoadingProfile, !showCreateProfileView, !showSignInView, !profileLoadFailed {
+            } else if userProfile == nil, let userID = appleUserID, !isLoadingProfile, !showAskDisplayName, !showSignInView, !profileLoadFailed {
                 checkUserProfile(userID: userID)
             }
         }
@@ -172,7 +158,7 @@ struct ContentView: View {
             deviceName: name
         )
         userProfile = profile
-        showCreateProfileView = false
+        showAskDisplayName = false
         isLoadingProfile = false
         profileLoadFailed = false
         ProfileDisplayNameLogic.clearPendingPersonName()
@@ -221,13 +207,13 @@ struct ContentView: View {
                         print("ContentView: No profile record found for deviceID: \(deviceID) (CKError.unknownItem). Prompting to create one.")
                         self.userProfile = nil
                         self.showSignInView = false 
-                        self.showCreateProfileView = true
+                        self.showAskDisplayName = true
                     } else if actualError.code == .partialFailure {
                         // This commonly happens when trying to fetch a record that doesn't exist
                         print("ContentView: CloudKit partial failure for deviceID: \(deviceID). Likely no profile exists yet. Prompting to create one.")
                         self.userProfile = nil
                         self.showSignInView = false 
-                        self.showCreateProfileView = true
+                        self.showAskDisplayName = true
                     } else {
                         print("ContentView: CloudKit error fetching profile for deviceID: \(deviceID). Error: \(actualError.localizedDescription)")
                         // Genuine network/server issue — keep the user signed in and
@@ -241,7 +227,7 @@ struct ContentView: View {
                         print("ContentView: Treating 'Failed to fetch some records' as missing profile. Prompting to create one.")
                         self.userProfile = nil
                         self.showSignInView = false 
-                        self.showCreateProfileView = true
+                        self.showAskDisplayName = true
                     } else {
                         // Likely transient — offer retry instead of signing out.
                         self.profileLoadFailed = true
@@ -251,7 +237,7 @@ struct ContentView: View {
                     print("ContentView: Successfully fetched CKRecord for deviceID: \(deviceID). Attempting to initialize UserProfile.")
                     if let profile = UserProfile(record: fetchedRecord) {
                         self.showSignInView = false
-                        self.showCreateProfileView = false
+                        self.showAskDisplayName = false
                         if ProfileDisplayNameLogic.isMissingPersonName(profile.deviceName),
                            let pending = ProfileDisplayNameLogic.pendingPersonName() {
                             self.applyPersonName(pending, to: profile)
@@ -261,8 +247,6 @@ struct ContentView: View {
                         }
                         print("ContentView: UserProfile initialized and set for deviceID: \(profile.deviceID). Should navigate to GridView.")
                     } else {
-                        // Critical error: Record exists but UserProfile.init(record:) failed.
-                        // This should NOT loop back to CreateProfileView if the record is present but malformed or init logic is flawed.
                         print("ContentView: CRITICAL ERROR - Failed to initialize UserProfile from fetched CKRecord for deviceID: \(deviceID). The record data might be incompatible with UserProfile.init(record:). Check model and CloudKit schema.")
                         self.profileLoadFailed = true
                     }
@@ -271,7 +255,7 @@ struct ContentView: View {
                     print("ContentView: Unexpected state - no error and no record fetched for deviceID: \(deviceID). Treating as if profile not found.")
                     self.userProfile = nil
                     self.showSignInView = false 
-                    self.showCreateProfileView = true // Fallback to create profile
+                    self.showAskDisplayName = true
                 }
             }
         }
@@ -302,7 +286,7 @@ struct ContentView: View {
         userProfile = nil
         gridViewModel.currentUserProfile = nil
         showSignInView = true
-        showCreateProfileView = false
+        showAskDisplayName = false
         isLoadingProfile = false
         isCheckingCredentials = false
         profileLoadFailed = false
@@ -411,7 +395,7 @@ struct ContentView: View {
         appleUserID = profile.userID
         userProfile = profile
         showSignInView = false
-        showCreateProfileView = false
+        showAskDisplayName = false
         isCheckingCredentials = false
         isLoadingProfile = false
         profileLoadFailed = false

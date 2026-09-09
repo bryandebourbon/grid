@@ -1,6 +1,6 @@
 import Foundation
 
-/// Shared-interest helpers used by profile UI and grid filtering.
+/// Shared-interest helpers used by tests and available to profile/grid filtering.
 enum InterestMatchingLogic {
 
     static func sharedCount(myInterests: [Interest], theirInterests: [Interest]) -> Int {

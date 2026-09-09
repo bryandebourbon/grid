@@ -142,6 +142,24 @@ enum MessageConversationLogic {
             || message.text == MessageBannerLogic.encryptedImagePlaceholder
     }
 
+    struct HomeFilter {
+        var visibleUserIDs: Set<String>? = nil
+        var pinnedUserIDs: Set<String>
+        var blockedUserIDs: Set<String> = []
+        var hiddenAt: [String: Date] = [:]
+        var maxPins: Int = FavoritePinLogic.maxPins
+    }
+
+    static func isHidden(
+        deviceID: String,
+        lastMessageDate: Date?,
+        hiddenAt: [String: Date]
+    ) -> Bool {
+        guard let hidden = hiddenAt[deviceID] else { return false }
+        guard let lastMessageDate else { return true }
+        return lastMessageDate <= hidden
+    }
+
     static func messagesHome(
         currentDeviceID: String,
         currentUserID: String?,
@@ -149,33 +167,62 @@ enum MessageConversationLogic {
         readReceipts: Set<String> = [],
         starredUserIDs: Set<String>,
         profiles: [UserProfile],
-        displayNameLookup: (String) -> String
+        displayNameLookup: (String) -> String,
+        filter: HomeFilter? = nil
     ) -> (pinned: [PinnedPerson], conversations: [ConversationSummary]) {
+        let homeFilter = filter ?? HomeFilter(pinnedUserIDs: starredUserIDs)
         let conversations = conversationList(
             currentDeviceID: currentDeviceID,
             messages: messages,
             readReceipts: readReceipts,
             displayNameLookup: displayNameLookup
         )
+        let visibleConversations = conversations.filter { conversation in
+            let userID = resolvedUserID(
+                deviceID: conversation.deviceID,
+                partnerUserID: conversation.partnerUserID,
+                profiles: profiles
+            )
+            if let userID, homeFilter.blockedUserIDs.contains(userID) { return false }
+            if isHidden(
+                deviceID: conversation.deviceID,
+                lastMessageDate: conversation.lastMessage?.timestamp,
+                hiddenAt: homeFilter.hiddenAt
+            ) {
+                return false
+            }
+            if let visible = homeFilter.visibleUserIDs {
+                guard let userID else { return false }
+                return visible.contains(userID)
+            }
+            return true
+        }
         let pinned = pinnedPeople(
-            starredUserIDs: starredUserIDs,
+            pinnedUserIDs: homeFilter.pinnedUserIDs,
             currentUserID: currentUserID,
             profiles: profiles,
-            conversations: conversations,
-            displayNameLookup: displayNameLookup
+            conversations: visibleConversations,
+            displayNameLookup: displayNameLookup,
+            visibleUserIDs: homeFilter.visibleUserIDs,
+            blockedUserIDs: homeFilter.blockedUserIDs,
+            maxPins: homeFilter.maxPins
         )
         let pinnedIDs = Set(pinned.map(\.deviceID))
-        return (pinned, conversations.filter { !pinnedIDs.contains($0.deviceID) })
+        return (pinned, visibleConversations.filter { !pinnedIDs.contains($0.deviceID) })
     }
 
     static func pinnedPeople(
-        starredUserIDs: Set<String>,
+        pinnedUserIDs: Set<String>,
         currentUserID: String?,
         profiles: [UserProfile],
         conversations: [ConversationSummary],
-        displayNameLookup: (String) -> String
+        displayNameLookup: (String) -> String,
+        visibleUserIDs: Set<String>? = nil,
+        blockedUserIDs: Set<String> = [],
+        maxPins: Int = FavoritePinLogic.maxPins
     ) -> [PinnedPerson] {
-        guard starredUserIDs.isEmpty == false else { return [] }
+        guard pinnedUserIDs.isEmpty == false else { return [] }
+        let starredUserIDs = pinnedUserIDs
 
         var recency: [String: Date] = [:]
         var pinned: [String: PinnedPerson] = [:]
@@ -195,7 +242,11 @@ enum MessageConversationLogic {
         }
 
         for conversation in conversations {
-            guard let userID = conversation.partnerUserID,
+            guard let userID = resolvedUserID(
+                deviceID: conversation.deviceID,
+                partnerUserID: conversation.partnerUserID,
+                profiles: profiles
+            ),
                   starredUserIDs.contains(userID),
                   userID != currentUserID else { continue }
             pinned[userID] = PinnedPerson(
@@ -207,12 +258,26 @@ enum MessageConversationLogic {
             recency[userID] = conversation.lastMessage?.timestamp
         }
 
-        return pinned.values.sorted { lhs, rhs in
+        let ranked = pinned.values.filter { person in
+            if blockedUserIDs.contains(person.userID) { return false }
+            if let visibleUserIDs { return visibleUserIDs.contains(person.userID) }
+            return true
+        }
+        .sorted { lhs, rhs in
             let leftDate = recency[lhs.userID] ?? .distantPast
             let rightDate = recency[rhs.userID] ?? .distantPast
             if leftDate != rightDate { return leftDate > rightDate }
             return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
+        return Array(ranked.prefix(max(0, maxPins)))
+    }
+
+    private static func resolvedUserID(
+        deviceID: String,
+        partnerUserID: String?,
+        profiles: [UserProfile]
+    ) -> String? {
+        partnerUserID ?? profiles.first(where: { $0.deviceID == deviceID })?.userID
     }
 
     private static func partnerUserID(partnerID: String, lastMessage: Message?) -> String? {
@@ -238,4 +303,31 @@ enum MessageConversationLogic {
             || raw == MessageBannerLogic.encryptedImagePlaceholder
             || raw == MessageDecryptabilityLogic.failedTextPlaceholder
     }
+}
+
+enum FavoritePinLogic {
+    static let maxPins = 3
+
+    static func toggling(_ userID: String, in current: Set<String>, maxPins: Int = maxPins) -> Set<String>? {
+        var next = current
+        if next.contains(userID) {
+            next.remove(userID)
+            return next
+        }
+        guard next.count < maxPins else { return nil }
+        next.insert(userID)
+        return next
+    }
+
+    static func toggling(_ userID: String, in current: [String], maxPins: Int = maxPins) -> [String]? {
+        if let index = current.firstIndex(of: userID) {
+            var next = current
+            next.remove(at: index)
+            return next
+        }
+        guard current.count < maxPins else { return nil }
+        return current + [userID]
+    }
+
+    static let pinLimitMessage = "You can pin up to \(maxPins) people here."
 }

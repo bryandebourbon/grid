@@ -6,122 +6,98 @@ import UIKit
 
 struct ConversationsListView: View {
     @ObservedObject var viewModel: GridViewModel
-    @Environment(\.dismiss) var dismiss
-    @State private var path: [String] = []
-    @FocusState private var isComposerFocused: Bool
+    var bottomInset: CGFloat = 0
+    var onSelect: (String) -> Void
 
     var body: some View {
-        NavigationStack(path: $path) {
-            let home = viewModel.getMessagesHome()
+        let tab = viewModel.peopleTab
+        let home = viewModel.getMessagesHome()
 
-            List {
-                if home.pinned.isEmpty == false {
-                    Section {
-                        PinnedChatsGrid(
-                            viewModel: viewModel,
-                            people: home.pinned,
-                            onSelect: openChat
-                        )
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                    }
-                }
-
-                if home.conversations.isEmpty && home.pinned.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "message")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                        Text("No Messages")
-                            .font(.title3.weight(.semibold))
-                        Text("Tap someone on the grid to start a chat.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 48)
-                    .listRowBackground(Color.clear)
+        List {
+            if home.pinned.isEmpty == false {
+                Section {
+                    PinnedChatsGrid(
+                        viewModel: viewModel,
+                        people: home.pinned,
+                        onSelect: onSelect,
+                        onUnpin: { viewModel.removePinInCurrentCategory(deviceID: $0) },
+                        onBlock: { viewModel.blockConversation(with: $0) },
+                        onDelete: { viewModel.hideConversation(with: $0) }
+                    )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 4, trailing: 16))
                     .listRowSeparator(.hidden)
-                } else {
-                    ForEach(home.conversations, id: \.deviceID) { conversation in
-                        Button {
-                            openChat(conversation.deviceID)
+                    .listRowBackground(Color.clear)
+                }
+            }
+
+            if home.conversations.isEmpty && home.pinned.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "message")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("No Messages")
+                        .font(.title3.weight(.semibold))
+                    Text(emptyListDetail(for: tab))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 48)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } else {
+                ForEach(home.conversations, id: \.deviceID) { conversation in
+                    ConversationRowView(
+                        viewModel: viewModel,
+                        conversation: conversation
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onSelect(conversation.deviceID)
+                    }
+                    .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            viewModel.hideConversation(with: conversation.deviceID)
                         } label: {
-                            ConversationRowView(
-                                viewModel: viewModel,
-                                conversation: conversation
+                            Label("Delete", systemImage: "trash.fill")
+                        }
+
+                        Button {
+                            viewModel.blockConversation(with: conversation.deviceID)
+                        } label: {
+                            Label("Block", systemImage: "hand.raised.fill")
+                        }
+                        .tint(.orange)
+                    }
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            viewModel.toggleFavoriteInCurrentCategory(for: conversation.deviceID)
+                        } label: {
+                            Label(
+                                viewModel.isFavoritedInCurrentCategory(conversation.deviceID) ? "Unpin" : "Favorite",
+                                systemImage: viewModel.isFavoritedInCurrentCategory(conversation.deviceID) ? "star.slash.fill" : "star.fill"
                             )
                         }
-                        .buttonStyle(.plain)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+                        .tint(.yellow)
                     }
                 }
             }
-            .listStyle(.plain)
-            .navigationTitle("Messages")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
-                    }
-                    .accessibilityLabel("Back")
-                }
-            }
-            .navigationDestination(for: String.self) { deviceID in
-                ChatOverlayView(
-                    viewModel: viewModel,
-                    recipientDeviceID: deviceID,
-                    isPresented: true,
-                    isComposerFocused: $isComposerFocused,
-                    onClose: {
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            isComposerFocused = false
-                            viewModel.deselectChatPartner()
-                            if path.isEmpty == false {
-                                path.removeLast()
-                            }
-                        }
-                        KeyboardPresentation.dismissKeyboard()
-                    }
-                )
-                .navigationBarBackButtonHidden(true)
-                .toolbar(.hidden, for: .navigationBar)
-            }
         }
-        .horizontalEdgeDismiss(enabled: path.isEmpty) {
-            dismiss()
-        }
-        .simultaneousGesture(listCloseDrag)
-        .onChange(of: path) { newPath in
-            if newPath.isEmpty {
-                isComposerFocused = false
-                KeyboardPresentation.dismissKeyboard()
-                viewModel.deselectChatPartner()
-            }
-        }
+        .listStyle(.plain)
+        .contentMargins(.bottom, bottomInset, for: .scrollContent)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("grid.messages.list")
     }
 
-    private func openChat(_ deviceID: String) {
-        ChatOpenTrace.start("list \(deviceID.prefix(8))")
-        path = [deviceID]
-        isComposerFocused = true
-    }
-
-    private var listCloseDrag: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onEnded { value in
-                guard path.isEmpty else { return }
-                let horizontal = value.translation.width
-                let vertical = value.translation.height
-                guard abs(horizontal) > abs(vertical), abs(horizontal) > 70 else { return }
-                dismiss()
-            }
+    private func emptyListDetail(for tab: GridPeopleTab) -> String {
+        switch tab {
+        case .all:
+            return "Tap someone on the grid to start a chat."
+        default:
+            return "No chats for this filter."
+        }
     }
 }
 
@@ -129,6 +105,9 @@ private struct PinnedChatsGrid: View {
     @ObservedObject var viewModel: GridViewModel
     let people: [MessageConversationLogic.PinnedPerson]
     let onSelect: (String) -> Void
+    var onUnpin: (String) -> Void = { _ in }
+    var onBlock: (String) -> Void = { _ in }
+    var onDelete: (String) -> Void = { _ in }
 
     private var rows: [[MessageConversationLogic.PinnedPerson]] {
         stride(from: 0, to: people.count, by: 3).map { start in
@@ -147,6 +126,23 @@ private struct PinnedChatsGrid: View {
                             action: { onSelect(person.deviceID) }
                         )
                         .frame(maxWidth: .infinity)
+                        .contextMenu {
+                            Button {
+                                onUnpin(person.deviceID)
+                            } label: {
+                                Label("Unpin", systemImage: "star.slash")
+                            }
+                            Button(role: .destructive) {
+                                onBlock(person.deviceID)
+                            } label: {
+                                Label("Block", systemImage: "hand.raised")
+                            }
+                            Button(role: .destructive) {
+                                onDelete(person.deviceID)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
                     if row.count < 3 {
                         ForEach(0..<(3 - row.count), id: \.self) { index in
@@ -259,6 +255,10 @@ struct ConversationRowView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
         }
         .contentShape(Rectangle())
         .onAppear {

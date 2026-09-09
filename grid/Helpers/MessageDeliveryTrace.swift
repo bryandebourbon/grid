@@ -9,9 +9,11 @@ enum MessageDeliveryTrace {
     static let prefix = "[msg-test]"
 
     static func log(_ step: String) {
+        #if DEBUG
         let line = "\(prefix) \(step)"
         AppLog.messaging.debug("\(line, privacy: .public)")
         print(line)
+        #endif
     }
 
     static func start(_ label: String) {
@@ -51,16 +53,5 @@ struct MessageDeliverySuiteReport {
         }
         let header = allPassed ? "Message delivery test passed." : "Message delivery test had failures."
         return ([header] + lines + ["Filter Xcode for [msg-test]"]).joined(separator: "\n")
-    }
-}
-
-/// Tiny JPEG used by the live image ping so we don't need the photo library.
-enum MessageDeliveryTestImage {
-    static func jpeg() -> Data {
-        #if canImport(UIKit)
-        return ProfileCreationLogic.placeholderPhotoJPEG()
-        #else
-        return Data([0xFF, 0xD8, 0xFF, 0xD9])
-        #endif
     }
 }

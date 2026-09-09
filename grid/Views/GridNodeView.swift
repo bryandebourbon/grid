@@ -189,8 +189,6 @@ struct GridNodeView: View {
         guard let userProfile = node.userProfile,
               let partnerID = GridCellTapLogic.chatPartnerDeviceID(for: node) else { return }
 
-        ChatOpenTrace.start("cell tap \(partnerID)")
-
         #if os(iOS)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         #endif

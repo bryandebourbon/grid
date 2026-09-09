@@ -157,7 +157,13 @@ extension GridViewModel {
                     )
                 }
                 return self.displayName(forDeviceID: otherDeviceID)
-            }
+            },
+            filter: MessageConversationLogic.HomeFilter(
+                visibleUserIDs: visibleUserIDs(for: peopleTab),
+                pinnedUserIDs: pinnedUserIDs(for: peopleTab),
+                blockedUserIDs: blockedUsers.union(usersWhoBlockedMe),
+                hiddenAt: hiddenConversations
+            )
         )
     }
 
@@ -168,7 +174,9 @@ extension GridViewModel {
             result.append(currentUserProfile)
             seen.insert(currentUserProfile.deviceID)
         }
-        let grids = [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values)
+        let grids = [allGridNodes, favoriteGridNodes, gridNodes]
+            + Array(customGroupNodes.values)
+            + Array(interestGridNodes.values)
         for grid in grids {
             for node in grid.flatMap({ $0 }) {
                 guard let profile = node.userProfile, seen.insert(profile.deviceID).inserted else { continue }
@@ -185,7 +193,9 @@ extension GridViewModel {
         if LocalLLMIdentity.isLLM(deviceID) {
             return LocalLLMIdentity.profile
         }
-        let grids = [allGridNodes, favoriteGridNodes, gridNodes] + Array(customGroupNodes.values)
+        let grids = [allGridNodes, favoriteGridNodes, gridNodes]
+            + Array(customGroupNodes.values)
+            + Array(interestGridNodes.values)
         for grid in grids {
             if let profile = ProfileDisplayNameLogic.profile(forDeviceID: deviceID, in: grid) {
                 return profile
