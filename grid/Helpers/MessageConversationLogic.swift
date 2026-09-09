@@ -31,6 +31,12 @@ enum MessageConversationLogic {
         .sorted { $0.timestamp < $1.timestamp }
     }
 
+    static func newestPage(from messages: [Message], count: Int) -> [Message] {
+        guard count > 0 else { return [] }
+        guard messages.count > count else { return messages }
+        return Array(messages.suffix(count))
+    }
+
     static func lastSelfMessage(for deviceID: String, in messages: [Message]) -> Message? {
         messages
             .filter { $0.senderDeviceID == deviceID && $0.recipientDeviceID == deviceID }

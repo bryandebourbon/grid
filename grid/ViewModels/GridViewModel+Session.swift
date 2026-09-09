@@ -13,6 +13,7 @@ extension GridViewModel {
     /// Loads encryption, relationships, receipts, story views, album, messages, and stories cache.
     func bootstrapSession(for profile: UserProfile) {
         loadPersistedInbox()
+        loadPersistedAlbums()
         readReceipts.formUnion(ReadReceiptStore.load())
         mergeLocalLLMMessages()
         enableEncryptionOnlyMode()
@@ -46,11 +47,8 @@ extension GridViewModel {
     }
 
     func warmDecryptionCache() {
-        for message in messages where message.isEncrypted {
+        for message in messages where message.isEncrypted && message.encryptedImageData == nil {
             _ = decryptMessage(message)
-            if message.encryptedImageData != nil {
-                _ = decryptImageMessage(message)
-            }
         }
     }
 

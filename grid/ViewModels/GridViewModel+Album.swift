@@ -20,7 +20,7 @@ extension GridViewModel {
         }
         let result = await albumService.createAlbum(for: currentProfile)
         if result.success, let album = result.album {
-            userAlbums[currentProfile.deviceID] = album
+            userAlbums[currentProfile.deviceID] = AlbumCacheStore.save(album)
         }
         return result
     }
@@ -40,7 +40,7 @@ extension GridViewModel {
         guard pinResult.success else { return pinResult }
         let saveResult = await albumService.saveAlbum(album)
         if saveResult.success, let saved = saveResult.album {
-            userAlbums[currentProfile.deviceID] = saved
+            userAlbums[currentProfile.deviceID] = AlbumCacheStore.save(saved)
             return .success()
         }
         return .failure(saveResult.error ?? "Failed to save album")
@@ -74,7 +74,7 @@ extension GridViewModel {
         }
         let saveResult = await albumService.saveAlbum(album)
         if saveResult.success, let saved = saveResult.album {
-            userAlbums[currentProfile.deviceID] = saved
+            userAlbums[currentProfile.deviceID] = AlbumCacheStore.save(saved)
             return .success()
         }
         return .failure(saveResult.error ?? "Failed to save album")
@@ -92,7 +92,7 @@ extension GridViewModel {
         }
         let saveResult = await albumService.saveAlbum(album)
         if saveResult.success, let saved = saveResult.album {
-            userAlbums[currentProfile.deviceID] = saved
+            userAlbums[currentProfile.deviceID] = AlbumCacheStore.save(saved)
             return .success()
         }
         return .failure(saveResult.error ?? "Failed to save album")
@@ -103,10 +103,38 @@ extension GridViewModel {
     }
 
     func getAlbum(for deviceID: String) async -> Album? {
-        if let cached = userAlbums[deviceID] { return cached }
+        if let cached = userAlbums[deviceID] {
+            refreshAlbumInBackground(deviceID)
+            return cached
+        }
+        if let disk = AlbumCacheStore.load(deviceID: deviceID) {
+            userAlbums[deviceID] = disk
+            refreshAlbumInBackground(deviceID)
+            return disk
+        }
         guard let album = await albumService.fetchAlbum(ownerDeviceID: deviceID) else { return nil }
-        userAlbums[deviceID] = album
-        return album
+        let local = AlbumCacheStore.save(album)
+        userAlbums[deviceID] = local
+        return local
+    }
+
+    func loadPersistedAlbums() {
+        let stored = AlbumCacheStore.loadAll()
+        guard stored.isEmpty == false else { return }
+        userAlbums.merge(stored) { _, incoming in incoming }
+    }
+
+    func refreshAlbumInBackground(_ deviceID: String) {
+        guard albumRefreshInFlight.insert(deviceID).inserted else { return }
+        Task {
+            defer { albumRefreshInFlight.remove(deviceID) }
+            guard let incoming = await albumService.fetchAlbum(ownerDeviceID: deviceID) else { return }
+            let cachedIDs = AlbumCacheLogic.storyIDs(in: userAlbums[deviceID]?.photoMetadata ?? [])
+            let incomingIDs = AlbumCacheLogic.storyIDs(in: incoming.photoMetadata)
+            guard AlbumCacheLogic.needsRefresh(cachedIDs: cachedIDs, incomingIDs: incomingIDs) else { return }
+            userAlbums[deviceID] = AlbumCacheStore.save(incoming)
+            objectWillChange.send()
+        }
     }
     
     /// Check if a story is pinned in current user's album

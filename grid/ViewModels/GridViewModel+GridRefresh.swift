@@ -48,7 +48,7 @@ extension GridViewModel {
                 continuation.resume()
                 return
             }
-            fetchAllMessagesForCurrentDevice(deviceID: deviceID) {
+            refreshIncomingMessages {
                 continuation.resume()
             }
         }
@@ -115,7 +115,7 @@ extension GridViewModel {
         // Update activity status in CloudKit (without refreshing the grid)
         updateUserActivityAndLocation(profile)
 
-        refreshIncomingMessages()
+        refreshIncomingMessages(includeFullHistory: false)
     }
     
     func handleAppWillResignActive() {

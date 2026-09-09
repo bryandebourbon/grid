@@ -2,9 +2,11 @@ import Foundation
 
 /// Merge rules for the on-device inbox.
 ///
-/// CloudKit public-database *queries* are eventually consistent, so a just-saved
-/// message can be missing from `CKQuery` for minutes even though the push
-/// (record-ID fetch) already has it. Never replace the local inbox with a query.
+/// The inbox file is the source of truth after the first download. Refresh only
+/// asks CloudKit for records newer than the newest local timestamp. CloudKit
+/// public-database *queries* are eventually consistent, so a just-saved message
+/// can be missing from `CKQuery` for minutes even though the push (record-ID
+/// fetch) already has it. Never replace the local inbox with a query.
 enum MessageInboxLogic {
     static func merge(local: [Message], incoming: [Message]) -> [Message] {
         var byID: [String: Message] = [:]
@@ -33,6 +35,26 @@ enum MessageInboxLogic {
         (existing.status == .sending || existing.status == .failed)
             && incoming.status != .sent
             && incoming.status != .received
+    }
+
+    static let deltaOverlap: TimeInterval = 90
+
+    /// `nil` means the inbox is empty and a one-time full download is needed.
+    static func querySince(newestLocal: Date?) -> Date? {
+        newestLocal?.addingTimeInterval(-deltaOverlap)
+    }
+
+    static func hasNewOrChanged(local: [Message], incoming: [Message]) -> Bool {
+        guard incoming.isEmpty == false else { return false }
+        let byID = Dictionary(uniqueKeysWithValues: local.map { ($0.id, $0) })
+        for message in incoming {
+            guard let existing = byID[message.id] else { return true }
+            if shouldKeepLocal(existing, incoming: message) { continue }
+            if existing.status != message.status { return true }
+            if existing.reactionsUpdatedAt != message.reactionsUpdatedAt { return true }
+            if existing.reactions != message.reactions { return true }
+        }
+        return false
     }
 
     static func persistable(_ messages: [Message]) -> [Message] {

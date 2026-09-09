@@ -121,9 +121,7 @@ struct MessageRow: View {
                     .overlay(Text("Error loading image").font(.caption))
             }
         } else if message.isEncrypted && message.encryptedImageData != nil {
-            if viewModel.decryptImageMessage(message) != nil {
-                encryptedImageBubble
-            }
+            encryptedImageBubble
         } else if !displayText.isEmpty, !MessageDecryptabilityLogic.isUndecryptableText(displayText) {
             Text(displayText)
                 .padding(10)

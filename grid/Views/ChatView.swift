@@ -19,6 +19,8 @@ struct ChatView: View {
     @State private var reactingMessageID: String?
     @State private var ignoreReactionScrollDismissUntil = Date.distantPast
     @State private var keyboardActivation = 0
+    @State private var revealAlbum = false
+    @State private var visibleCount = Self.messagePageSize
 
     private var currentDeviceID: String? {
         viewModel.currentUserProfile?.deviceID
@@ -26,6 +28,10 @@ struct ChatView: View {
 
     private var chatMessages: [Message] {
         viewModel.getMessagesForConversation(with: recipientDeviceID)
+    }
+
+    private var visibleChatMessages: [Message] {
+        MessageConversationLogic.newestPage(from: chatMessages, count: visibleCount)
     }
 
     private var latestMessageID: String? {
@@ -37,7 +43,10 @@ struct ChatView: View {
     }
 
     private var showsPartnerPinStrip: Bool {
-        hasPartnerPins && partnerProfile != nil && (showChatAlbumButton ? showPartnerPins : true)
+        revealAlbum
+            && hasPartnerPins
+            && partnerProfile != nil
+            && (showChatAlbumButton ? showPartnerPins : true)
     }
 
     private var accessoryHeight: CGFloat {
@@ -61,7 +70,6 @@ struct ChatView: View {
                 )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
             if showPhotoStrip {
@@ -115,7 +123,17 @@ struct ChatView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .padding(.top, 50)
                             } else {
-                                ForEach(chatMessages) { message in
+                                if chatMessages.count > visibleChatMessages.count {
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .onAppear {
+                                            visibleCount = min(
+                                                visibleCount + Self.messagePageSize,
+                                                chatMessages.count
+                                            )
+                                        }
+                                }
+                                ForEach(visibleChatMessages) { message in
                                     MessageRow(
                                         message: message,
                                         isCurrentDeviceSender: message.senderDeviceID == currentDeviceID,
@@ -194,8 +212,10 @@ struct ChatView: View {
             .background(Color(.systemBackground))
         }
         .task(id: recipientDeviceID) {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard !Task.isCancelled else { return }
+            revealAlbum = true
             _ = await viewModel.getAlbum(for: recipientDeviceID)
-            await photoLibrary.prepare()
         }
         .onAppear {
             if isPresented {
@@ -206,6 +226,7 @@ struct ChatView: View {
         .onChange(of: isPresented) { presented in
             if !presented {
                 showPhotoStrip = false
+                revealAlbum = false
             }
         }
         .overlay {
@@ -228,6 +249,7 @@ struct ChatView: View {
     }
 
     private static let bottomAnchorID = "chat-bottom"
+    private static let messagePageSize = 24
 
     private func pinToLatest(_ scrollViewProxy: ScrollViewProxy) {
         guard isPresented, reactingMessageID == nil else { return }
@@ -256,6 +278,8 @@ struct ChatView: View {
         showPhotoStrip = false
         fullScreenImage = nil
         reactingMessageID = nil
+        visibleCount = Self.messagePageSize
+        revealAlbum = false
         if isPresented {
             isTextFieldFocused = true
         }

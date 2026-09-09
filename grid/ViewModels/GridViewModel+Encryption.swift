@@ -69,8 +69,15 @@ extension GridViewModel {
     
     // Decrypt image for display
     func decryptImageMessage(_ message: Message) -> Data? {
+        if failedDecryptIDs.contains(message.id) {
+            return nil
+        }
         if let cached = decryptedImageCache[message.id] {
             return cached
+        }
+        if let disk = PhotoDiskCache.load(kind: .message, id: message.id) {
+            decryptedImageCache[message.id] = disk
+            return disk
         }
         guard message.isEncrypted,
               let encryptedImageDataString = message.encryptedImageData,
@@ -81,11 +88,11 @@ extension GridViewModel {
         
         if let decryptedImageData = CryptoService.shared.decryptImage(data: encryptedImageData, withPrivateKey: privateKey) {
             decryptedImageCache[message.id] = decryptedImageData
+            PhotoDiskCache.save(kind: .message, id: message.id, data: decryptedImageData)
             return decryptedImageData
-        } else {
-            print("Failed to decrypt image message")
-            return nil
         }
+        failedDecryptIDs.insert(message.id)
+        return nil
     }
 
     // NEW: Report a user for inappropriate content
@@ -324,10 +331,17 @@ extension GridViewModel {
     }
 
     func messageIsReadable(_ message: Message) -> Bool {
-        MessageDecryptabilityLogic.isReadable(message)
+        if failedDecryptIDs.contains(message.id) { return false }
+        if message.encryptedImageData != nil {
+            return true
+        }
+        if message.isEncrypted {
+            return !MessageDecryptabilityLogic.isUndecryptableText(decryptMessage(message))
+        }
+        return true
     }
 
     func readableMessages() -> [Message] {
-        MessageDecryptabilityLogic.visible(in: messages)
+        messages.filter(messageIsReadable)
     }
 }

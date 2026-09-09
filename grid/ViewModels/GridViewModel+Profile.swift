@@ -47,6 +47,10 @@ extension GridViewModel {
         for index in updated.indices where readReceipts.contains(updated[index].id) {
             updated[index].status = .sent
         }
+        guard MessageInboxLogic.hasNewOrChanged(local: messages, incoming: updated) else {
+            mergeLocalLLMMessages()
+            return
+        }
         messages = MessageInboxLogic.merge(local: messages, incoming: updated)
         mergeLocalLLMMessages()
         MessageInboxStore.save(messages)
@@ -78,7 +82,7 @@ extension GridViewModel {
         }
     }
 
-    func refreshIncomingMessages(completion: (() -> Void)? = nil) {
+    func refreshIncomingMessages(includeFullHistory: Bool = false, completion: (() -> Void)? = nil) {
         guard let deviceID = currentUserProfile?.deviceID else {
             completion?()
             return
@@ -89,52 +93,43 @@ extension GridViewModel {
                 return
             }
             self.applyIncomingMessages(pending)
-            completion?()
-            self.fetchAllMessagesForCurrentDevice(deviceID: deviceID)
+            let since = includeFullHistory
+                ? nil
+                : MessageInboxLogic.querySince(newestLocal: self.messages.map(\.timestamp).max())
+            self.fetchAllMessagesForCurrentDevice(deviceID: deviceID, since: since, completion: completion)
         }
     }
 
-    // Enhanced: Fetch ALL messages for the current device (for all conversations)
-    func fetchAllMessagesForCurrentDevice(deviceID: String, completion: (() -> Void)? = nil) {
-        print("GridViewModel: Fetching ALL messages for device \(deviceID) to preload chats...")
-        
-        messagingService.fetchMessages(forDeviceID: deviceID) { [weak self] result in
+    func fetchAllMessagesForCurrentDevice(deviceID: String, since: Date? = nil, completion: (() -> Void)? = nil) {
+        guard !isFetchingAllMessages else {
+            completion?()
+            return
+        }
+        isFetchingAllMessages = true
+        messagingService.fetchMessages(forDeviceID: deviceID, since: since) { [weak self] result in
             guard let self = self else {
                 completion?()
                 return
             }
+            self.isFetchingAllMessages = false
             switch result {
             case .success(let fetchedMessages):
                 self.applyIncomingMessages(fetchedMessages)
-                
-                print("GridViewModel: Preloaded \(self.messages.count) messages for instant chat access. Statuses set.")
-                
-                let conversations = Dictionary(grouping: self.messages) { message in
-                    let otherDeviceID = message.senderDeviceID == deviceID ? message.recipientDeviceID : message.senderDeviceID
-                    return otherDeviceID
-                }
-                print("GridViewModel: Messages organized into \(conversations.count) conversations:")
-                for (otherDeviceID, conversationMessages) in conversations {
-                    let displayName = otherDeviceID == deviceID ? "You" : "Device \(String(otherDeviceID.prefix(8)))"
-                    print("  - \(displayName): \(conversationMessages.count) messages")
-                }
-                
-            case .failure(let error):
-                print("GridViewModel: Error preloading messages for device \(deviceID): \(error.localizedDescription)")
+            case .failure:
                 self.mergeLocalLLMMessages()
             }
             completion?()
         }
     }
-    
-    // NEW: Get messages for a specific conversation (already loaded)
+
     func getMessagesForConversation(with deviceID: String) -> [Message] {
         guard let currentDeviceID = currentUserProfile?.deviceID else { return [] }
-        return MessageConversationLogic.messages(
+        let thread = MessageConversationLogic.messages(
             inConversationWith: deviceID,
             currentDeviceID: currentDeviceID,
-            from: readableMessages()
+            from: messages
         )
+        return thread.filter(messageIsReadable)
     }
 
     func getConversationList() -> [MessageConversationLogic.ConversationSummary] {

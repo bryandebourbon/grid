@@ -45,6 +45,26 @@ struct Album: Identifiable {
     
     // MARK: - Initializers
     
+    init(
+        id: String,
+        ownerUserID: String,
+        ownerDeviceID: String,
+        title: String,
+        createdDate: Date,
+        pinnedPhotos: [CKAsset],
+        photoMetadata: [PhotoMetadata],
+        recordID: CKRecord.ID?
+    ) {
+        self.id = id
+        self.ownerUserID = ownerUserID
+        self.ownerDeviceID = ownerDeviceID
+        self.title = title
+        self.createdDate = createdDate
+        self.pinnedPhotos = pinnedPhotos
+        self.photoMetadata = photoMetadata
+        self.recordID = recordID
+    }
+
     // Create new album
     init(ownerUserID: String, ownerDeviceID: String, title: String = "My Album") {
         self.id = UUID().uuidString

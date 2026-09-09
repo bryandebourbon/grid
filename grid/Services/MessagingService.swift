@@ -101,12 +101,46 @@ class MessagingService: ObservableObject {
         }
     }
 
-    func fetchMessages(forDeviceID deviceID: String, completion: @escaping (Result<[Message], Error>) -> Void) {
-        // CloudKit has restrictions on compound predicates, so we'll make two separate queries and combine results
-        let sentQuery = CKQuery(recordType: "Messages", predicate: NSPredicate(format: "senderDeviceID == %@", deviceID))
+    func fetchMessages(
+        forDeviceID deviceID: String,
+        since: Date? = nil,
+        completion: @escaping (Result<[Message], Error>) -> Void
+    ) {
+        performMessageQueries(deviceID: deviceID, since: since) { [weak self] result in
+            if case .failure(let error) = result, since != nil, Self.shouldRetryWithoutSince(error) {
+                self?.performMessageQueries(deviceID: deviceID, since: nil, completion: completion)
+                return
+            }
+            completion(result)
+        }
+    }
+
+    private static func shouldRetryWithoutSince(_ error: Error) -> Bool {
+        guard let ckError = error as? CKError else { return false }
+        return ckError.code == .invalidArguments || ckError.code == .unknownItem
+    }
+
+    private static func messagePredicate(deviceField: String, deviceID: String, since: Date?) -> NSPredicate {
+        if let since {
+            return NSPredicate(
+                format: "%K == %@ AND timestamp > %@",
+                deviceField,
+                deviceID,
+                since as NSDate
+            )
+        }
+        return NSPredicate(format: "%K == %@", deviceField, deviceID)
+    }
+
+    private func performMessageQueries(
+        deviceID: String,
+        since: Date?,
+        completion: @escaping (Result<[Message], Error>) -> Void
+    ) {
+        let sentQuery = CKQuery(recordType: "Messages", predicate: Self.messagePredicate(deviceField: "senderDeviceID", deviceID: deviceID, since: since))
         sentQuery.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
-        
-        let receivedQuery = CKQuery(recordType: "Messages", predicate: NSPredicate(format: "recipientDeviceID == %@", deviceID))
+
+        let receivedQuery = CKQuery(recordType: "Messages", predicate: Self.messagePredicate(deviceField: "recipientDeviceID", deviceID: deviceID, since: since))
         receivedQuery.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
         
         var allMessages: [Message] = []
@@ -160,8 +194,7 @@ class MessagingService: ObservableObject {
             }
             let uniqueMessages = Array(messageDict.values).sorted { $0.timestamp < $1.timestamp }
             
-            print("Fetched \(uniqueMessages.count) messages from public database for deviceID: \(deviceID)")
-            self.receivedMessages = uniqueMessages // Update published property
+            self.receivedMessages = uniqueMessages
             completion(.success(uniqueMessages))
         }
     }

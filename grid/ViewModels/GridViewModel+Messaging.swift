@@ -14,7 +14,6 @@ extension GridViewModel {
     func selectChatPartner(partnerDeviceID: String) {
         self.currentChatRecipientDeviceID = partnerDeviceID
         ForegroundChatState.partnerDeviceID = partnerDeviceID
-        print("Selected chat partner device: \(partnerDeviceID)")
     }
 
     func openChatOverlay(with deviceID: String) {

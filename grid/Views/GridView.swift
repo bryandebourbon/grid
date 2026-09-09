@@ -195,7 +195,6 @@ struct GridView: View {
             await viewModel.refreshPeopleAndMessages()
         }
         .scrollDisabled(zoom.scrollDisabled)
-        .simultaneousGesture(peopleTabSwipeGesture)
         .simultaneousGesture(zoom.pinchGesture)
         .simultaneousGesture(zoom.pressThenDragZoomGesture)
         .background {
@@ -215,79 +214,6 @@ struct GridView: View {
 
     private var canSwipePeopleTabs: Bool {
         !viewModel.chatOverlaySession.isPresented && !showingBioStoriesOverlay && !zoom.isScaling
-    }
-
-    private var peopleTabSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onChanged { value in
-                if abs(value.translation.width) > abs(value.translation.height) {
-                    zoom.resetPressState()
-                }
-                PeopleTabSwipeTrace.drag(
-                    "changed",
-                    translation: value.translation,
-                    canSwipe: canSwipePeopleTabs,
-                    tab: viewModel.peopleTab
-                )
-            }
-            .onEnded { value in
-                PeopleTabSwipeTrace.drag(
-                    "ended",
-                    translation: value.translation,
-                    canSwipe: canSwipePeopleTabs,
-                    tab: viewModel.peopleTab
-                )
-                handlePeopleTabDrag(value.translation)
-            }
-    }
-
-    private func handlePeopleTabDrag(_ translation: CGSize) {
-        if abs(translation.width) > abs(translation.height) {
-            zoom.resetPressState()
-        }
-        if !canSwipePeopleTabs {
-            PeopleTabSwipeTrace.log(
-                "blocked canSwipe=false chat=\(viewModel.chatOverlaySession.isPresented) " +
-                "stories=\(showingBioStoriesOverlay) zoom(scale=\(zoom.isScaling) drag=\(zoom.isDragging) " +
-                "press=\(zoom.isLongPressing))"
-            )
-            return
-        }
-        guard abs(translation.width) > abs(translation.height) else {
-            PeopleTabSwipeTrace.log("ignored vertical dx=\(Int(translation.width)) dy=\(Int(translation.height))")
-            return
-        }
-        let next = GridPeopleTabPaging.tabAfterSwipe(
-            translation: translation.width,
-            current: viewModel.peopleTab,
-            tabs: viewModel.orderedPeopleTabs
-        )
-        if GridPeopleTabPaging.shouldPromptRemoveInterestToAdd(
-            translation: translation.width,
-            current: viewModel.peopleTab,
-            tabs: viewModel.orderedPeopleTabs,
-            canAddInterestPage: viewModel.canAddInterestPage
-        ) {
-            PeopleTabSwipeTrace.log("decision swipe -> interest cap popover")
-            showingInterestCapPopover = true
-            return
-        }
-        if GridPeopleTabPaging.shouldOpenInterestSearch(
-            translation: translation.width,
-            current: viewModel.peopleTab,
-            tabs: viewModel.orderedPeopleTabs,
-            canAddInterestPage: viewModel.canAddInterestPage
-        ) {
-            PeopleTabSwipeTrace.log("decision swipe -> interest search")
-            openInterestSearch()
-            return
-        }
-        if next == viewModel.peopleTab {
-            PeopleTabSwipeTrace.log("ignored short horizontal dx=\(Int(translation.width))")
-            return
-        }
-        PeopleTabSwipeTrace.log("decision swipe -> \(next.rawValue)")
-        movePeopleTab(to: next)
     }
 
     private func handlePeopleTabSwipe(translation: CGFloat) {

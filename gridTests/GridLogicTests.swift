@@ -161,6 +161,21 @@ struct MessageConversationLogicTests {
         #expect(thread.map(\.id) == ["c", "a"])
     }
 
+    @Test func newestPageKeepsOnlyTheLatestMessages() {
+        let messages = (1...5).map { index in
+            message(
+                id: "\(index)",
+                from: "me",
+                to: "bob",
+                text: "\(index)",
+                at: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        #expect(MessageConversationLogic.newestPage(from: messages, count: 3).map(\.id) == ["3", "4", "5"])
+        #expect(MessageConversationLogic.newestPage(from: messages, count: 8).map(\.id) == messages.map(\.id))
+        #expect(MessageConversationLogic.newestPage(from: messages, count: 0).isEmpty)
+    }
+
     @Test func lastSelfMessageIsTheLatestNoteToSelf() {
         let older = message(id: "old", from: "me", to: "me", text: "first", at: Date(timeIntervalSince1970: 100))
         let newer = message(id: "new", from: "me", to: "me", text: "later", at: Date(timeIntervalSince1970: 200))
@@ -866,6 +881,19 @@ struct MessageInboxLogicTests {
         #expect(MessageInboxLogic.persistable([keep, sending, llm]).map(\.id) == ["1"])
     }
 
+    @Test func querySinceIsNilUntilTheInboxHasAMessage() {
+        #expect(MessageInboxLogic.querySince(newestLocal: nil) == nil)
+        let newest = Date(timeIntervalSince1970: 1000)
+        #expect(MessageInboxLogic.querySince(newestLocal: newest) == newest.addingTimeInterval(-90))
+    }
+
+    @Test func hasNewOrChangedSkipsRecordsAlreadyInTheCache() {
+        let existing = message(id: "1", text: "hi", status: .received)
+        #expect(MessageInboxLogic.hasNewOrChanged(local: [existing], incoming: [existing]) == false)
+        let newer = message(id: "2", text: "later", status: .received)
+        #expect(MessageInboxLogic.hasNewOrChanged(local: [existing], incoming: [newer]))
+    }
+
     @Test func pendingStoreEnqueuesAndRemoves() {
         let defaults = UserDefaults(suiteName: "grid.pendingMessage.tests")!
         defaults.removePersistentDomain(forName: "grid.pendingMessage.tests")
@@ -875,6 +903,17 @@ struct MessageInboxLogicTests {
         #expect(Set(PendingMessageFetchStore.all(defaults: defaults)) == ["rec-1", "rec-2"])
         PendingMessageFetchStore.remove("rec-1", defaults: defaults)
         #expect(PendingMessageFetchStore.all(defaults: defaults) == ["rec-2"])
+    }
+}
+
+struct AlbumCacheLogicTests {
+    @Test func albumRefreshOnlyWhenPinnedStoryIDsChange() {
+        #expect(AlbumCacheLogic.needsRefresh(cachedIDs: ["a", "b"], incomingIDs: ["a", "b"]) == false)
+        #expect(AlbumCacheLogic.needsRefresh(cachedIDs: ["a"], incomingIDs: ["a", "b"]))
+        #expect(AlbumCacheLogic.needsRefresh(cachedIDs: ["a", "b"], incomingIDs: ["b", "a"]))
+        #expect(AlbumCacheLogic.storyIDs(in: [
+            PhotoMetadata(storyID: "s1", originalStoryDate: Date(timeIntervalSince1970: 1))
+        ]) == ["s1"])
     }
 }
 

@@ -76,6 +76,9 @@ class GridViewModel: ObservableObject {
     /// Avoid re-decrypting the same message every time a chat row re-renders.
     var decryptedTextCache: [String: String] = [:]
     var decryptedImageCache: [String: Data] = [:]
+    var failedDecryptIDs: Set<String> = []
+    var isFetchingAllMessages = false
+    var albumRefreshInFlight = Set<String>()
 
     func presentUserFacingAlert(_ message: String) {
         userFacingAlert = message

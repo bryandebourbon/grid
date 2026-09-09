@@ -188,11 +188,8 @@ struct ChatOverlayView: View {
     }
 
     private func activateVisibleThread() {
-        ChatOpenTrace.mark("overlay.activate \(recipientDeviceID.prefix(8))")
         viewModel.selectChatPartner(partnerDeviceID: recipientDeviceID)
-        viewModel.refreshIncomingMessages {
-            self.viewModel.markMessagesAsRead(from: self.recipientDeviceID)
-        }
+        viewModel.markMessagesAsRead(from: recipientDeviceID)
     }
 }
 
