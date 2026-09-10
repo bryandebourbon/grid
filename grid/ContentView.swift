@@ -200,8 +200,7 @@ struct ContentView: View {
             "latitude",
             "longitude",
             "lastActiveTimestamp",
-            "isCurrentlyActive",
-            "isDiscoverable"
+            "isCurrentlyActive"
         ]
         fetchOperation.fetchRecordsCompletionBlock = { recordsByRecordID, error in
             DispatchQueue.main.async {
@@ -289,7 +288,6 @@ struct ContentView: View {
         appleUserID = nil
         userProfile = nil
         gridViewModel.currentUserProfile = nil
-        gridViewModel.setShowsHiddenPeople(false)
         showSignInView = true
         showAskDisplayName = false
         isLoadingProfile = false

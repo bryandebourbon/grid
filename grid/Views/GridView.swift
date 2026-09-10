@@ -24,6 +24,7 @@ struct GridView: View {
         ? false
         : UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false
     @AppStorage("grid.chatAlbumButton") private var showChatAlbumButton = false
+    @AppStorage("grid.showZoomControls") private var showZoomControls = false
     @State private var showBioBubbles = {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "grid.bioBubbles") == nil {
@@ -52,6 +53,7 @@ struct GridView: View {
     @State private var showingMasterPassword = false
     @State private var showingWrongMasterPassword = false
     @State private var masterPassword = ""
+    @State private var isRefreshingPeople = false
     private static let aboveDrawerControlsHeight: CGFloat = 52
 
     private var gridScrollBottomInset: CGFloat {
@@ -92,6 +94,13 @@ struct GridView: View {
         } else {
             showingWrongMasterPassword = true
         }
+    }
+
+    private var heatmapRadiusBinding: Binding<Int> {
+        Binding(
+            get: { InterestPlaceHeatmapLogic.kilometers(fromMeters: viewModel.heatmapSearchRadiusMeters) },
+            set: { viewModel.setHeatmapSearchRadius(InterestPlaceHeatmapLogic.meters(fromKilometers: $0)) }
+        )
     }
 
     private var showSelfOnGridBinding: Binding<Bool> {
@@ -395,6 +404,18 @@ struct GridView: View {
                 Label("Status bubbles", systemImage: "text.bubble")
             }
 
+            Picker(selection: heatmapRadiusBinding) {
+                ForEach(InterestPlaceHeatmapLogic.presetKilometers, id: \.self) { km in
+                    Text("\(km) km").tag(km)
+                }
+            } label: {
+                Label("Heatmap radius", systemImage: "circle.dotted")
+            }
+
+            Toggle(isOn: $showZoomControls) {
+                Label("Zoom buttons", systemImage: "plus.magnifyingglass")
+            }
+
             Toggle(isOn: $showChatAlbumButton) {
                 Label("Album button in chat", systemImage: "photo.on.rectangle")
             }
@@ -486,14 +507,26 @@ struct GridView: View {
         .accessibilityIdentifier(GridUITestHarness.settingsIdentifier)
     }
 
+    private var peopleGridButton: some View {
+        Button {
+            homePane = .people
+        } label: {
+            paneCircleLabel(systemImage: "square.grid.2x2.fill", isActive: homePane == .people)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Grid")
+        .accessibilityAddTraits(homePane == .people ? [.isSelected] : [])
+        .accessibilityIdentifier("grid.people")
+    }
+
     private var peopleMapButton: some View {
         Button {
-            toggleHomePane(.map)
+            homePane = .map
         } label: {
             paneCircleLabel(systemImage: "map.fill", isActive: homePane == .map)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(homePane == .map ? "Show grid" : "Map")
+        .accessibilityLabel("Map")
         .accessibilityAddTraits(homePane == .map ? [.isSelected] : [])
         .accessibilityIdentifier("grid.map")
     }
@@ -512,6 +545,44 @@ struct GridView: View {
         .accessibilityValue(viewModel.isDiscoverable ? "Visible" : "Hidden")
         .accessibilityAddTraits(viewModel.isDiscoverable ? [] : [.isSelected])
         .accessibilityIdentifier("grid.visibility")
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task { await refreshFromToolbar() }
+        } label: {
+            ZStack {
+                paneCircleLabel(
+                    systemImage: "arrow.clockwise",
+                    isActive: isRefreshingPeople
+                )
+                .opacity(isRefreshingPeople ? 0 : 1)
+                if isRefreshingPeople {
+                    ProgressView()
+                        .tint(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.blue, in: Circle())
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay {
+                            Circle()
+                                .stroke(Color.white.opacity(0.35), lineWidth: 0.5)
+                        }
+                        .shadow(color: .black.opacity(0.22), radius: 8, y: 2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isRefreshingPeople)
+        .accessibilityLabel("Refresh")
+        .accessibilityIdentifier("grid.refresh")
+    }
+
+    @MainActor
+    private func refreshFromToolbar() async {
+        guard isRefreshingPeople == false else { return }
+        isRefreshingPeople = true
+        await viewModel.refreshPeopleAndMessages()
+        isRefreshingPeople = false
     }
 
     private var uiTestHarnessBar: some View {
@@ -690,10 +761,12 @@ struct GridView: View {
                     VStack(spacing: 8) {
                         HStack {
                             conversationsButton
+                            peopleGridButton
                             peopleMapButton
                             visibilityButton
+                            refreshButton
                             Spacer()
-                            if homePane == .people {
+                            if homePane == .people, showZoomControls {
                                 zoomControls
                             }
                             aboveDrawerControls

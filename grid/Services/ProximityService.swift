@@ -9,6 +9,9 @@ class ProximityService: ObservableObject {
     
     private var cancellables = Set<AnyCancellable>()
     private var lastKnownLocation: CLLocation? // Store last known location
+    private var latestActivityProfile: UserProfile?
+    private var activitySaveCompletions: [(Result<UserProfile, Error>) -> Void] = []
+    private var isSavingActivity = false
     
     init() {
         // No automatic timer - only refresh on demand
@@ -105,37 +108,83 @@ class ProximityService: ObservableObject {
             )))
             return
         }
-        print("DEBUG: Saving profile to CloudKit - lat: \(profile.latitude ?? 0), lon: \(profile.longitude ?? 0)")
-        
-        let record = profile.toPublicCKRecord()
-        
-        // Debug: Check what's in the CloudKit record
-        print("DEBUG: CloudKit record latitude: \(record["latitude"] ?? "nil")")
-        print("DEBUG: CloudKit record longitude: \(record["longitude"] ?? "nil")")
-        
+        print("DEBUG: Saving profile to CloudKit - lat: \(profile.latitude ?? 0), lon: \(profile.longitude ?? 0), discoverable: \(profile.isDiscoverable)")
+        DispatchQueue.main.async {
+            self.latestActivityProfile = profile
+            self.activitySaveCompletions.append(completion)
+            self.pumpActivitySave()
+        }
+    }
+
+    private func pumpActivitySave() {
+        guard isSavingActivity == false, let profile = latestActivityProfile else { return }
+        latestActivityProfile = nil
+        let completions = activitySaveCompletions
+        activitySaveCompletions = []
+        isSavingActivity = true
+        performActivitySave(profile) { [weak self] result in
+            guard let self else { return }
+            self.isSavingActivity = false
+            completions.forEach { $0(result) }
+            self.pumpActivitySave()
+        }
+    }
+
+    private func performActivitySave(
+        _ profile: UserProfile,
+        completion: @escaping (Result<UserProfile, Error>) -> Void
+    ) {
+        let recordID = CKRecord.ID(recordName: profile.deviceID)
+        publicDB.fetch(withRecordID: recordID) { [weak self] existing, error in
+            guard let self else { return }
+
+            let record: CKRecord
+            if let existing {
+                record = existing
+                profile.applyPublicFields(to: record)
+            } else if let ckError = error as? CKError, ckError.code == .unknownItem {
+                record = profile.toPublicCKRecord()
+            } else if let error {
+                DispatchQueue.main.async { completion(.failure(error)) }
+                return
+            } else {
+                record = profile.toPublicCKRecord()
+            }
+
+            self.savePublicProfile(record, completion: completion)
+        }
+    }
+
+    private func savePublicProfile(
+        _ record: CKRecord,
+        completion: @escaping (Result<UserProfile, Error>) -> Void
+    ) {
         let modifyOperation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
         modifyOperation.savePolicy = .changedKeys
-        modifyOperation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, error in
+        modifyOperation.modifyRecordsCompletionBlock = { savedRecords, _, error in
             DispatchQueue.main.async {
-                if let error = error {
+                if let error {
                     print("Error updating user activity: \(error.localizedDescription)")
                     completion(.failure(error))
                     return
                 }
-                
+
                 guard let savedRecord = savedRecords?.first,
                       let updatedProfile = UserProfile(record: savedRecord) else {
                     print("Failed to process updated profile record")
-                    completion(.failure(NSError(domain: "ProximityService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to process updated profile."])))
+                    completion(.failure(NSError(
+                        domain: "ProximityService",
+                        code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to process updated profile."]
+                    )))
                     return
                 }
-                
-                print("Updated user activity for device: \(updatedProfile.deviceName)")
+
+                print("Updated user activity for device: \(updatedProfile.deviceName) discoverable=\(updatedProfile.isDiscoverable)")
                 print("DEBUG: Saved profile lat: \(updatedProfile.latitude ?? 0), lon: \(updatedProfile.longitude ?? 0)")
                 completion(.success(updatedProfile))
             }
         }
-        
         publicDB.add(modifyOperation)
     }
     

@@ -125,26 +125,23 @@ struct UserProfile: Codable {
         self.longitude = record["longitude"] as? Double
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
         self.isCurrentlyActive = record["isCurrentlyActive"] as? Bool ?? false
+        let interestStrings = record["interests"] as? [String] ?? []
         self.isDiscoverable = VisibilityOnboardingLogic.discoverable(
-            stored: Self.optionalBool(from: record["isDiscoverable"])
+            field: Self.optionalBool(from: record["isDiscoverable"]),
+            interestStrings: interestStrings
         )
         self.bio = record["bio"] as? String
-        
-        // Handle interests from CloudKit - stored as array of strings
-        if let interestStrings = record["interests"] as? [String] {
-            self.interests = interestStrings
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .map { Interest(rawValue: $0) }
-        } else {
-            self.interests = []
-        }
+        self.interests = VisibilityOnboardingLogic.interests(from: interestStrings)
     }
 
     // Helper to create/update a CKRecord for PUBLIC database (grid visibility)
     func toPublicCKRecord() -> CKRecord {
         let record = CKRecord(recordType: "UserProfiles", recordID: CKRecord.ID(recordName: self.deviceID))
-        
+        applyPublicFields(to: record, includeEmptyPhoto: true)
+        return record
+    }
+
+    func applyPublicFields(to record: CKRecord, includeEmptyPhoto: Bool = false) {
         record["userID"] = self.userID
         record["deviceID"] = self.deviceID
         record["deviceName"] = self.deviceName
@@ -154,19 +151,16 @@ struct UserProfile: Codable {
         }
         record["lastActiveTimestamp"] = self.lastActiveTimestamp
         record["isCurrentlyActive"] = self.isCurrentlyActive
-        record["isDiscoverable"] = self.isDiscoverable
         record["bio"] = self.bio
-        
-        // Store interests as array of strings for CloudKit compatibility
-        record["interests"] = self.interests.map { $0.rawValue }
-        
+        record["interests"] = VisibilityOnboardingLogic.publicInterestStrings(
+            from: self.interests,
+            isDiscoverable: self.isDiscoverable
+        )
         if let imageAsset = self.profileImage {
             record["profileImage"] = imageAsset
-        } else {
+        } else if includeEmptyPhoto {
             record["profileImage"] = nil
         }
-        
-        return record
     }
     
     // Helper to create/update a CKRecord for PRIVATE database (personal backup)

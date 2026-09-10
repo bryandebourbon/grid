@@ -26,10 +26,16 @@ enum GridPresenceLogic {
     static func isVisibleToOthers(_ profile: UserProfile) -> Bool {
         shouldShowPeer(profile) && profile.isDiscoverable
     }
+
+    /// Hidden users do not appear as themselves on the grid or map.
+    static func showsSelfAvatar(isDiscoverable: Bool, showsSelfOnGrid: Bool) -> Bool {
+        isDiscoverable && showsSelfOnGrid
+    }
 }
 
 enum GridMasterViewerLogic {
     static let unlockPassword = "+ywoyd!"
+    static let defaultsKey = "grid.masterViewerUnlocked"
 
     static func acceptsPassword(_ raw: String?) -> Bool {
         raw == unlockPassword
@@ -37,6 +43,14 @@ enum GridMasterViewerLogic {
 
     static func unlocking(enabled: Bool, password: String?) -> Bool {
         enabled && acceptsPassword(password)
+    }
+
+    static func loadEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: defaultsKey)
+    }
+
+    static func storeEnabled(_ enabled: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: defaultsKey)
     }
 
     static func shouldShowPeer(_ profile: UserProfile, includeHidden: Bool) -> Bool {
@@ -50,9 +64,33 @@ enum GridMasterViewerLogic {
 }
 
 enum VisibilityOnboardingLogic {
-    /// Missing field means hidden. Users opt in with the eye button.
+    /// Production CloudKit does not have an `isDiscoverable` field yet.
+    /// Visibility is stored on the existing public `interests` list.
+    static let visibleToken = "grid.visible"
+
+    /// Missing CloudKit value means hidden.
     static func discoverable(stored: Bool?) -> Bool {
         stored ?? false
+    }
+
+    static func discoverable(field: Bool?, interestStrings: [String]) -> Bool {
+        if let field { return field }
+        return interestStrings.contains(visibleToken)
+    }
+
+    static func publicInterestStrings(from interests: [Interest], isDiscoverable: Bool) -> [String] {
+        var values = interests.map(\.rawValue).filter { $0 != visibleToken }
+        if isDiscoverable {
+            values.append(visibleToken)
+        }
+        return values
+    }
+
+    static func interests(from strings: [String]) -> [Interest] {
+        strings
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false && $0 != visibleToken }
+            .map { Interest(rawValue: $0) }
     }
 
     static func shouldAskOnLogin(isNewAccount: Bool) -> Bool {

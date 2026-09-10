@@ -15,6 +15,8 @@ extension GridViewModel {
     func refreshPeopleAndMessages() async {
         guard !locksGridToFixtures else { return }
         locationService.requestLocationOnce()
+        recordInterestFootsteps(for: currentUserProfile)
+        refreshInterestHeatmap()
         async let people: Void = refreshNearbyPeople()
         async let messages: Void = refreshAllConversations()
         async let catalog: Void = refreshSharedInterestCatalogAsync()
@@ -114,6 +116,7 @@ extension GridViewModel {
         
         // Update activity status in CloudKit (without refreshing the grid)
         updateUserActivityAndLocation(profile)
+        syncFootstepTracking()
 
         refreshIncomingMessages(includeFullHistory: false)
     }

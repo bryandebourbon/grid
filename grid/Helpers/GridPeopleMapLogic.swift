@@ -44,8 +44,9 @@ enum GridPeopleMapLogic {
             let deviceID = PersonIdentity.id(forDeviceID: profile.deviceID)
             guard deviceID.isEmpty == false, seen.insert(deviceID).inserted else { continue }
             let isCurrentUser = deviceID == currentDeviceID
-            if isCurrentUser == false
-                && GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: includeHidden) == false {
+            if isCurrentUser {
+                if profile.isDiscoverable == false { continue }
+            } else if GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: includeHidden) == false {
                 continue
             }
             pins.append(
@@ -75,13 +76,12 @@ enum GridPeopleMapLogic {
     }
 
     static func region(
-        for pins: [Pin]
+        for pins: [Pin],
+        blobs: [InterestFootstepLogic.HeatBlob] = []
     ) -> MKCoordinateRegion? {
-        if pins.isEmpty {
-            return nil
-        }
-        let latitudes = pins.map(\.latitude)
-        let longitudes = pins.map(\.longitude)
+        let latitudes = pins.map(\.latitude) + blobs.map(\.latitude)
+        let longitudes = pins.map(\.longitude) + blobs.map(\.longitude)
+        guard latitudes.isEmpty == false, longitudes.isEmpty == false else { return nil }
         let minLat = latitudes.min() ?? 0
         let maxLat = latitudes.max() ?? 0
         let minLon = longitudes.min() ?? 0

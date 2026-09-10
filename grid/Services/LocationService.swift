@@ -8,6 +8,7 @@ class LocationService: NSObject, ObservableObject {
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     
     private var locationUpdateTimer: Timer?
+    private var isWalkUpdating = false
     
     override init() {
         super.init()
@@ -50,10 +51,31 @@ class LocationService: NSObject, ObservableObject {
     }
     
     func stopLocationUpdates() {
+        isWalkUpdating = false
         locationManager.stopUpdatingLocation()
         locationUpdateTimer?.invalidate()
         locationUpdateTimer = nil
         print("Stopped location updates")
+    }
+
+    func startWalkUpdates() {
+        guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
+            print("Location permission not granted")
+            return
+        }
+        guard isWalkUpdating == false else { return }
+        isWalkUpdating = true
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = 40
+        locationManager.startUpdatingLocation()
+        print("Started walk location updates")
+    }
+
+    func stopWalkUpdates() {
+        guard isWalkUpdating else { return }
+        isWalkUpdating = false
+        locationManager.stopUpdatingLocation()
+        print("Stopped walk location updates")
     }
     
     // NEW: Request location just once when needed
@@ -91,6 +113,9 @@ extension LocationService: CLLocationManagerDelegate {
         DispatchQueue.main.async {
             self.currentLocation = location
             print("Location updated: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+            if self.isWalkUpdating {
+                manager.startUpdatingLocation()
+            }
         }
     }
     
@@ -117,6 +142,7 @@ extension LocationService: CLLocationManagerDelegate {
             case .authorizedWhenInUse, .authorizedAlways:
                 self.startLocationUpdates()
             case .denied, .restricted:
+                self.isWalkUpdating = false
                 self.stopLocationUpdates()
             default:
                 break

@@ -97,6 +97,8 @@ extension GridViewModel {
         print("DEBUG: Profile after location update - lat: \(profile.latitude ?? 0), lon: \(profile.longitude ?? 0)")
         
         updateUserActivityAndLocation(profile)
+        syncFootstepTracking()
+        refreshPlaceHeatmapIfNeeded()
 
         if shouldRefreshGridOnNextLocation {
             shouldRefreshGridOnNextLocation = false
@@ -126,8 +128,10 @@ extension GridViewModel {
 
         if LocationOnboardingLogic.shouldShowNearbyPeople(status: status) {
             refreshGridAfterLocationAccessGranted()
+            syncFootstepTracking()
         } else {
             updateGridWithAllProfiles([])
+            locationService.stopWalkUpdates()
         }
     }
 }

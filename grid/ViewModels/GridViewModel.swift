@@ -44,7 +44,7 @@ class GridViewModel: ObservableObject {
         }
         return defaults.bool(forKey: "grid.showSelfOnGrid")
     }()
-    @Published var showsHiddenPeople = false
+    @Published var showsHiddenPeople = GridMasterViewerLogic.loadEnabled()
 
     @Published var peopleTab: GridPeopleTab = .all {
         didSet {
@@ -54,8 +54,18 @@ class GridViewModel: ObservableObject {
             }
             guard oldValue != peopleTab else { return }
             gridNodes = nodes(for: peopleTab)
+            recordInterestFootsteps(for: currentUserProfile)
+            refreshInterestHeatmap()
         }
     }
+    @Published var interestHeatBlobs: [InterestFootstepLogic.HeatBlob] = []
+    var heatmapCache: [String: [InterestFootstepLogic.HeatBlob]] = [:]
+    var heatmapPlaceCache: [String: [InterestFootstepLogic.HeatBlob]] = [:]
+    var heatmapFootstepCache: [String: [InterestFootstepLogic.Sample]] = [:]
+    var heatmapFetchGeneration = 0
+    var lastPlaceSearchInterest: String?
+    var lastPlaceSearchLocation: CLLocation?
+    @Published var heatmapSearchRadiusMeters = InterestPlaceHeatmapLogic.load()
     @Published var customGroups: [PeopleGroup] = []
     @Published var customGroupNodes: [UUID: [[GridNode]]] = [:]
     @Published var interestPages: [Interest] = []
@@ -114,6 +124,8 @@ class GridViewModel: ObservableObject {
     let albumService: AlbumService
     let reportService: ReportService
     let sharedInterestService: SharedInterestService
+    let interestFootstepService: InterestFootstepService
+    let interestPlaceSearchService: InterestPlaceSearchService
     private let gridPopulationService = GridPopulationService()
     var cancellables = Set<AnyCancellable>()
     let gridSize = 5 // Max grid size for internal node storage
@@ -128,6 +140,8 @@ class GridViewModel: ObservableObject {
          albumService: AlbumService = AlbumService(),
          reportService: ReportService = ReportService(),
          sharedInterestService: SharedInterestService = SharedInterestService(),
+         interestFootstepService: InterestFootstepService = InterestFootstepService(),
+         interestPlaceSearchService: InterestPlaceSearchService = InterestPlaceSearchService(),
          initialProfile: UserProfile? = nil) {
         
         self.messagingService = messagingService
@@ -140,6 +154,8 @@ class GridViewModel: ObservableObject {
         self.albumService = albumService
         self.reportService = reportService
         self.sharedInterestService = sharedInterestService
+        self.interestFootstepService = interestFootstepService
+        self.interestPlaceSearchService = interestPlaceSearchService
         self.currentUserProfile = initialProfile
         initializeGrid()
         setupMessagingHandlers()
@@ -157,6 +173,8 @@ class GridViewModel: ObservableObject {
             loadInterestPins()
             loadHiddenConversations()
             messagingService.subscribeToMessageChanges(forDeviceID: profile.deviceID)
+            syncFootstepTracking()
+            refreshInterestHeatmap()
         }
         
         needsLocationOnboarding = LocationOnboardingLogic.shouldShowWelcome(
@@ -176,7 +194,10 @@ class GridViewModel: ObservableObject {
             starredUserIDs: memberUserIDs,
             favoritesOnly: membersOnly,
             showsLocalLLM: showsLocalLLM && hasLocationAccess,
-            showsSelfOnGrid: showsSelfOnGrid && hasLocationAccess,
+            showsSelfOnGrid: GridPresenceLogic.showsSelfAvatar(
+                isDiscoverable: isDiscoverable,
+                showsSelfOnGrid: showsSelfOnGrid
+            ) && hasLocationAccess,
             showsNearbyPeople: hasLocationAccess
         )
     }
@@ -272,6 +293,8 @@ class GridViewModel: ObservableObject {
         registerForInterest(interest)
         updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         peopleTab = .interest(interest.rawValue)
+        syncFootstepTracking()
+        recordInterestFootsteps(for: currentUserProfile)
     }
 
     func registerForInterest(_ interest: Interest) {
@@ -305,6 +328,9 @@ class GridViewModel: ObservableObject {
         } else {
             updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         }
+        syncFootstepTracking()
+        heatmapCache[interest.rawValue.lowercased()] = nil
+        refreshInterestHeatmap(force: peopleTab == .all)
     }
 
     @discardableResult
@@ -422,8 +448,21 @@ class GridViewModel: ObservableObject {
     func setShowsHiddenPeople(_ visible: Bool) {
         guard showsHiddenPeople != visible else { return }
         showsHiddenPeople = visible
+        GridMasterViewerLogic.storeEnabled(visible)
         updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         objectWillChange.send()
+    }
+
+    func setHeatmapSearchRadius(_ meters: CLLocationDistance) {
+        let next = InterestPlaceHeatmapLogic.clamped(meters)
+        guard next != heatmapSearchRadiusMeters else { return }
+        heatmapSearchRadiusMeters = next
+        InterestPlaceHeatmapLogic.store(next)
+        lastPlaceSearchInterest = nil
+        lastPlaceSearchLocation = nil
+        heatmapPlaceCache = [:]
+        heatmapCache = [:]
+        refreshInterestHeatmap(force: true)
     }
 
     func setDiscoverable(_ visible: Bool) {
@@ -434,7 +473,18 @@ class GridViewModel: ObservableObject {
             profile.markAsActive()
         }
         currentUserProfile = profile
+        refreshPeopleViewsAfterVisibilityChange()
         persistAndUpdateProfileAndGrid()
+        syncFootstepTracking()
+        refreshInterestHeatmap()
+    }
+
+    func refreshPeopleViewsAfterVisibilityChange() {
+        guard let profile = currentUserProfile else { return }
+        if let index = proximityService.activeNearbyProfiles.firstIndex(where: { $0.deviceID == profile.deviceID }) {
+            proximityService.activeNearbyProfiles[index] = profile
+        }
+        updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
         objectWillChange.send()
     }
 
@@ -626,24 +676,148 @@ class GridViewModel: ObservableObject {
     }
 
     func updateUserActivityAndLocation(_ profile: UserProfile) {
-        proximityService.updateUserActivity(profile) { result in
+        proximityService.updateUserActivity(profile) { [weak self] result in
             switch result {
             case .success(let updatedProfile):
-                print("Successfully updated user activity: \(updatedProfile.deviceName)")
+                print("Successfully updated user activity: \(updatedProfile.deviceName) discoverable=\(updatedProfile.isDiscoverable)")
+                self?.currentUserProfile = self?.mergingSavedProfile(updatedProfile) ?? updatedProfile
             case .failure(let error):
                 print("Error updating user activity: \(error.localizedDescription)")
             }
         }
+        recordInterestFootsteps(for: profile)
+    }
+
+    func syncFootstepTracking() {
+        let shouldTrack = InterestFootstepLogic.shouldTrackWalks(
+            isDiscoverable: isDiscoverable,
+            interests: currentUserProfile?.interests ?? [],
+            authorizationStatus: locationService.authorizationStatus
+        )
+        if shouldTrack {
+            locationService.startWalkUpdates()
+        } else {
+            locationService.stopWalkUpdates()
+        }
+    }
+
+    func refreshInterestHeatmap(force: Bool = false) {
+        guard InterestFootstepLogic.canViewHeatmap(tab: peopleTab, isDiscoverable: isDiscoverable),
+              let raw = InterestFootstepLogic.heatmapInterest(from: peopleTab) else {
+            heatmapFetchGeneration += 1
+            interestHeatBlobs = []
+            return
+        }
+        let cacheKey = raw.lowercased()
+        if heatmapFootstepCache[cacheKey] == nil {
+            heatmapFootstepCache[cacheKey] = InterestFootstepStore.load(interest: raw)
+        }
+        if force == false, let cached = heatmapCache[cacheKey], cached.isEmpty == false {
+            interestHeatBlobs = cached
+        } else {
+            publishHeatmap(interest: raw)
+        }
+        heatmapFetchGeneration += 1
+        let generation = heatmapFetchGeneration
+        interestFootstepService.fetch(interest: raw) { [weak self] samples in
+            guard let self, generation == self.heatmapFetchGeneration else { return }
+            self.heatmapFootstepCache[cacheKey] = InterestFootstepLogic.merging(
+                (self.heatmapFootstepCache[cacheKey] ?? []) + samples
+            )
+            self.publishHeatmap(interest: raw)
+        }
+        refreshPlaceHeatmap(interest: raw, force: force, generation: generation)
+    }
+
+    func refreshPlaceHeatmapIfNeeded() {
+        guard InterestFootstepLogic.canViewHeatmap(tab: peopleTab, isDiscoverable: isDiscoverable),
+              let raw = InterestFootstepLogic.heatmapInterest(from: peopleTab) else { return }
+        refreshPlaceHeatmap(interest: raw, force: false, generation: heatmapFetchGeneration)
+    }
+
+    private func refreshPlaceHeatmap(interest: String, force: Bool, generation: Int) {
+        guard locksGridToFixtures == false else { return }
+        guard GridUITestHarness.isActive == false else { return }
+        guard let location = locationService.currentLocation ?? currentUserProfile?.location else { return }
+        if force == false,
+           InterestPlaceHeatmapLogic.shouldSearch(
+            interest: interest,
+            at: location,
+            lastInterest: lastPlaceSearchInterest,
+            lastLocation: lastPlaceSearchLocation
+           ) == false {
+            return
+        }
+        lastPlaceSearchInterest = interest
+        lastPlaceSearchLocation = location
+        interestPlaceSearchService.search(
+            interest: interest,
+            around: location,
+            radiusMeters: heatmapSearchRadiusMeters
+        ) { [weak self] hits in
+            guard let self, generation == self.heatmapFetchGeneration else { return }
+            guard InterestFootstepLogic.heatmapInterest(from: self.peopleTab)?
+                .compare(interest, options: .caseInsensitive) == .orderedSame else { return }
+            self.heatmapPlaceCache[interest.lowercased()] = InterestPlaceHeatmapLogic.blobs(
+                from: hits,
+                radiusMeters: self.heatmapSearchRadiusMeters
+            )
+            self.publishHeatmap(interest: interest)
+        }
+    }
+
+    private func publishHeatmap(interest: String) {
+        guard InterestFootstepLogic.heatmapInterest(from: peopleTab)?
+            .compare(interest, options: .caseInsensitive) == .orderedSame else { return }
+        let key = interest.lowercased()
+        let merged = InterestPlaceHeatmapLogic.merging(
+            places: heatmapPlaceCache[key] ?? [],
+            footsteps: InterestFootstepLogic.blobs(from: heatmapFootstepCache[key] ?? [])
+        )
+        heatmapCache[key] = merged
+        interestHeatBlobs = merged
+    }
+
+    func recordInterestFootsteps(for profile: UserProfile?) {
+        guard locksGridToFixtures == false else { return }
+        guard GridUITestHarness.isActive == false else { return }
+        guard let profile else { return }
+        let location = locationService.currentLocation ?? profile.location
+        guard let location else { return }
+        let viewing = InterestFootstepLogic.heatmapInterest(from: peopleTab)
+        guard InterestFootstepLogic.shouldContribute(
+            profile: profile,
+            location: location,
+            viewingInterest: viewing
+        ) else { return }
+        let samples = interestFootstepService.recordVisit(
+            profile: profile,
+            location: location,
+            viewingInterest: viewing
+        )
+        guard let raw = viewing else { return }
+        let matching = InterestFootstepLogic.matching(samples, interest: raw)
+        guard matching.isEmpty == false else { return }
+        let key = raw.lowercased()
+        heatmapFootstepCache[key] = InterestFootstepLogic.merging(
+            (heatmapFootstepCache[key] ?? []) + matching
+        )
+        heatmapCache[key] = nil
+        publishHeatmap(interest: raw)
     }
     
     func placeCurrentUserOnGrid() {
         guard let profile = currentUserProfile else { return }
         GridPlacementLogic.removeProfile(deviceID: profile.deviceID, from: &gridNodes)
-        if showsSelfOnGrid {
+        let showsSelf = GridPresenceLogic.showsSelfAvatar(
+            isDiscoverable: isDiscoverable,
+            showsSelfOnGrid: showsSelfOnGrid
+        )
+        if showsSelf {
             GridPlacementLogic.place(profile: profile, in: &gridNodes, at: 0, col: 0)
         }
         if showsLocalLLM, findNode(forDeviceID: LocalLLMIdentity.deviceID) == nil {
-            let col = showsSelfOnGrid && (gridNodes.first?.count ?? 0) > 1 ? 1 : 0
+            let col = showsSelf && (gridNodes.first?.count ?? 0) > 1 ? 1 : 0
             if gridNodes.first?.indices.contains(col) == true, gridNodes[0][col].userProfile == nil {
                 GridPlacementLogic.place(profile: LocalLLMIdentity.profile, in: &gridNodes, at: 0, col: col)
             } else {

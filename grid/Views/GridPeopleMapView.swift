@@ -14,9 +14,12 @@ struct GridPeopleMapView: View {
             profile.deviceID == me?.deviceID
                 || GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: viewModel.seesHiddenPeople)
         }
-        let profiles = tabProfiles.isEmpty ? nearby : tabProfiles
+        let others = (tabProfiles.isEmpty ? nearby : tabProfiles).filter { profile in
+            profile.deviceID != me?.deviceID
+        }
+        let selfProfiles = viewModel.isDiscoverable ? [me].compactMap { $0 } : []
         return GridPeopleMapLogic.pins(
-            fromProfiles: profiles + [me].compactMap { $0 },
+            fromProfiles: others + selfProfiles,
             currentDeviceID: me?.deviceID,
             includeHidden: viewModel.seesHiddenPeople
         )
@@ -55,6 +58,16 @@ struct GridPeopleMapView: View {
                         .accessibilityLabel(pin.name)
                     }
                 }
+                ForEach(viewModel.interestHeatBlobs) { blob in
+                    Annotation("", coordinate: blob.coordinate, anchor: .center) {
+                        Circle()
+                            .fill(Color(red: 1, green: 0.18, blue: 0.24).opacity(blob.opacity))
+                            .frame(width: blob.radius, height: blob.radius)
+                            .allowsHitTesting(false)
+                    }
+                    .annotationTitles(.hidden)
+                    .annotationSubtitles(.hidden)
+                }
             }
             .mapStyle(.standard)
             .mapControls {
@@ -71,14 +84,29 @@ struct GridPeopleMapView: View {
             } else {
                 viewModel.locationService.requestLocationOnce()
             }
+            viewModel.recordInterestFootsteps(for: viewModel.currentUserProfile)
+            viewModel.refreshInterestHeatmap()
             fitPins()
         }
+        .refreshable {
+            await viewModel.refreshPeopleAndMessages()
+        }
         .onChange(of: pins.map(\.id)) { _ in
+            fitPins()
+        }
+        .onChange(of: viewModel.isDiscoverable) { _ in
             fitPins()
         }
         .onChange(of: viewModel.locationService.currentLocation?.coordinate.latitude) { _ in
             fitPins()
         }
+        .onChange(of: viewModel.interestHeatBlobs.map(\.id)) { _ in
+            fitPins()
+        }
+    }
+
+    private var cameraBlobs: [InterestFootstepLogic.HeatBlob] {
+        viewModel.interestHeatBlobs.filter { $0.id.hasPrefix("place.") == false }
     }
 
     private func profile(for pin: GridPeopleMapLogic.Pin) -> UserProfile? {
@@ -93,7 +121,7 @@ struct GridPeopleMapView: View {
     }
 
     private func fitPins() {
-        if let region = GridPeopleMapLogic.region(for: pins) {
+        if let region = GridPeopleMapLogic.region(for: pins, blobs: cameraBlobs) {
             position = .region(region)
         } else if let fallbackCenter {
             position = .region(GridPeopleMapLogic.region(around: fallbackCenter))

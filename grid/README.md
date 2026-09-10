@@ -28,6 +28,17 @@ The app requires the following record types in your CloudKit Public Database:
 - `lastActive` (Date/Time)
 - `isActive` (Int64, Queryable)
 
+### InterestFootsteps
+- `interest` (String, Queryable) — which interest this walking ping belongs to
+- `latitude` (Double)
+- `longitude` (Double)
+- `location` (Location)
+- `cellKey` (String)
+- `visitCount` (Int64)
+- `timestamp` (Date/Time, Queryable, Sortable)
+
+Anonymous community trail for one interest. Records do not store `userID` or `deviceID`. Every refresh appends a ping. Map mode reads this table and paints a red circle per ping; older pings are dimmer, the newest are brightest. Pings older than a week drop off. Switching an interest in the drawer swaps the heatmap. Deploy this record type to the **Production** CloudKit schema with `interest` queryable and `timestamp` queryable/sortable.
+
 ### Messages
 - `senderDeviceID` (String, Queryable)
 - `recipientDeviceID` (String, Queryable)

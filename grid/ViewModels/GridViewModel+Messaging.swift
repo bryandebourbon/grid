@@ -160,12 +160,14 @@ extension GridViewModel {
     func handleGridAppeared() {
         print("Grid appeared - refreshing if location is already allowed")
         if locksGridToFixtures { return }
+        refreshInterestHeatmap()
         guard hasLocationAccess else {
             updateGridWithAllProfiles([])
             return
         }
 
         locationService.requestLocationOnce()
+        syncFootstepTracking()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
@@ -308,12 +310,15 @@ extension GridViewModel {
                         // Now refresh the grid with the updated profiles
                         self?.updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
                     }
+                    self?.syncFootstepTracking()
+                    self?.recordInterestFootsteps(for: self?.currentUserProfile)
                     
                     completion(true)
                 case .failure(let error):
                     print("Error saving user profile interests to CloudKit: \(error.localizedDescription)")
                     // Revert optimistic update on failure
                     self?.currentUserProfile?.interests = oldInterests
+                    self?.syncFootstepTracking()
                     completion(false)
                 }
             }

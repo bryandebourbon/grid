@@ -108,6 +108,9 @@ struct GridColumnZoomLogicTests {
         #expect(GridPresenceLogic.isVisibleToOthers(visible))
         visible.isDiscoverable = false
         #expect(!GridPresenceLogic.isVisibleToOthers(visible))
+        #expect(GridPresenceLogic.showsSelfAvatar(isDiscoverable: true, showsSelfOnGrid: true))
+        #expect(GridPresenceLogic.showsSelfAvatar(isDiscoverable: false, showsSelfOnGrid: true) == false)
+        #expect(GridPresenceLogic.showsSelfAvatar(isDiscoverable: true, showsSelfOnGrid: false) == false)
         #expect(InitialsAvatarLogic.initials(from: "Test Peer") == "TP")
         #expect(InitialsAvatarLogic.initials(from: "Bryan") == "BR")
         #expect(InitialsAvatarLogic.initials(from: "Josh B") == "JB")
@@ -117,6 +120,21 @@ struct GridColumnZoomLogicTests {
         #expect(VisibilityOnboardingLogic.discoverable(stored: nil) == false)
         #expect(VisibilityOnboardingLogic.discoverable(stored: true) == true)
         #expect(VisibilityOnboardingLogic.discoverable(stored: false) == false)
+        #expect(
+            VisibilityOnboardingLogic.discoverable(
+                field: nil,
+                interestStrings: [VisibilityOnboardingLogic.visibleToken]
+            )
+        )
+        #expect(
+            VisibilityOnboardingLogic.discoverable(field: nil, interestStrings: ["Music"]) == false
+        )
+        #expect(
+            VisibilityOnboardingLogic.discoverable(
+                field: false,
+                interestStrings: [VisibilityOnboardingLogic.visibleToken]
+            ) == false
+        )
         #expect(VisibilityOnboardingLogic.shouldAskOnLogin(isNewAccount: false) == false)
         #expect(VisibilityOnboardingLogic.shouldAskOnLogin(isNewAccount: true) == false)
     }
@@ -134,6 +152,29 @@ struct GridColumnZoomLogicTests {
         #expect(GridMasterViewerLogic.shouldShowPeer(hidden, includeHidden: true))
         #expect(GridMasterViewerLogic.showsHiddenBadge(isDiscoverable: false, unlocked: true))
         #expect(GridMasterViewerLogic.showsHiddenBadge(isDiscoverable: false, unlocked: false) == false)
+        let defaults = UserDefaults(suiteName: "grid.masterViewer.\(UUID().uuidString)")!
+        #expect(GridMasterViewerLogic.loadEnabled(defaults: defaults) == false)
+        GridMasterViewerLogic.storeEnabled(true, defaults: defaults)
+        #expect(GridMasterViewerLogic.loadEnabled(defaults: defaults))
+        GridMasterViewerLogic.storeEnabled(false, defaults: defaults)
+        #expect(GridMasterViewerLogic.loadEnabled(defaults: defaults) == false)
+    }
+
+    @Test func cloudKitRecordRoundTripsDiscoverable() {
+        let visible = UserProfile(userID: "u", deviceID: "me", deviceName: "Me", isDiscoverable: true)
+        let hidden = UserProfile(userID: "u", deviceID: "hid", deviceName: "Hid", isDiscoverable: false)
+        let visibleRecord = visible.toPublicCKRecord()
+        let hiddenRecord = hidden.toPublicCKRecord()
+        #expect((visibleRecord["interests"] as? [String])?.contains(VisibilityOnboardingLogic.visibleToken) == true)
+        #expect((hiddenRecord["interests"] as? [String])?.contains(VisibilityOnboardingLogic.visibleToken) != true)
+        #expect(UserProfile(record: visibleRecord)?.isDiscoverable == true)
+        #expect(UserProfile(record: hiddenRecord)?.isDiscoverable == false)
+        #expect(UserProfile(record: visibleRecord)?.interests.contains { $0.rawValue == VisibilityOnboardingLogic.visibleToken } == false)
+        let existing = CKRecord(recordType: "UserProfiles", recordID: CKRecord.ID(recordName: "hid"))
+        hidden.applyPublicFields(to: existing)
+        #expect(UserProfile(record: existing)?.isDiscoverable == false)
+        visible.applyPublicFields(to: existing)
+        #expect(UserProfile(record: existing)?.isDiscoverable == true)
     }
 
     @Test func occupiedRowsHidesEmptySlots() {
@@ -594,7 +635,8 @@ struct GridPeopleMapLogicTests {
             deviceID: "me",
             deviceName: "Bryan",
             latitude: 37.7,
-            longitude: -122.4
+            longitude: -122.4,
+            isDiscoverable: true
         )
         let pins = GridPeopleMapLogic.pins(from: [[node(me)]], currentDeviceID: "me")
         #expect(pins.first?.name == "Me")
@@ -612,7 +654,7 @@ struct GridPeopleMapLogicTests {
         #expect(region!.span.latitudeDelta >= 0.012)
     }
 
-    @Test func skipsHiddenPeersButKeepsCurrentUser() {
+    @Test func skipsHiddenPeersAndHiddenCurrentUser() {
         let me = UserProfile(
             userID: "u",
             deviceID: "me",
@@ -639,14 +681,396 @@ struct GridPeopleMapLogicTests {
             from: [[node(me), node(hidden), node(shown)]],
             currentDeviceID: "me"
         )
-        #expect(Set(pins.map(\.deviceID)) == ["me", "show"])
+        #expect(Set(pins.map(\.deviceID)) == ["show"])
         let adminPins = GridPeopleMapLogic.pins(
             from: [[node(me), node(hidden), node(shown)]],
             currentDeviceID: "me",
             includeHidden: true
         )
-        #expect(Set(adminPins.map(\.deviceID)) == ["me", "hid", "show"])
+        #expect(Set(adminPins.map(\.deviceID)) == ["hid", "show"])
         #expect(adminPins.first { $0.deviceID == "hid" }?.isHidden == true)
+    }
+}
+
+struct InterestFootstepLogicTests {
+    private func visibleProfile(
+        id: String = "me",
+        interests: [Interest] = [.nightlife],
+        latitude: Double = 37.77,
+        longitude: Double = -122.41
+    ) -> UserProfile {
+        UserProfile(
+            userID: id,
+            deviceID: id,
+            deviceName: id,
+            interests: interests,
+            latitude: latitude,
+            longitude: longitude,
+            isDiscoverable: true
+        )
+    }
+
+    @Test func heatmapFollowsTheSelectedInterestTab() {
+        #expect(InterestFootstepLogic.heatmapInterest(from: .all) == nil)
+        #expect(InterestFootstepLogic.heatmapInterest(from: .interest("Nightlife")) == "Nightlife")
+        #expect(InterestFootstepLogic.heatmapInterest(from: .interest("  ")) == nil)
+    }
+
+    @Test func searchesMapsWithTheInterestName() {
+        #expect(InterestPlaceHeatmapLogic.searchQuery(for: "Gay") == "Gay")
+        #expect(InterestPlaceHeatmapLogic.searchQuery(for: "Coffee") == "Coffee")
+        #expect(InterestPlaceHeatmapLogic.searchQuery(for: "Dodgeball") == "Dodgeball")
+        #expect(InterestPlaceHeatmapLogic.searchQuery(for: "  ") == nil)
+        let nearby = InterestPlaceHeatmapLogic.PlaceHit(
+            name: "Woody's",
+            latitude: 43.66,
+            longitude: -79.38,
+            rank: 0,
+            distanceMeters: 2_000
+        )
+        let outside = InterestPlaceHeatmapLogic.PlaceHit(
+            name: "Too Far",
+            latitude: 44.0,
+            longitude: -79.0,
+            rank: 1,
+            distanceMeters: 21_000
+        )
+        #expect(InterestPlaceHeatmapLogic.isInsideRadius(nearby, radiusMeters: 20_000))
+        #expect(InterestPlaceHeatmapLogic.isInsideRadius(outside, radiusMeters: 20_000) == false)
+        let blobs = InterestPlaceHeatmapLogic.blobs(from: [nearby, outside], radiusMeters: 20_000)
+        #expect(blobs.count == 1)
+        #expect(blobs.contains { $0.id.contains("woody") })
+        let origin = CLLocation(latitude: 43.65, longitude: -79.38)
+        #expect(
+            InterestPlaceHeatmapLogic.shouldSearch(
+                interest: "Gay",
+                at: origin,
+                lastInterest: "Coffee",
+                lastLocation: origin
+            )
+        )
+        #expect(
+            InterestPlaceHeatmapLogic.shouldSearch(
+                interest: "Gay",
+                at: origin,
+                lastInterest: "Gay",
+                lastLocation: origin
+            ) == false
+        )
+    }
+
+    @Test func eachPlaceKeepsItsOwnHeatDot() {
+        let one = InterestFootstepLogic.HeatBlob(
+            id: "place.a",
+            latitude: 43.65,
+            longitude: -79.38,
+            visitCount: 2,
+            timestamp: Date.distantPast,
+            radius: 80,
+            opacity: 0.2
+        )
+        let two = InterestFootstepLogic.HeatBlob(
+            id: "place.b",
+            latitude: 43.66,
+            longitude: -79.39,
+            visitCount: 3,
+            timestamp: Date.distantPast,
+            radius: 90,
+            opacity: 0.3
+        )
+        let merged = InterestPlaceHeatmapLogic.merging(places: [one, two], footsteps: [])
+        #expect(Set(merged.map(\.id)) == ["place.a", "place.b"])
+    }
+
+    @Test func heatmapRadiusClampsAndPersists() {
+        #expect(InterestPlaceHeatmapLogic.clamped(100) == 1_000)
+        #expect(InterestPlaceHeatmapLogic.clamped(80_000) == 50_000)
+        #expect(InterestPlaceHeatmapLogic.meters(fromKilometers: 10) == 10_000)
+        #expect(InterestPlaceHeatmapLogic.kilometers(fromMeters: 20_000) == 20)
+        let defaults = UserDefaults(suiteName: "grid.heatmapRadius.tests")!
+        defaults.removePersistentDomain(forName: "grid.heatmapRadius.tests")
+        #expect(InterestPlaceHeatmapLogic.load(defaults: defaults) == InterestPlaceHeatmapLogic.defaultRadiusMeters)
+        InterestPlaceHeatmapLogic.store(5_000, defaults: defaults)
+        #expect(InterestPlaceHeatmapLogic.load(defaults: defaults) == 5_000)
+        let inside = InterestPlaceHeatmapLogic.PlaceHit(
+            name: "Near",
+            latitude: 43.65,
+            longitude: -79.38,
+            rank: 0,
+            distanceMeters: 4_000
+        )
+        #expect(InterestPlaceHeatmapLogic.isInsideRadius(inside, radiusMeters: 5_000))
+        #expect(InterestPlaceHeatmapLogic.isInsideRadius(inside, radiusMeters: 1_000) == false)
+    }
+
+    @Test func hiddenAccountsCanViewAndLeaveHeatmapPings() {
+        let nightlife = GridPeopleTab.interest("Nightlife")
+        #expect(InterestFootstepLogic.canViewHeatmap(tab: nightlife, isDiscoverable: false))
+        #expect(InterestFootstepLogic.canViewHeatmap(tab: nightlife, isDiscoverable: true))
+        #expect(InterestFootstepLogic.canViewHeatmap(tab: .all, isDiscoverable: false) == false)
+        let location = CLLocation(latitude: 37.77, longitude: -122.41)
+        var hidden = visibleProfile()
+        hidden.isDiscoverable = false
+        #expect(InterestFootstepLogic.shouldContribute(profile: hidden, location: location))
+        let blobs = InterestFootstepLogic.blobs(from: [
+            InterestFootstepLogic.Sample(
+                interest: "Nightlife",
+                latitude: 37.77,
+                longitude: -122.41,
+                visitCount: 3,
+                timestamp: Date(),
+                deviceID: "a",
+                userID: "a",
+                cellKey: InterestFootstepLogic.cellKey(latitude: 37.77, longitude: -122.41)
+            )
+        ])
+        #expect(blobs.isEmpty == false)
+        let region = GridPeopleMapLogic.region(for: [], blobs: blobs)
+        #expect(region != nil)
+        #expect(abs((region?.center.latitude ?? 0) - 37.77) < 0.01)
+    }
+
+    @Test func nearbyPingsShareACellAndDistantPingsDoNot() {
+        let a = InterestFootstepLogic.cellKey(latitude: 37.77001, longitude: -122.41001)
+        let b = InterestFootstepLogic.cellKey(latitude: 37.77002, longitude: -122.41002)
+        let c = InterestFootstepLogic.cellKey(latitude: 37.79, longitude: -122.43)
+        #expect(a == b)
+        #expect(a != c)
+        let center = InterestFootstepLogic.coordinate(fromCellKey: a)
+        #expect(center != nil)
+        #expect(abs((center?.latitude ?? 0) - 37.77) < 0.002)
+    }
+
+    @Test func emptyInterestsAndZeroCoordsDoNotContribute() {
+        let location = CLLocation(latitude: 37.77, longitude: -122.41)
+        var hidden = visibleProfile()
+        hidden.isDiscoverable = false
+        #expect(InterestFootstepLogic.shouldContribute(profile: hidden, location: location))
+
+        let noInterests = visibleProfile(interests: [])
+        #expect(InterestFootstepLogic.shouldContribute(profile: noInterests, location: location) == false)
+
+        #expect(InterestFootstepLogic.shouldContribute(profile: visibleProfile(), location: location))
+        #expect(
+            InterestFootstepLogic.shouldContribute(
+                profile: visibleProfile(),
+                location: CLLocation(latitude: 0, longitude: 0)
+            ) == false
+        )
+    }
+
+    @Test func walkTrackingNeedsInterestAndLocation() {
+        #expect(
+            InterestFootstepLogic.shouldTrackWalks(
+                isDiscoverable: true,
+                interests: [.coffee],
+                authorizationStatus: .authorizedWhenInUse
+            )
+        )
+        #expect(
+            InterestFootstepLogic.shouldTrackWalks(
+                isDiscoverable: false,
+                interests: [.coffee],
+                authorizationStatus: .authorizedWhenInUse
+            )
+        )
+        #expect(
+            InterestFootstepLogic.shouldTrackWalks(
+                isDiscoverable: true,
+                interests: [],
+                authorizationStatus: .authorizedWhenInUse
+            ) == false
+        )
+        #expect(
+            InterestFootstepLogic.shouldTrackWalks(
+                isDiscoverable: true,
+                interests: [.coffee],
+                authorizationStatus: .denied
+            ) == false
+        )
+    }
+
+    @Test func spotThrottlingIsOffSoEveryRefreshWrites() {
+        let last = InterestFootstepLogic.LastWrite(cellKey: "1x1", timestamp: Date(timeIntervalSince1970: 100))
+        #expect(InterestFootstepLogic.shouldWrite(cellKey: "1x1", last: last, now: Date(timeIntervalSince1970: 101)))
+        #expect(InterestFootstepLogic.shouldWrite(cellKey: "2x2", last: last, now: Date(timeIntervalSince1970: 101)))
+        #expect(InterestFootstepLogic.shouldWrite(cellKey: "1x1", last: nil, now: Date()))
+    }
+
+    @Test func olderPingsAreDimmerThanTheNewest() {
+        let now = Date()
+        let oldest = InterestFootstepLogic.Sample(
+            interest: "Nightlife",
+            latitude: 37.77,
+            longitude: -122.41,
+            visitCount: 1,
+            timestamp: now.addingTimeInterval(-120),
+            deviceID: "a",
+            userID: "a",
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.77, longitude: -122.41)
+        )
+        let newest = InterestFootstepLogic.Sample(
+            interest: "Nightlife",
+            latitude: 37.78,
+            longitude: -122.42,
+            visitCount: 1,
+            timestamp: now,
+            deviceID: "b",
+            userID: "b",
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.78, longitude: -122.42)
+        )
+        let blobs = InterestFootstepLogic.blobs(from: [oldest, newest], now: now)
+        #expect(blobs.count == 2)
+        #expect(blobs.first?.id == oldest.id)
+        #expect(blobs.last?.id == newest.id)
+        #expect(blobs.last!.opacity > blobs.first!.opacity)
+        #expect(blobs.last!.radius > blobs.first!.radius)
+        #expect(InterestFootstepLogic.recency(indexFromOldest: 0, count: 2) == 0)
+        #expect(InterestFootstepLogic.recency(indexFromOldest: 1, count: 2) == 1)
+    }
+
+    @Test func eachRefreshIsAddedAndOlderNodesFade() {
+        let now = Date()
+        let first = InterestFootstepLogic.Sample(
+            interest: "Coffee",
+            latitude: 37.77,
+            longitude: -122.41,
+            visitCount: 1,
+            timestamp: now.addingTimeInterval(-20),
+            deviceID: "a",
+            userID: "a",
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.77, longitude: -122.41)
+        )
+        let second = InterestFootstepLogic.Sample(
+            interest: "Coffee",
+            latitude: 37.771,
+            longitude: -122.411,
+            visitCount: 1,
+            timestamp: now.addingTimeInterval(-10),
+            deviceID: "a",
+            userID: "a",
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.771, longitude: -122.411)
+        )
+        let third = InterestFootstepLogic.Sample(
+            interest: "Coffee",
+            latitude: 37.772,
+            longitude: -122.412,
+            visitCount: 1,
+            timestamp: now,
+            deviceID: "a",
+            userID: "a",
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.772, longitude: -122.412)
+        )
+        let trail = InterestFootstepLogic.merging([first, second, third], now: now)
+        #expect(trail.count == 3)
+        let blobs = InterestFootstepLogic.blobs(from: trail, now: now)
+        #expect(blobs.map(\.id) == [first.id, second.id, third.id])
+        #expect(blobs[0].opacity < blobs[1].opacity)
+        #expect(blobs[1].opacity < blobs[2].opacity)
+    }
+
+    @Test func stalePingsDropOffTheHeatmap() {
+        let old = InterestFootstepLogic.Sample(
+            interest: "Coffee",
+            latitude: 37.77,
+            longitude: -122.41,
+            visitCount: 4,
+            timestamp: Date().addingTimeInterval(-(InterestFootstepLogic.maxAge + 60)),
+            deviceID: "a",
+            userID: "a",
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.77, longitude: -122.41)
+        )
+        #expect(InterestFootstepLogic.blobs(from: [old]).isEmpty)
+    }
+
+    @Test func localWalksThickenTheCurrentHeatmap() {
+        let location = CLLocation(latitude: 37.771, longitude: -122.411)
+        let firstSample = InterestFootstepLogic.sample(
+            interest: "Gay",
+            location: location,
+            deviceID: "me",
+            userID: "me",
+            pingID: "ping.one"
+        )
+        let secondSample = InterestFootstepLogic.sample(
+            interest: "Gay",
+            location: location,
+            deviceID: "me",
+            userID: "me",
+            pingID: "ping.two"
+        )
+        let first = InterestFootstepLogic.absorbing(firstSample, into: [])
+        let second = InterestFootstepLogic.absorbing(secondSample, into: first)
+        #expect(first.count == 1)
+        #expect(second.count == 2)
+        #expect(Set(second.map(\.id)) == [firstSample.id, secondSample.id])
+        let blobs = InterestFootstepLogic.blobs(from: second)
+        #expect(blobs.count == 2)
+        #expect(blobs[0].latitude != blobs[1].latitude || blobs[0].longitude != blobs[1].longitude)
+    }
+
+    @Test func footstepsPersistLocallyAcrossReloads() {
+        let defaults = UserDefaults(suiteName: "grid.footstepStore.\(UUID().uuidString)")!
+        let sample = InterestFootstepLogic.sample(
+            interest: "Nightlife",
+            location: CLLocation(latitude: 37.77, longitude: -122.41),
+            deviceID: "me",
+            userID: "me",
+            pingID: "stay"
+        )
+        InterestFootstepStore.append([sample], defaults: defaults)
+        let loaded = InterestFootstepStore.load(interest: "Nightlife", defaults: defaults)
+        #expect(loaded.map(\.id) == [sample.id])
+        #expect(loaded.first?.latitude == sample.latitude)
+        InterestFootstepStore.enqueuePending([sample], defaults: defaults)
+        #expect(InterestFootstepStore.loadPending(defaults: defaults).map(\.id) == [sample.id])
+        InterestFootstepStore.removePending(ids: [sample.id], defaults: defaults)
+        #expect(InterestFootstepStore.loadPending(defaults: defaults).isEmpty)
+    }
+
+    @Test func recordNamesStayCloudKitSafe() {
+        let name = InterestFootstepLogic.recordName(
+            interest: "LGBTQ+",
+            pingID: "A1B2C3D4-E5F6"
+        )
+        #expect(name.hasPrefix("if."))
+        #expect(name.contains("lgbtq"))
+        #expect(name.contains("a1b2c3d4-e5f6") || name.contains("a1b2c3d4e5f6"))
+        #expect(name.contains(" ") == false)
+        #expect(name.contains("device") == false)
+    }
+
+    @Test func viewingAnInterestIsEnoughToLeaveAPing() {
+        let location = CLLocation(latitude: 43.65, longitude: -79.38)
+        let profile = visibleProfile(interests: [])
+        #expect(InterestFootstepLogic.shouldContribute(profile: profile, location: location) == false)
+        #expect(
+            InterestFootstepLogic.shouldContribute(
+                profile: profile,
+                location: location,
+                viewingInterest: "Gay"
+            )
+        )
+        let hidden = visibleProfile(interests: [])
+        var hiddenProfile = hidden
+        hiddenProfile.isDiscoverable = false
+        #expect(
+            InterestFootstepLogic.shouldContribute(
+                profile: hiddenProfile,
+                location: location,
+                viewingInterest: "Gay"
+            )
+        )
+        let sample = InterestFootstepLogic.sample(
+            interest: "Gay",
+            location: location,
+            deviceID: "me",
+            userID: "me",
+            pingID: "refresh-1"
+        )
+        let blobs = InterestFootstepLogic.blobs(from: [sample])
+        #expect(blobs.count == 1)
+        #expect(blobs.first?.id == sample.id)
     }
 }
 
@@ -1575,6 +1999,7 @@ struct AccountDeletionCoverageTests {
         #expect(types.contains("Albums"))
         #expect(types.contains("ReadReceipts"))
         #expect(types.contains("Reports"))
+        #expect(types.contains("InterestFootsteps") == false)
     }
 
     @Test func skipsUnqueryableReportsSchema() {
