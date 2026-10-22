@@ -5,7 +5,8 @@ import UIKit
 
 struct InterestSearchView: View {
     @ObservedObject var viewModel: GridViewModel
-    @Environment(\.dismiss) var dismiss
+    var isActive: Bool
+    var onClose: () -> Void
     @State private var searchText = ""
     @State private var newInterestEmoji = "✨"
     @FocusState private var searchFieldFocused: Bool
@@ -28,76 +29,111 @@ struct InterestSearchView: View {
     }
 
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-
-                    TextField("Search interests...", text: $searchText)
-                        .focused($searchFieldFocused)
-                        .textFieldStyle(PlainTextFieldStyle())
-                        .textInputAutocapitalization(.words)
-                        .submitLabel(.search)
-
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                    }
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: onClose) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(.systemGray6))
-                .cornerRadius(10)
-                .padding()
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
 
-                Divider()
+                Spacer()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        if canAddSearchInterest {
-                            addMissingInterestCard
-                        }
+                Text("Search")
+                    .font(.headline)
 
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 12) {
-                            ForEach(filteredInterests) { interest in
-                                let alreadyPicked = InterestPageStore.contains(interest, in: viewModel.interestPages)
-                                SearchableInterestButton(
-                                    interest: interest,
-                                    isSelected: alreadyPicked,
-                                    isUserInterest: viewModel.currentUserProfile?.interests.contains(interest) ?? false
-                                ) {
-                                    guard alreadyPicked || viewModel.canAddInterestPage else { return }
-                                    viewModel.openInterestPage(interest)
-                                    dismiss()
-                                }
-                                .opacity(alreadyPicked || viewModel.canAddInterestPage ? 1 : 0.45)
-                            }
-                        }
+                Spacer()
+
+                Color.clear.frame(width: 44, height: 44)
+            }
+            .padding(.horizontal, 8)
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                TextField("Search interests", text: $searchText)
+                    .focused($searchFieldFocused)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
                     }
-                    .padding()
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
             }
-            .navigationTitle("Search Interests")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 20)
+            .padding(.bottom, 8)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if canAddSearchInterest {
+                        addMissingInterestCard
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 12)
+                    }
+                    ForEach(filteredInterests) { interest in
+                        interestRow(interest)
                     }
                 }
-            }
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    searchFieldFocused = true
-                }
+                .padding(.bottom, 24)
             }
         }
-        .navigationViewStyle(.stack)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(.systemBackground))
+        .onChange(of: isActive) { active in
+            if active {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    if isActive { searchFieldFocused = true }
+                }
+            } else {
+                searchFieldFocused = false
+                searchText = ""
+            }
+        }
+    }
+
+    private func interestRow(_ interest: Interest) -> some View {
+        let alreadyPicked = InterestPageStore.contains(interest, in: viewModel.interestPages)
+        let canChoose = alreadyPicked || viewModel.canAddInterestPage
+        return Button {
+            guard canChoose else { return }
+            viewModel.openInterestPage(interest)
+            onClose()
+        } label: {
+            HStack(spacing: 14) {
+                Text(interest.emoji)
+                    .font(.title3)
+                    .frame(width: 32)
+                Text(interest.rawValue)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if alreadyPicked {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(canChoose ? 1 : 0.4)
+        .accessibilityLabel(interest.rawValue)
     }
 
     private var addMissingInterestCard: some View {
@@ -132,7 +168,7 @@ struct InterestSearchView: View {
                 viewModel.addCustomInterest(named: trimmedSearch, emoji: newInterestEmoji)
                 searchText = ""
                 newInterestEmoji = "✨"
-                dismiss()
+                onClose()
             } label: {
                 Label("Add \(trimmedSearch)", systemImage: "plus.circle.fill")
                     .font(.subheadline.weight(.semibold))

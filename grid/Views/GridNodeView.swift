@@ -95,7 +95,7 @@ struct GridNodeView: View {
                                 .foregroundColor(.yellow)
                                 .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 18, height: 18))
                         }
-                        if profile.isDiscoverable == false,
+                        if profile.isVisibleOnGrid == false,
                            viewModel.peopleTab.showsHiddenPeers(masterUnlocked: viewModel.seesHiddenPeople) {
                             HiddenUserBadge(size: 18)
                         }

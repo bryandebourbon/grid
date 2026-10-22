@@ -23,9 +23,14 @@ enum GridPresenceLogic {
         !isLeftoverDebugPeer(profile)
     }
 
-    /// Other people only see this profile after they refresh if it is discoverable.
+    /// Other people only see this profile on the grid when that surface is on.
     static func isVisibleToOthers(_ profile: UserProfile) -> Bool {
-        shouldShowPeer(profile) && profile.isDiscoverable
+        shouldShowPeer(profile) && profile.isVisibleOnGrid
+    }
+
+    /// Other people only see this profile on the map when that surface is on.
+    static func isVisibleOnMapToOthers(_ profile: UserProfile) -> Bool {
+        shouldShowPeer(profile) && profile.isVisibleOnMap
     }
 
     /// Hidden users do not appear as themselves on the grid or map.
@@ -91,6 +96,11 @@ enum GridMasterViewerLogic {
         return GridPresenceLogic.isVisibleToOthers(profile)
     }
 
+    static func shouldShowOnMap(_ profile: UserProfile, includeHidden: Bool) -> Bool {
+        if includeHidden { return GridPresenceLogic.shouldShowPeer(profile) }
+        return GridPresenceLogic.isVisibleOnMapToOthers(profile)
+    }
+
     static func showsHiddenBadge(isDiscoverable: Bool, unlocked: Bool) -> Bool {
         unlocked && isDiscoverable == false
     }
@@ -100,6 +110,8 @@ enum VisibilityOnboardingLogic {
     /// Production CloudKit does not have an `isDiscoverable` field yet.
     /// Visibility is stored on the existing public `interests` list.
     static let visibleToken = "grid.visible"
+    static let mapToken = "grid.visible.map"
+    static let gridToken = "grid.visible.grid"
 
     /// Missing CloudKit value means hidden.
     static func discoverable(stored: Bool?) -> Bool {
@@ -111,9 +123,30 @@ enum VisibilityOnboardingLogic {
         return interestStrings.contains(visibleToken)
     }
 
-    static func publicInterestStrings(from interests: [Interest], isDiscoverable: Bool) -> [String] {
-        var values = interests.map(\.rawValue).filter { $0 != visibleToken }
-        if isDiscoverable {
+    static func surfaceVisible(
+        field: Bool?,
+        token: String,
+        interestStrings: [String],
+        legacy: Bool
+    ) -> Bool {
+        if let field { return field }
+        if interestStrings.contains(token) { return true }
+        let hasSpecificSurface = interestStrings.contains(mapToken) || interestStrings.contains(gridToken)
+        if hasSpecificSurface { return false }
+        return legacy
+    }
+
+    static func publicInterestStrings(
+        from interests: [Interest],
+        isVisibleOnMap: Bool,
+        isVisibleOnGrid: Bool
+    ) -> [String] {
+        var values = interests.map(\.rawValue).filter {
+            $0 != visibleToken && $0 != mapToken && $0 != gridToken
+        }
+        if isVisibleOnMap { values.append(mapToken) }
+        if isVisibleOnGrid { values.append(gridToken) }
+        if isVisibleOnMap || isVisibleOnGrid {
             values.append(visibleToken)
         }
         return values
@@ -122,7 +155,12 @@ enum VisibilityOnboardingLogic {
     static func interests(from strings: [String]) -> [Interest] {
         strings
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.isEmpty == false && $0 != visibleToken }
+            .filter {
+                $0.isEmpty == false
+                    && $0 != visibleToken
+                    && $0 != mapToken
+                    && $0 != gridToken
+            }
             .map { Interest(rawValue: $0) }
     }
 

@@ -106,7 +106,7 @@ struct GridColumnZoomLogicTests {
         #expect(!GridPresenceLogic.isVisibleToOthers(person))
         var visible = UserProfile(userID: "v", deviceID: "vis", deviceName: "Vis", isDiscoverable: true)
         #expect(GridPresenceLogic.isVisibleToOthers(visible))
-        visible.isDiscoverable = false
+        visible.isVisibleOnGrid = false
         #expect(!GridPresenceLogic.isVisibleToOthers(visible))
         #expect(GridPresenceLogic.showsSelfAvatar(isDiscoverable: true, showsSelfOnGrid: true))
         #expect(GridPresenceLogic.showsSelfAvatar(isDiscoverable: false, showsSelfOnGrid: true) == false)
@@ -218,6 +218,53 @@ struct GridColumnZoomLogicTests {
         #expect(UserProfile(record: existing)?.isDiscoverable == false)
         visible.applyPublicFields(to: existing)
         #expect(UserProfile(record: existing)?.isDiscoverable == true)
+    }
+
+    @Test func scrollOffsetExpandsBrowseRadius() {
+        #expect(BrowseRadiusLogic.meters(forScrollOffset: 0) == BrowseRadiusLogic.minMeters)
+        #expect(BrowseRadiusLogic.meters(forScrollOffset: -40) == BrowseRadiusLogic.minMeters)
+        #expect(BrowseRadiusLogic.meters(forScrollOffset: BrowseRadiusLogic.scrollSpan) == BrowseRadiusLogic.maxMeters)
+        let mid = BrowseRadiusLogic.meters(forScrollOffset: BrowseRadiusLogic.scrollSpan / 2)
+        let expected = (BrowseRadiusLogic.minMeters + BrowseRadiusLogic.maxMeters) / 2
+        #expect(abs(mid - expected) < 1)
+        let origin = CLLocation(latitude: 37.77, longitude: -122.41)
+        let near = UserProfile(
+            userID: "n",
+            deviceID: "near",
+            deviceName: "Near",
+            latitude: 37.771,
+            longitude: -122.41
+        )
+        let far = UserProfile(
+            userID: "f",
+            deviceID: "far",
+            deviceName: "Far",
+            latitude: 37.90,
+            longitude: -122.41
+        )
+        let unfixed = UserProfile(userID: "u", deviceID: "u", deviceName: "Unfixed")
+        #expect(BrowseRadiusLogic.isWithin(near, origin: origin, radiusMeters: 1_000))
+        #expect(BrowseRadiusLogic.isWithin(far, origin: origin, radiusMeters: 1_000) == false)
+        #expect(BrowseRadiusLogic.isWithin(far, origin: nil, radiusMeters: 1_000))
+        #expect(BrowseRadiusLogic.isWithin(unfixed, origin: origin, radiusMeters: 1_000))
+    }
+
+    @Test func mapAndGridVisibilityStayIndependent() {
+        let mapOnly = UserProfile(
+            userID: "m",
+            deviceID: "map",
+            deviceName: "Map",
+            isDiscoverable: false,
+            isVisibleOnMap: true,
+            isVisibleOnGrid: false
+        )
+        #expect(GridPresenceLogic.isVisibleOnMapToOthers(mapOnly))
+        #expect(GridPresenceLogic.isVisibleToOthers(mapOnly) == false)
+        let record = mapOnly.toPublicCKRecord()
+        let decoded = UserProfile(record: record)
+        #expect(decoded?.isVisibleOnMap == true)
+        #expect(decoded?.isVisibleOnGrid == false)
+        #expect(decoded?.interests.contains { $0.rawValue == VisibilityOnboardingLogic.mapToken } == false)
     }
 
     @Test func occupiedRowsHidesEmptySlots() {

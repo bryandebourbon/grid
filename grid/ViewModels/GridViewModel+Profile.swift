@@ -11,6 +11,7 @@ import UIKit
 extension GridViewModel {
     func setCurrentUserProfile(_ profile: UserProfile) {
         self.currentUserProfile = profile
+        AccountDirectory.shared.ensureIdentity(for: profile)
         updateUserActivityAndLocation(profile) // NEW: Use activity-based saving
         placeCurrentUserOnGrid()
         print("GridViewModel: Set current user profile for device ID \(profile.deviceID) (user: \(profile.userID))")
@@ -220,6 +221,8 @@ extension GridViewModel {
         if merged.deviceName.isEmpty {
             merged.deviceName = local.deviceName
         }
+        merged.isVisibleOnMap = local.isVisibleOnMap
+        merged.isVisibleOnGrid = local.isVisibleOnGrid
         merged.isDiscoverable = local.isDiscoverable
         return merged
     }
@@ -282,6 +285,7 @@ extension GridViewModel {
                 case .success(let savedProfile):
                     self.currentUserProfile = self.mergingSavedProfile(savedProfile)
                     self.refreshCurrentUserPhotoOnGrid()
+                    AccountDirectory.shared.ensureIdentity(for: savedProfile)
                     print("User profile successfully updated in CloudKit and local grid refreshed.")
                     completion?(true)
                 case .failure(let error):

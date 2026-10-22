@@ -39,6 +39,17 @@ extension GridViewModel {
         recenterMapToken += 1
     }
 
+    /// Snap the camera back onto you at the current browse radius, without hiding the map.
+    func recenterMapOnUser() {
+        if LocationOnboardingLogic.enableAction(for: locationService.authorizationStatus) != .none {
+            enableLocationFromOnboarding()
+        } else {
+            locationService.requestLocationOnce()
+        }
+        followsUserLocation = false
+        recenterMapToken += 1
+    }
+
     func considerNotificationPermission(for event: NotificationPermissionLogic.ChatEvent) {
         guard !GridUITestHarness.isActive, !locksGridToFixtures else { return }
         let already = UserDefaults.standard.bool(forKey: NotificationPermissionLogic.requestedDefaultsKey)

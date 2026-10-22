@@ -8,8 +8,8 @@ import UIKit
 @Observable
 @MainActor
 final class GridColumnZoom {
-    var gridColumns = 3
-    var baseColumns = 3
+    var gridColumns = GridColumnZoomLogic.maxColumns
+    var baseColumns = GridColumnZoomLogic.maxColumns
     var currentScale: CGFloat = 1.0
     var isScaling = false
     var isDragging = false

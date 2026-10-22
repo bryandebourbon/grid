@@ -7,6 +7,7 @@ struct GridPeopleMapView: View {
     var onSelectPerson: (String) -> Void
     @State private var position: MapCameraPosition
     @State private var hasFittedCamera: Bool
+    @State private var lastFramedRadius = BrowseRadiusLogic.minMeters
 
     init(viewModel: GridViewModel, onSelectPerson: @escaping (String) -> Void) {
         self.viewModel = viewModel
@@ -14,7 +15,9 @@ struct GridPeopleMapView: View {
         let center = viewModel.locationService.currentLocation?.coordinate
             ?? viewModel.currentUserProfile?.location?.coordinate
         if let center {
-            _position = State(initialValue: .region(GridPeopleMapLogic.region(around: center)))
+            _position = State(initialValue: .region(
+                GridPeopleMapLogic.region(around: center, radiusMeters: viewModel.browseRadiusMeters)
+            ))
             _hasFittedCamera = State(initialValue: true)
         } else {
             _position = State(initialValue: .region(GridPeopleMapLogic.defaultRegion))
@@ -33,12 +36,18 @@ struct GridPeopleMapView: View {
         let others = (tabProfiles.isEmpty ? nearby : tabProfiles).filter { profile in
             profile.deviceID != me?.deviceID
         }
-        let selfProfiles = viewModel.isDiscoverable ? [me].compactMap { $0 } : []
+        let selfProfiles = viewModel.isVisibleOnMap ? [me].compactMap { $0 } : []
         return GridPeopleMapLogic.pins(
             fromProfiles: others + selfProfiles,
             currentDeviceID: me?.deviceID,
-            includeHidden: includeHidden
+            includeHidden: includeHidden,
+            radiusMeters: viewModel.browseRadiusMeters,
+            origin: browseOrigin
         )
+    }
+
+    private var browseOrigin: CLLocation? {
+        viewModel.locationService.currentLocation ?? viewModel.currentUserProfile?.location
     }
 
     private var fallbackCenter: CLLocationCoordinate2D? {
@@ -52,8 +61,12 @@ struct GridPeopleMapView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            Map(position: $position) {
+        Map(position: $position) {
+                if let center = fallbackCenter {
+                    MapCircle(center: center, radius: viewModel.browseRadiusMeters)
+                        .foregroundStyle(Color.blue.opacity(0.14))
+                        .stroke(Color.blue.opacity(0.7), lineWidth: 1.5)
+                }
                 if locationAuthorized {
                     UserAnnotation()
                 }
@@ -74,7 +87,7 @@ struct GridPeopleMapView: View {
                         .accessibilityLabel(pin.name)
                     }
                 }
-                ForEach(viewModel.interestHeatBlobs) { blob in
+                ForEach(viewModel.interestHeatBlobs.filter(blobIsInsideBrowseRadius)) { blob in
                     Annotation("", coordinate: blob.coordinate, anchor: .center) {
                         Circle()
                             .fill(Color(red: 1, green: 0.18, blue: 0.24).opacity(blob.opacity))
@@ -90,9 +103,12 @@ struct GridPeopleMapView: View {
                 MapCompass()
             }
             .mapControlVisibility(.visible)
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea()
+        .background {
+            Color(red: 0.85, green: 0.89, blue: 0.86)
+                .ignoresSafeArea()
         }
-        .background(Color(red: 0.85, green: 0.89, blue: 0.86))
         .onAppear {
             if viewModel.locationService.authorizationStatus == .notDetermined {
                 viewModel.locationService.requestLocationPermission()
@@ -101,11 +117,7 @@ struct GridPeopleMapView: View {
             }
             viewModel.recordInterestFootsteps(for: viewModel.currentUserProfile)
             viewModel.refreshInterestHeatmap()
-            if viewModel.followsUserLocation {
-                centerOnBlueDot()
-            } else {
-                fitCamera(force: true)
-            }
+            frameBrowseRadius()
         }
         .refreshable {
             await viewModel.refreshPeopleAndMessages()
@@ -114,9 +126,18 @@ struct GridPeopleMapView: View {
             guard viewModel.followsUserLocation == false else { return }
             fitCamera(force: false)
         }
-        .onChange(of: viewModel.isDiscoverable) { _ in
+        .onChange(of: viewModel.isVisibleOnMap) { _ in
             guard viewModel.followsUserLocation == false else { return }
             fitCamera(force: false)
+        }
+        .onChange(of: viewModel.browseRadiusMeters) { radius in
+            guard abs(radius - lastFramedRadius) >= 3_000 else { return }
+            lastFramedRadius = radius
+            frameBrowseRadius()
+        }
+        .onChange(of: viewModel.browseRadiusCameraToken) { _ in
+            lastFramedRadius = viewModel.browseRadiusMeters
+            frameBrowseRadius()
         }
         .onChange(of: viewModel.locationService.currentLocation?.coordinate.latitude) { _ in
             guard viewModel.followsUserLocation == false else { return }
@@ -143,27 +164,31 @@ struct GridPeopleMapView: View {
             ?? viewModel.proximityService.activeNearbyProfiles.first { $0.deviceID == pin.deviceID }
     }
 
-    /// Keep the camera on you. Heatmap dots can cover a wide radius; they should not pull the zoom out.
+    private func blobIsInsideBrowseRadius(_ blob: InterestFootstepLogic.HeatBlob) -> Bool {
+        guard let origin = browseOrigin else { return true }
+        let place = CLLocation(latitude: blob.latitude, longitude: blob.longitude)
+        return origin.distance(from: place) <= viewModel.browseRadiusMeters
+    }
+
+    private func frameBrowseRadius() {
+        guard let fallbackCenter else { return }
+        position = .region(
+            GridPeopleMapLogic.region(
+                around: fallbackCenter,
+                radiusMeters: viewModel.browseRadiusMeters
+            )
+        )
+        hasFittedCamera = true
+    }
+
+    /// Keep the camera on the browse circle. Heatmap dots should not pull the zoom out.
     private func fitCamera(force: Bool) {
         guard force || hasFittedCamera == false else { return }
-        if let fallbackCenter {
-            position = .region(GridPeopleMapLogic.region(around: fallbackCenter))
-            hasFittedCamera = true
-        }
+        frameBrowseRadius()
     }
 
     private func centerOnBlueDot() {
-        let fallback: MapCameraPosition = {
-            if let fallbackCenter {
-                return .region(GridPeopleMapLogic.region(around: fallbackCenter))
-            }
-            return .automatic
-        }()
-        position = fallback
-        hasFittedCamera = true
-        Task { @MainActor in
-            position = .userLocation(followsHeading: false, fallback: fallback)
-        }
+        frameBrowseRadius()
     }
 }
 

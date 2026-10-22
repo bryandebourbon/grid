@@ -97,6 +97,7 @@ struct ContentView: View {
                 } else {
                     AnyView(
                         GridView(viewModel: gridViewModel, signOutAction: signOut, deleteAccountAction: deleteAccount)
+                            .ignoresSafeArea()
                     )
                 }
             } else {

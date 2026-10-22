@@ -66,7 +66,14 @@ class GridViewModel: ObservableObject {
     var heatmapFootstepCache: [String: [InterestFootstepLogic.Sample]] = [:]
     var lastPlaceSearchByInterest: [String: (location: CLLocation, radius: CLLocationDistance)] = [:]
     var heatmapFootstepsFetched: Set<String> = []
-    @Published var heatmapSearchRadiusMeters = InterestPlaceHeatmapLogic.load()
+    @Published var browseRadiusMeters = BrowseRadiusLogic.minMeters
+    @Published var browseRadiusCameraToken = 0
+    @Published var heatmapSearchRadiusMeters = InterestPlaceHeatmapLogic.minRadiusMeters
+    private var pendingBrowseRadius = BrowseRadiusLogic.minMeters
+    private var browseRadiusTask: Task<Void, Never>?
+    private var lastBrowseLayoutRadius = BrowseRadiusLogic.minMeters
+    private var lastBrowseCameraRadius = BrowseRadiusLogic.minMeters
+    private var lastBrowseHeatmapKilometer = 0
     @Published var customGroups: [PeopleGroup] = []
     @Published var customGroupNodes: [UUID: [[GridNode]]] = [:]
     @Published var interestPages: [Interest] = []
@@ -196,7 +203,7 @@ class GridViewModel: ObservableObject {
             favoritesOnly: membersOnly,
             showsLocalLLM: showsLocalLLM && hasLocationAccess,
             showsSelfOnGrid: GridPresenceLogic.showsSelfAvatar(
-                isDiscoverable: isDiscoverable,
+                isDiscoverable: isVisibleOnGrid,
                 showsSelfOnGrid: showsSelfOnGrid
             ) && hasLocationAccess,
             showsNearbyPeople: true
@@ -444,6 +451,14 @@ class GridViewModel: ObservableObject {
         currentUserProfile?.isDiscoverable == true
     }
 
+    var isVisibleOnMap: Bool {
+        currentUserProfile?.isVisibleOnMap == true
+    }
+
+    var isVisibleOnGrid: Bool {
+        currentUserProfile?.isVisibleOnGrid == true
+    }
+
     var seesHiddenPeople: Bool {
         showsHiddenPeople
     }
@@ -460,15 +475,72 @@ class GridViewModel: ObservableObject {
         let next = InterestPlaceHeatmapLogic.clamped(meters)
         guard next != heatmapSearchRadiusMeters else { return }
         heatmapSearchRadiusMeters = next
+        browseRadiusMeters = next
+        lastBrowseLayoutRadius = next
         InterestPlaceHeatmapLogic.store(next)
+        updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+        prefetchInterestHeatmaps(force: true)
+    }
+
+    func setBrowseRadius(fromScrollOffset offset: CGFloat) {
+        let next = BrowseRadiusLogic.meters(forScrollOffset: offset)
+        pendingBrowseRadius = next
+        if abs(next - browseRadiusMeters) >= 1_000 {
+            browseRadiusMeters = next
+        }
+        browseRadiusTask?.cancel()
+        browseRadiusTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            guard !Task.isCancelled else { return }
+            applySettledBrowseRadius()
+        }
+    }
+
+    /// Grid membership and the map camera wait until the finger has paused,
+    /// so a scroll cannot rebuild the list that is currently moving.
+    private func applySettledBrowseRadius() {
+        let next = pendingBrowseRadius
+        if abs(next - browseRadiusMeters) >= 1 {
+            browseRadiusMeters = next
+        }
+        if abs(next - lastBrowseCameraRadius) >= 500 {
+            lastBrowseCameraRadius = next
+            browseRadiusCameraToken &+= 1
+        }
+        if abs(next - lastBrowseLayoutRadius) >= 200 {
+            lastBrowseLayoutRadius = next
+            updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+        }
+        let kilometer = Int(next / 1_000)
+        guard kilometer != lastBrowseHeatmapKilometer else { return }
+        lastBrowseHeatmapKilometer = kilometer
+        let clamped = InterestPlaceHeatmapLogic.clamped(next)
+        guard clamped != heatmapSearchRadiusMeters else { return }
+        heatmapSearchRadiusMeters = clamped
         prefetchInterestHeatmaps(force: true)
     }
 
     func setDiscoverable(_ visible: Bool) {
+        setSurfaceVisibility(map: visible, grid: visible)
+    }
+
+    func setVisibleOnMap(_ visible: Bool) {
+        setSurfaceVisibility(map: visible, grid: nil)
+    }
+
+    func setVisibleOnGrid(_ visible: Bool) {
+        setSurfaceVisibility(map: nil, grid: visible)
+    }
+
+    private func setSurfaceVisibility(map: Bool?, grid: Bool?) {
         guard var profile = currentUserProfile else { return }
-        guard profile.isDiscoverable != visible else { return }
-        profile.isDiscoverable = visible
-        if visible {
+        if let map { profile.isVisibleOnMap = map }
+        if let grid { profile.isVisibleOnGrid = grid }
+        let discoverable = profile.isVisibleOnMap || profile.isVisibleOnGrid
+        guard profile.isVisibleOnMap != currentUserProfile?.isVisibleOnMap
+                || profile.isVisibleOnGrid != currentUserProfile?.isVisibleOnGrid else { return }
+        profile.isDiscoverable = discoverable
+        if discoverable {
             profile.markAsActive()
         }
         currentUserProfile = profile
@@ -581,15 +653,30 @@ class GridViewModel: ObservableObject {
         updateGridWithAllProfiles(GridUITestHarness.nearby)
     }
 
+    private func profilesInsideBrowseRadius(_ profiles: [UserProfile]) -> [UserProfile] {
+        let origin = locationService.currentLocation ?? currentUserProfile?.location
+        return profiles.filter { profile in
+            if profile.deviceID == currentUserProfile?.deviceID { return true }
+            if LocalLLMIdentity.isLLM(profile.deviceID) { return true }
+            return BrowseRadiusLogic.isWithin(
+                profile,
+                origin: origin,
+                radiusMeters: browseRadiusMeters
+            )
+        }
+    }
+
     func updateGridWithAllProfiles(_ profiles: [UserProfile]) {
         let source = locksGridToFixtures ? GridUITestHarness.nearby : profiles
-        let toDisplay = locksGridToFixtures
-            ? source
-            : gridPopulationService.profilesToDisplay(
-                nearby: source,
-                currentUser: currentUserProfile,
-                includeHidden: seesHiddenPeople
-            )
+        let toDisplay = profilesInsideBrowseRadius(
+            locksGridToFixtures
+                ? source
+                : gridPopulationService.profilesToDisplay(
+                    nearby: source,
+                    currentUser: currentUserProfile,
+                    includeHidden: seesHiddenPeople
+                )
+        )
         var all = GridPlacementLogic.makeEmptyGrid()
         var favorites = GridPlacementLogic.makeEmptyGrid()
         gridPopulationService.layoutProfiles(
@@ -843,7 +930,7 @@ class GridViewModel: ObservableObject {
         guard let profile = currentUserProfile else { return }
         GridPlacementLogic.removeProfile(deviceID: profile.deviceID, from: &gridNodes)
         let showsSelf = GridPresenceLogic.showsSelfAvatar(
-            isDiscoverable: isDiscoverable,
+            isDiscoverable: isVisibleOnGrid,
             showsSelfOnGrid: showsSelfOnGrid
         )
         if showsSelf {

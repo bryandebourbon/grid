@@ -19,8 +19,12 @@ struct UserProfile: Codable {
     var longitude: Double?          // Current longitude
     var lastActiveTimestamp: Date   // Last time the user was active (app open)
     var isCurrentlyActive: Bool     // Whether the user currently has the app open
-    /// When false, other people do not see this profile on the grid or map.
+    /// Legacy combined flag. True when either surface is on.
     var isDiscoverable: Bool
+    /// Other people can see this profile on the map.
+    var isVisibleOnMap: Bool
+    /// Other people can see this profile on the grid.
+    var isVisibleOnGrid: Bool
     
     // Computed property for CLLocation
     var location: CLLocation? {
@@ -37,6 +41,8 @@ struct UserProfile: Codable {
         case lastActiveTimestamp
         case isCurrentlyActive
         case isDiscoverable
+        case isVisibleOnMap
+        case isVisibleOnGrid
         case bio
         case interests
     }
@@ -52,7 +58,9 @@ struct UserProfile: Codable {
          longitude: Double? = nil,
          lastActiveTimestamp: Date = Date(),
          isCurrentlyActive: Bool = true,
-         isDiscoverable: Bool = false) {
+         isDiscoverable: Bool = false,
+         isVisibleOnMap: Bool? = nil,
+         isVisibleOnGrid: Bool? = nil) {
         self.userID = userID
         self.deviceID = deviceID
         self.deviceName = deviceName
@@ -64,7 +72,9 @@ struct UserProfile: Codable {
         self.longitude = longitude
         self.lastActiveTimestamp = lastActiveTimestamp
         self.isCurrentlyActive = isCurrentlyActive
-        self.isDiscoverable = isDiscoverable
+        self.isVisibleOnMap = isVisibleOnMap ?? isDiscoverable
+        self.isVisibleOnGrid = isVisibleOnGrid ?? isDiscoverable
+        self.isDiscoverable = self.isVisibleOnMap || self.isVisibleOnGrid
     }
     
     // Custom init for Decodable
@@ -82,9 +92,12 @@ struct UserProfile: Codable {
         self.longitude = try container.decodeIfPresent(Double.self, forKey: .longitude)
         self.lastActiveTimestamp = try container.decodeIfPresent(Date.self, forKey: .lastActiveTimestamp) ?? Date()
         self.isCurrentlyActive = try container.decodeIfPresent(Bool.self, forKey: .isCurrentlyActive) ?? false
-        self.isDiscoverable = VisibilityOnboardingLogic.discoverable(
+        let storedDiscoverable = VisibilityOnboardingLogic.discoverable(
             stored: try container.decodeIfPresent(Bool.self, forKey: .isDiscoverable)
         )
+        self.isVisibleOnMap = try container.decodeIfPresent(Bool.self, forKey: .isVisibleOnMap) ?? storedDiscoverable
+        self.isVisibleOnGrid = try container.decodeIfPresent(Bool.self, forKey: .isVisibleOnGrid) ?? storedDiscoverable
+        self.isDiscoverable = self.isVisibleOnMap || self.isVisibleOnGrid
     }
 
     // Custom encode for Encodable
@@ -98,6 +111,8 @@ struct UserProfile: Codable {
         try container.encode(self.lastActiveTimestamp, forKey: .lastActiveTimestamp)
         try container.encode(self.isCurrentlyActive, forKey: .isCurrentlyActive)
         try container.encode(self.isDiscoverable, forKey: .isDiscoverable)
+        try container.encode(self.isVisibleOnMap, forKey: .isVisibleOnMap)
+        try container.encode(self.isVisibleOnGrid, forKey: .isVisibleOnGrid)
         try container.encodeIfPresent(self.bio, forKey: .bio)
         try container.encode(self.interests, forKey: .interests)
     }
@@ -134,10 +149,23 @@ struct UserProfile: Codable {
         self.lastActiveTimestamp = record["lastActiveTimestamp"] as? Date ?? Date()
         self.isCurrentlyActive = record["isCurrentlyActive"] as? Bool ?? false
         let interestStrings = record["interests"] as? [String] ?? []
-        self.isDiscoverable = VisibilityOnboardingLogic.discoverable(
+        let legacyDiscoverable = VisibilityOnboardingLogic.discoverable(
             field: Self.optionalBool(from: record["isDiscoverable"]),
             interestStrings: interestStrings
         )
+        self.isVisibleOnMap = VisibilityOnboardingLogic.surfaceVisible(
+            field: Self.optionalBool(from: record["visibleOnMap"]),
+            token: VisibilityOnboardingLogic.mapToken,
+            interestStrings: interestStrings,
+            legacy: legacyDiscoverable
+        )
+        self.isVisibleOnGrid = VisibilityOnboardingLogic.surfaceVisible(
+            field: Self.optionalBool(from: record["visibleOnGrid"]),
+            token: VisibilityOnboardingLogic.gridToken,
+            interestStrings: interestStrings,
+            legacy: legacyDiscoverable
+        )
+        self.isDiscoverable = self.isVisibleOnMap || self.isVisibleOnGrid
         self.bio = record["bio"] as? String
         self.interests = VisibilityOnboardingLogic.interests(from: interestStrings)
     }
@@ -160,9 +188,12 @@ struct UserProfile: Codable {
         record["lastActiveTimestamp"] = self.lastActiveTimestamp
         record["isCurrentlyActive"] = self.isCurrentlyActive
         record["bio"] = self.bio
+        record["visibleOnMap"] = self.isVisibleOnMap
+        record["visibleOnGrid"] = self.isVisibleOnGrid
         record["interests"] = VisibilityOnboardingLogic.publicInterestStrings(
             from: self.interests,
-            isDiscoverable: self.isDiscoverable
+            isVisibleOnMap: self.isVisibleOnMap,
+            isVisibleOnGrid: self.isVisibleOnGrid
         )
         if let imageAsset = self.profileImage {
             record["profileImage"] = imageAsset

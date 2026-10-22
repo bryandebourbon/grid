@@ -35,7 +35,9 @@ enum GridPeopleMapLogic {
     static func pins(
         fromProfiles profiles: [UserProfile],
         currentDeviceID: String?,
-        includeHidden: Bool = false
+        includeHidden: Bool = false,
+        radiusMeters: CLLocationDistance? = nil,
+        origin: CLLocation? = nil
     ) -> [Pin] {
         var seen = Set<String>()
         var pins: [Pin] = []
@@ -45,8 +47,13 @@ enum GridPeopleMapLogic {
             guard deviceID.isEmpty == false, seen.insert(deviceID).inserted else { continue }
             let isCurrentUser = deviceID == currentDeviceID
             if isCurrentUser {
-                if profile.isDiscoverable == false { continue }
-            } else if GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: includeHidden) == false {
+                if profile.isVisibleOnMap == false { continue }
+            } else if GridMasterViewerLogic.shouldShowOnMap(profile, includeHidden: includeHidden) == false {
+                continue
+            }
+            if isCurrentUser == false,
+               let radiusMeters,
+               BrowseRadiusLogic.isWithin(profile, origin: origin, radiusMeters: radiusMeters) == false {
                 continue
             }
             pins.append(
@@ -56,7 +63,7 @@ enum GridPeopleMapLogic {
                     latitude: profile.latitude ?? 0,
                     longitude: profile.longitude ?? 0,
                     isCurrentUser: isCurrentUser,
-                    isHidden: profile.isDiscoverable == false
+                    isHidden: profile.isVisibleOnMap == false
                 )
             )
         }
@@ -72,6 +79,20 @@ enum GridPeopleMapLogic {
         MKCoordinateRegion(
             center: center,
             span: MKCoordinateSpan(latitudeDelta: 0.04, longitudeDelta: 0.04)
+        )
+    }
+
+    /// Frames the browse circle so a larger radius shows a larger area of the map.
+    static func region(around center: CLLocationCoordinate2D, radiusMeters: CLLocationDistance) -> MKCoordinateRegion {
+        let meters = max(radiusMeters, BrowseRadiusLogic.minMeters)
+        let latitudeDelta = (meters / 111_320) * 2.8
+        let cosine = max(cos(center.latitude * .pi / 180), 0.2)
+        return MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(
+                latitudeDelta: latitudeDelta,
+                longitudeDelta: latitudeDelta / cosine
+            )
         )
     }
 

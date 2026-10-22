@@ -14,8 +14,17 @@ struct GridInterestBrowseSection: View {
     @ObservedObject var viewModel: GridViewModel
     @Binding var isExpanded: Bool
     var showBioBubbles = false
+    @Binding var showingInterestCapPopover: Bool
+    var onSearchInterests: () -> Void = {}
+    var onDeleteInterest: (Interest) -> Void = { _ in }
     var onChatTapped: (String) -> Void = { _ in }
     var expandedTrailing: AnyView = AnyView(EmptyView())
+    var gridContent: AnyView = AnyView(EmptyView())
+    var isMapOverlay = false
+    var showsOwnProfile = false
+    var containerHeight: CGFloat = 1
+    var splitFraction: Binding<Double> = .constant(0.5)
+    var splitDragOrigin: Binding<Double?> = .constant(nil)
     @State private var dragOffset: CGFloat = 0
     @StateObject private var profileImageLoader = ImageLoader()
     @State private var profilePhotoItem: PhotosPickerItem?
@@ -23,7 +32,8 @@ struct GridInterestBrowseSection: View {
     @State private var nameText = ""
     @State private var interestPendingDelete: Interest?
 
-    static let peekHeight: CGFloat = 78
+    /// Interest tabs plus a little room for the first grid row when the drawer is short.
+    static let peekHeight: CGFloat = 88
 
     static func peekHeight(hasSelectedFilters: Bool = false) -> CGFloat {
         peekHeight + bottomSafeArea
@@ -42,7 +52,7 @@ struct GridInterestBrowseSection: View {
         #endif
     }
 
-    private let expandedHeight: CGFloat = 620
+    private let expandedHeight: CGFloat = 700
     private let peekCorner: CGFloat = 28
 
     private var level: InterestDrawerLevel {
@@ -50,44 +60,40 @@ struct GridInterestBrowseSection: View {
     }
 
     var body: some View {
-        drawer
-            .frame(maxWidth: .infinity)
-            .frame(height: currentHeight, alignment: .top)
-            .background(drawerMaterial, in: UnevenRoundedRectangle(topLeadingRadius: peekCorner, topTrailingRadius: peekCorner))
-            .overlay(alignment: .top) {
-                UnevenRoundedRectangle(topLeadingRadius: peekCorner, topTrailingRadius: peekCorner)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+        Group {
+            if showsOwnProfile {
+                ownProfileSheet
+            } else {
+                drawer
             }
-            .shadow(color: .black.opacity(0.22), radius: 16, y: -2)
-            .ignoresSafeArea(edges: .bottom)
-            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isExpanded)
-            .onAppear {
-                profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
-                bioText = viewModel.currentUserProfile?.bio ?? ""
+        }
+        .onAppear {
+            profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
+            bioText = viewModel.currentUserProfile?.bio ?? ""
+            nameText = viewModel.currentUserProfile?.displayName ?? ""
+        }
+        .onChange(of: viewModel.currentUserProfile?.deviceID) { _ in
+            profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
+            bioText = viewModel.currentUserProfile?.bio ?? ""
+            nameText = viewModel.currentUserProfile?.displayName ?? ""
+        }
+        .onChange(of: viewModel.currentUserProfile?.profileImage?.fileURL) { _ in
+            profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage, force: true)
+        }
+        .onChange(of: viewModel.currentUserProfile?.bio) { newBio in
+            if !bioIsDirty {
+                bioText = newBio ?? ""
+            }
+        }
+        .onChange(of: viewModel.currentUserProfile?.deviceName) { _ in
+            if !nameIsDirty {
                 nameText = viewModel.currentUserProfile?.displayName ?? ""
             }
-            .onChange(of: viewModel.currentUserProfile?.deviceID) { _ in
-                profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage)
-                bioText = viewModel.currentUserProfile?.bio ?? ""
-                nameText = viewModel.currentUserProfile?.displayName ?? ""
-            }
-            .onChange(of: viewModel.currentUserProfile?.profileImage?.fileURL) { _ in
-                profileImageLoader.loadImage(from: viewModel.currentUserProfile?.profileImage, force: true)
-            }
-            .onChange(of: viewModel.currentUserProfile?.bio) { newBio in
-                if !bioIsDirty {
-                    bioText = newBio ?? ""
-                }
-            }
-            .onChange(of: viewModel.currentUserProfile?.deviceName) { _ in
-                if !nameIsDirty {
-                    nameText = viewModel.currentUserProfile?.displayName ?? ""
-                }
-            }
-            .onChange(of: profilePhotoItem) { item in
-                guard let item else { return }
-                Task { await applyPickedProfilePhoto(item) }
-            }
+        }
+        .onChange(of: profilePhotoItem) { item in
+            guard let item else { return }
+            Task { await applyPickedProfilePhoto(item) }
+        }
     }
 
     private var drawerMaterial: Material {
@@ -104,21 +110,52 @@ struct GridInterestBrowseSection: View {
         return min(expanded, max(currentPeekHeight, base - dragOffset))
     }
 
-    private var drawer: some View {
-        VStack(spacing: 0) {
-            handle
-                .onTapGesture { toggleLevel() }
-
-            if isExpanded {
+    private var ownProfileSheet: some View {
+        NavigationStack {
+            ScrollView {
                 expandedContent
-            } else {
-                peekContent
-                    .onTapGesture { toggleLevel() }
+            }
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isExpanded = false }
+                }
             }
         }
+    }
+
+    private var drawer: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                if isMapOverlay {
+                    handle
+                }
+                interestIcons
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 12)
+                    .padding(.vertical, 6)
+            }
+            gridContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .contentShape(Rectangle())
-        .simultaneousGesture(dragGesture)
+        .background {
+            if isMapOverlay {
+                UnevenRoundedRectangle(topLeadingRadius: peekCorner, topTrailingRadius: peekCorner)
+                    .fill(.ultraThinMaterial)
+                    .shadow(color: .black.opacity(0.22), radius: 16, y: -2)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        .overlay(alignment: .top) {
+            if isMapOverlay {
+                UnevenRoundedRectangle(topLeadingRadius: peekCorner, topTrailingRadius: peekCorner)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+            }
+        }
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: isMapOverlay ? peekCorner : 0, topTrailingRadius: isMapOverlay ? peekCorner : 0))
+        .ignoresSafeArea(edges: .bottom)
     }
 
     private var handle: some View {
@@ -129,6 +166,28 @@ struct GridInterestBrowseSection: View {
             .padding(.bottom, 10)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
+            .accessibilityLabel("Map height")
+            .accessibilityIdentifier("grid.map.split")
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if splitDragOrigin.wrappedValue == nil {
+                            splitDragOrigin.wrappedValue = splitFraction.wrappedValue
+                        }
+                        guard let origin = splitDragOrigin.wrappedValue, containerHeight > 0 else { return }
+                        let next = origin + Double(value.translation.height / containerHeight)
+                        let clamped = min(0.72, max(0.18, next))
+                        guard abs(clamped - splitFraction.wrappedValue) > 0.0005 else { return }
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            splitFraction.wrappedValue = clamped
+                        }
+                    }
+                    .onEnded { _ in
+                        splitDragOrigin.wrappedValue = nil
+                    }
+            )
     }
 
     private var peekContent: some View {
@@ -146,8 +205,6 @@ struct GridInterestBrowseSection: View {
             }
 
             Spacer(minLength: 8)
-
-            peekInterests
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
@@ -156,18 +213,23 @@ struct GridInterestBrowseSection: View {
     private var expandedContent: some View {
         VStack(spacing: 10) {
             if let profile = viewModel.currentUserProfile {
-                PhotosPicker(selection: $profilePhotoItem, matching: .images) {
-                    mainPhoto
-                }
-                .buttonStyle(.plain)
-                .overlay(alignment: .top) {
-                    if showBioBubbles, let content = BioStatusBubbleLogic.content(bio: bioText, isMe: true) {
-                        BioStatusBubble(text: content.text, isPlaceholder: content.isPlaceholder)
-                            .offset(y: 8)
-                            .allowsHitTesting(false)
+                HStack(alignment: .center, spacing: 12) {
+                    PhotosPicker(selection: $profilePhotoItem, matching: .images) {
+                        mainPhoto
                     }
+                    .buttonStyle(.plain)
+                    .overlay(alignment: .top) {
+                        if showBioBubbles, let content = BioStatusBubbleLogic.content(bio: bioText, isMe: true) {
+                            BioStatusBubble(text: content.text, isPlaceholder: content.isPlaceholder)
+                                .offset(y: 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .accessibilityLabel("Change profile photo")
+
+                    expandedTrailing
+                    Spacer(minLength: 0)
                 }
-                .accessibilityLabel("Change profile photo")
 
                 nameSection
 
@@ -179,6 +241,26 @@ struct GridInterestBrowseSection: View {
                     viewModel: viewModel,
                     userProfile: profile
                 )
+
+                Toggle(isOn: Binding(
+                    get: { viewModel.isVisibleOnMap },
+                    set: { viewModel.setVisibleOnMap($0) }
+                )) {
+                    Text("Visible on map")
+                        .font(.subheadline)
+                }
+                .tint(.blue)
+                .accessibilityIdentifier("grid.visibility.map")
+
+                Toggle(isOn: Binding(
+                    get: { viewModel.isVisibleOnGrid },
+                    set: { viewModel.setVisibleOnGrid($0) }
+                )) {
+                    Text("Visible on grid")
+                        .font(.subheadline)
+                }
+                .tint(.blue)
+                .accessibilityIdentifier("grid.visibility.grid")
             } else {
                 Text("Loading profile…")
                     .font(.subheadline)
@@ -187,11 +269,6 @@ struct GridInterestBrowseSection: View {
             }
 
             Spacer(minLength: 0)
-
-            HStack {
-                Spacer(minLength: 0)
-                    expandedTrailing
-            }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, Self.bottomSafeArea + 8)
@@ -480,30 +557,60 @@ struct GridInterestBrowseSection: View {
         }
     }
 
-    private var peekInterests: some View {
+    private var interestIcons: some View {
         HStack(spacing: 6) {
             peekCircleButton(systemImage: "square.grid.2x2", label: "All", isSelected: viewModel.peopleTab == .all) {
                 viewModel.peopleTab = .all
             }
+            .accessibilityIdentifier("people.tab.all")
 
             ForEach(viewModel.interestPages) { interest in
-                Button {
-                    viewModel.peopleTab = .interest(interest.rawValue)
-                } label: {
-                    Text(interest.emoji)
-                        .font(.body)
-                        .frame(width: 32, height: 32)
-                        .background(peekChipFill(isSelected: isInterestSelected(interest)), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(interest.rawValue)
-                .accessibilityAddTraits(isInterestSelected(interest) ? [.isSelected] : [])
+                let selected = isInterestSelected(interest)
+                Text(interest.emoji)
+                    .font(.body)
+                    .frame(width: 32, height: 32)
+                    .background(peekChipFill(isSelected: selected), in: Circle())
+                    .contentShape(Circle())
+                    .onTapGesture {
+                        viewModel.peopleTab = .interest(interest.rawValue)
+                    }
+                    .onLongPressGesture(minimumDuration: 0.45) {
+                        #if canImport(UIKit)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        #endif
+                        interestPendingDelete = interest
+                    }
+                    .accessibilityLabel(interest.rawValue)
+                    .accessibilityHint("Press and hold to remove")
+                    .accessibilityIdentifier("people.tab.interest.\(interest.rawValue)")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
             }
 
             if viewModel.canAddInterestPage {
                 peekCircleButton(systemImage: "plus", label: "Add interest", isSelected: false) {
-                    viewModel.showingInterestSearch = true
+                    onSearchInterests()
                 }
+                .accessibilityIdentifier("people.tab.search")
+            }
+        }
+        .confirmationDialog(
+            interestPendingDelete.map { "Remove \($0.rawValue)?" } ?? "Remove interest?",
+            isPresented: Binding(
+                get: { interestPendingDelete != nil },
+                set: { if !$0 { interestPendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let interest = interestPendingDelete else { return }
+                interestPendingDelete = nil
+                onDeleteInterest(interest)
+            }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            if let interest = interestPendingDelete {
+                Text("You’ll leave \(interest.rawValue) and this page will close. People looking for \(interest.rawValue) won’t see you here.")
             }
         }
     }

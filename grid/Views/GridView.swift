@@ -7,13 +7,9 @@ import UIKit
 
 struct GridView: View {
     @ObservedObject var viewModel: GridViewModel
-    private enum HomePane {
-        case people
-        case map
-        case messages
-    }
-
-    @State private var homePane: HomePane = .people
+    @State private var showsMap = true
+    @State private var showsGrid = true
+    @State private var showsMessages = false
     @State private var isProfileDrawerExpanded = false
     @State private var showingInterestCapPopover = false
     @FocusState private var isChatComposerFocused: Bool
@@ -25,6 +21,9 @@ struct GridView: View {
         : UserDefaults.standard.object(forKey: "storiesMode") as? Bool ?? false
     @AppStorage("grid.chatAlbumButton") private var showChatAlbumButton = false
     @AppStorage("grid.showZoomControls") private var showZoomControls = false
+    @AppStorage("grid.mapSplitFraction.half") private var mapSplitFraction = 0.5
+    @State private var mapSplitDragOrigin: Double?
+    @State private var pageHeight: CGFloat = 852
     @State private var showBioBubbles = {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: "grid.bioBubbles") == nil {
@@ -54,10 +53,18 @@ struct GridView: View {
     @State private var showingWrongMasterPassword = false
     @State private var masterPassword = ""
     @State private var isRefreshingPeople = false
+    @State private var lastReportedScrollOffset: CGFloat = -1
+    @State private var searchX: CGFloat = 0
+    @State private var searchOpen = false
+    @State private var searchPageWidth: CGFloat = 390
     private static let aboveDrawerControlsHeight: CGFloat = 52
 
     private var gridScrollBottomInset: CGFloat {
-        GridInterestBrowseSection.peekHeight() + Self.aboveDrawerControlsHeight + 8
+        let home = GridInterestBrowseSection.bottomSafeArea
+        if showsMap && showsGrid && showsMessages == false {
+            return home + 8
+        }
+        return home + Self.aboveDrawerControlsHeight + 16
     }
 
     private var showBioBubblesBinding: Binding<Bool> {
@@ -184,11 +191,20 @@ struct GridView: View {
                                 showBioBubbles: showBioBubbles,
                                 gridColumns: zoom.gridColumns,
                                 onChatTapped: { _ in
-                                    if let partnerID {
+                                    guard let partnerID else { return }
+                                    if partnerID == viewModel.currentUserProfile?.deviceID {
+                                        isProfileDrawerExpanded = true
+                                    } else {
                                         handleChatTapped(partnerID)
                                     }
                                 },
-                                onStoriesTapped: handleStoriesTapped
+                                onStoriesTapped: { profile in
+                                    if profile.deviceID == viewModel.currentUserProfile?.deviceID {
+                                        isProfileDrawerExpanded = true
+                                    } else {
+                                        handleStoriesTapped(profile)
+                                    }
+                                }
                             )
                             .id(node.id)
                             .frame(maxWidth: .infinity)
@@ -218,9 +234,18 @@ struct GridView: View {
                     .padding(.bottom, 16)
             }
 
+            Color.clear.frame(height: BrowseRadiusLogic.scrollSpan)
             Color.clear.frame(height: gridScrollBottomInset)
         }
         .scrollBounceBehavior(.always)
+        .scrollContentBackground(.hidden)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            max(0, geometry.contentOffset.y)
+        } action: { _, offset in
+            guard abs(offset - lastReportedScrollOffset) >= 8 else { return }
+            lastReportedScrollOffset = offset
+            viewModel.setBrowseRadius(fromScrollOffset: offset)
+        }
         .refreshable {
             await viewModel.refreshPeopleAndMessages()
         }
@@ -238,12 +263,20 @@ struct GridView: View {
                 }
             )
         }
-        // Dynamic background (colour or photo) visible through transparent cell corners
-        .background(GridBackgroundView(backgroundImage: backgroundImage))
+        // A chosen photo still shows through the cell corners. Otherwise the drawer glass shows through.
+        .background {
+            if backgroundImage != nil {
+                GridBackgroundView(backgroundImage: backgroundImage)
+            } else if showsMap == false {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea()
+            }
+        }
     }
 
     private var canSwipePeopleTabs: Bool {
-        !viewModel.chatOverlaySession.isPresented && !showingBioStoriesOverlay && !zoom.isScaling
+        !viewModel.chatOverlaySession.isPresented && !showingBioStoriesOverlay && !zoom.isScaling && !searchOpen
     }
 
     private func handlePeopleTabSwipe(translation: CGFloat) {
@@ -273,9 +306,71 @@ struct GridView: View {
     }
 
     private func openInterestSearch() {
-        guard viewModel.canAddInterestPage else { return }
+        openSearch()
+    }
+
+    private func openSearch() {
+        guard !searchOpen else { return }
+        guard viewModel.canAddInterestPage else {
+            showingInterestCapPopover = true
+            viewModel.showingInterestSearch = false
+            return
+        }
         viewModel.searchText = ""
         viewModel.showingInterestSearch = true
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+            searchOpen = true
+            searchX = -searchPageWidth
+        }
+    }
+
+    private func closeSearch() {
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+            searchOpen = false
+            searchX = 0
+        }
+        viewModel.showingInterestSearch = false
+    }
+
+    private func settleSearch(translation: CGFloat, velocity: CGFloat) {
+        if !searchOpen, translation >= 0 {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                searchX = 0
+            }
+            return
+        }
+        let flick = abs(translation) < 90 && abs(velocity) > 500
+        if !searchOpen, flick, translation < 0 {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+                searchX = 0
+            }
+            handlePeopleTabSwipe(translation: -80)
+            return
+        }
+        let projected = searchX + velocity * 0.16
+        let open = projected < -searchPageWidth * 0.32
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.88)) {
+            searchOpen = open
+            searchX = open ? -searchPageWidth : 0
+            viewModel.showingInterestSearch = open
+        }
+    }
+
+    private func followSearchDrag(_ translation: CGFloat) {
+        let x: CGFloat
+        if searchOpen {
+            x = -searchPageWidth + max(0, translation)
+        } else {
+            let pulled = min(0, translation + 36)
+            x = pulled
+        }
+        if x > 0 {
+            searchX = x * 0.2
+        } else if x < -searchPageWidth {
+            searchX = -searchPageWidth + (x + searchPageWidth) * 0.2
+        } else {
+            searchX = x
+        }
     }
 
     private var emptyGroupHint: String {
@@ -297,11 +392,11 @@ struct GridView: View {
 
     private var conversationsButton: some View {
         Button {
-            toggleHomePane(.messages)
+            showsMessages.toggle()
         } label: {
             paneCircleLabel(
                 systemImage: "bubble.left.and.bubble.right.fill",
-                isActive: homePane == .messages
+                isActive: showsMessages
             )
             .overlay(alignment: .topTrailing) {
                 let unread = viewModel.incomingUnreadCount()
@@ -317,8 +412,8 @@ struct GridView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(homePane == .messages ? "Show grid" : "Messages")
-        .accessibilityAddTraits(homePane == .messages ? [.isSelected] : [])
+        .accessibilityLabel(showsMessages ? "Show grid" : "Messages")
+        .accessibilityAddTraits(showsMessages ? [.isSelected] : [])
         .accessibilityValue(viewModel.incomingUnreadCount() > 0 ? "\(viewModel.incomingUnreadCount()) unread" : "No unread")
         .accessibilityIdentifier("grid.messages")
     }
@@ -350,7 +445,6 @@ struct GridView: View {
                 .accessibilityLabel("Create Story")
             }
 
-            visibilityButton
             locationButton
             refreshButton
         }
@@ -359,7 +453,7 @@ struct GridView: View {
     private var settingsMenu: some View {
         Menu {
             Button {
-                homePane = .messages
+                showsMessages = true
             } label: {
                 Label("Conversations", systemImage: "bubble.left.and.bubble.right.fill")
             }
@@ -497,26 +591,13 @@ struct GridView: View {
         .accessibilityIdentifier(GridUITestHarness.settingsIdentifier)
     }
 
-    private var peopleGridButton: some View {
-        Button {
-            homePane = .people
-        } label: {
-            paneCircleLabel(systemImage: "square.grid.2x2.fill", isActive: homePane == .people)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Grid")
-        .accessibilityAddTraits(homePane == .people ? [.isSelected] : [])
-        .accessibilityIdentifier("grid.people")
-    }
-
     private var locationButton: some View {
         Button {
-            homePane = .map
-            viewModel.requestCurrentLocation()
+            toggleMap()
         } label: {
             paneCircleLabel(
                 systemImage: "location.fill",
-                isActive: homePane == .map || viewModel.needsLocationOnboarding
+                isActive: (showsMap && showsMessages == false) || viewModel.needsLocationOnboarding
             )
         }
         .buttonStyle(.plain)
@@ -526,24 +607,8 @@ struct GridView: View {
                 ? viewModel.locationEnableButtonTitle
                 : "Current location"
         )
-        .accessibilityAddTraits(homePane == .map ? [.isSelected] : [])
+        .accessibilityAddTraits(showsMap && showsMessages == false ? [.isSelected] : [])
         .accessibilityIdentifier("grid.map")
-    }
-
-    private var visibilityButton: some View {
-        Button {
-            viewModel.toggleDiscoverable()
-        } label: {
-            paneCircleLabel(
-                systemImage: viewModel.isDiscoverable ? "eye.fill" : "eye.slash",
-                isActive: viewModel.isDiscoverable == false
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(viewModel.isDiscoverable ? "Visible to everyone" : "Hidden from everyone")
-        .accessibilityValue(viewModel.isDiscoverable ? "Visible" : "Hidden")
-        .accessibilityAddTraits(viewModel.isDiscoverable ? [] : [.isSelected])
-        .accessibilityIdentifier("grid.visibility")
     }
 
     private var refreshButton: some View {
@@ -646,8 +711,88 @@ struct GridView: View {
             .shadow(color: .black.opacity(0.22), radius: 8, y: 2)
     }
 
-    private func toggleHomePane(_ pane: HomePane) {
-        homePane = homePane == pane ? .people : pane
+    private func toggleMap() {
+        if showsMessages {
+            showsMessages = false
+            showsMap = true
+            viewModel.recenterMapOnUser()
+            return
+        }
+        if showsMap {
+            viewModel.recenterMapOnUser()
+            return
+        }
+        showsMap = true
+        viewModel.recenterMapOnUser()
+    }
+
+    private var controlBar: some View {
+        HStack {
+            conversationsButton
+            Spacer()
+            if showsGrid && showsMessages == false, showZoomControls {
+                zoomControls
+            }
+            aboveDrawerControls
+        }
+    }
+
+    @ViewBuilder
+    private var bottomChrome: some View {
+        if showsMap && showsGrid && showsMessages == false && GridUITestHarness.isActive == false {
+            let fraction = min(0.72, max(0.18, mapSplitFraction))
+            let drawerHeight = max(200, pageHeight * (1 - CGFloat(fraction)))
+            VStack(spacing: 0) {
+                controlBar
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                gridWithTabs(isMapOverlay: true, containerHeight: pageHeight)
+                    .frame(height: drawerHeight)
+            }
+        } else {
+            controlBar
+                .padding(.horizontal, 16)
+                .padding(.bottom, GridInterestBrowseSection.bottomSafeArea + 8)
+        }
+    }
+
+    private func gridWithTabs(isMapOverlay: Bool, containerHeight: CGFloat = 1) -> some View {
+        GridInterestBrowseSection(
+            viewModel: viewModel,
+            isExpanded: .constant(false),
+            showBioBubbles: showBioBubbles,
+            showingInterestCapPopover: $showingInterestCapPopover,
+            onSearchInterests: openInterestSearch,
+            onDeleteInterest: { interest in
+                viewModel.unregisterFromInterest(interest)
+            },
+            gridContent: AnyView(gridPane),
+            isMapOverlay: isMapOverlay,
+            containerHeight: containerHeight,
+            splitFraction: $mapSplitFraction,
+            splitDragOrigin: $mapSplitDragOrigin
+        )
+    }
+
+    private var mapPane: some View {
+        GridPeopleMapView(viewModel: viewModel) { deviceID in
+            if deviceID == viewModel.currentUserProfile?.deviceID {
+                isProfileDrawerExpanded = true
+            } else {
+                openChat(with: deviceID)
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private var gridPane: some View {
+        if viewModel.currentUserProfile != nil {
+            peopleTabPager
+        } else {
+            Text("Loading profile or no profile set...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private var peopleTabPager: some View {
@@ -733,115 +878,57 @@ struct GridView: View {
     
     var mainGridView: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                ZStack(alignment: .bottom) {
-                    Group {
-                        switch homePane {
-                        case .map:
-                            GridPeopleMapView(viewModel: viewModel) { deviceID in
-                                openChat(with: deviceID)
-                            }
-                        case .messages:
-                            ConversationsListView(
-                                viewModel: viewModel,
-                                bottomInset: gridScrollBottomInset,
-                                onSelect: openChat(with:)
-                            )
-                        case .people:
-                            if viewModel.currentUserProfile != nil {
-                                peopleTabPager
-                            } else {
-                                Text("Loading profile or no profile set...")
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    VStack(spacing: 8) {
-                        HStack {
-                            conversationsButton
-                            peopleGridButton
-                            Spacer()
-                            if homePane == .people, showZoomControls {
-                                zoomControls
-                            }
-                            aboveDrawerControls
-                        }
-                        .padding(.horizontal, 16)
-
-                        if !GridUITestHarness.isActive {
-                            GridInterestBrowseSection(
-                                viewModel: viewModel,
-                                isExpanded: $isProfileDrawerExpanded,
-                                showBioBubbles: showBioBubbles,
-                                onChatTapped: { deviceID in
-                                    isProfileDrawerExpanded = false
-                                    openChat(with: deviceID)
-                                },
-                                expandedTrailing: AnyView(settingsMenu)
-                            )
-                        }
-                    }
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    mainPage
+                        .frame(width: geo.size.width, height: geo.size.height)
+                    InterestSearchView(viewModel: viewModel, isActive: searchOpen, onClose: closeSearch)
+                        .safeAreaPadding(.top)
+                        .frame(width: geo.size.width, height: geo.size.height)
                 }
-                .ignoresSafeArea(edges: .bottom)
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    if GridUITestHarness.isActive {
-                        uiTestHarnessBar
-                    } else {
-                        GridPeopleTabBar(
-                            selection: $viewModel.peopleTab,
-                            groups: viewModel.customGroups,
-                            interestPages: viewModel.interestPages,
-                            canAddInterestPage: viewModel.canAddInterestPage,
-                            showingInterestCapPopover: $showingInterestCapPopover,
-                            onSearchInterests: openInterestSearch,
-                            onDeleteInterest: { interest in
-                                viewModel.unregisterFromInterest(interest)
-                            }
-                        )
-                    }
+                .offset(x: searchX)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
+                .onAppear { searchPageWidth = geo.size.width }
+                .onChange(of: geo.size.width) { width in
+                    searchPageWidth = width
+                    if searchOpen { searchX = -width }
                 }
-                .background(.bar)
             }
-            .ignoresSafeArea(edges: .bottom)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationTitle("")
-            .navigationBarHidden(true)
-            .toolbar(.hidden, for: .navigationBar)
-            .onAppear {
-                viewModel.handleGridAppeared()
-                warmChatIfNeeded()
+            .clipped()
+            .ignoresSafeArea()
+            .background {
+                GridSearchPager(
+                    enabled: canSwipePeopleTabs || searchOpen,
+                    searchOpen: searchOpen,
+                    onHold: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
+                            searchX = searchOpen ? -searchPageWidth : 0
+                        }
+                    },
+                    onMove: followSearchDrag,
+                    onEnd: settleSearch
+                )
             }
-            .onChange(of: viewModel.currentUserProfile?.deviceID) { _ in
-                warmChatIfNeeded()
+            .onChange(of: viewModel.showingInterestSearch) { show in
+                if show { openSearch() }
             }
-            .onDisappear {
-                // Clean up any pending single tap timer
-                singleTapTimer?.invalidate()
-                singleTapTimer = nil
-            }
-            .sheet(item: $viewModel.selectedUserProfileForReport) { profileUser in // NEW: Sheet for Report Dialog
+            .sheet(item: $viewModel.selectedUserProfileForReport) { profileUser in
                 ReportUserView(viewModel: viewModel, userProfile: profileUser.userProfile)
             }
-            .sheet(isPresented: $showingContactInfo) {  // NEW: Sheet for Contact Info
+            .sheet(isPresented: $showingContactInfo) {
                 ContactInfoView()
             }
-            .sheet(isPresented: $showingBlockedUsers) {  // NEW: Sheet for Blocked Users
+            .sheet(isPresented: $showingBlockedUsers) {
                 BlockedUsersView(viewModel: viewModel)
             }
-            .sheet(isPresented: $viewModel.showingPrivacyPolicy) {  // NEW: Sheet for Privacy Policy
+            .sheet(isPresented: $viewModel.showingPrivacyPolicy) {
                 PrivacyPolicyView()
             }
             .sheet(isPresented: $viewModel.showingTermsOfUse) {
                 TermsOfUseView()
             }
-            .sheet(isPresented: $showingStoryCreation) {  // NEW: Sheet for Story Creation
+            .sheet(isPresented: $showingStoryCreation) {
                 StoryCreationView(viewModel: viewModel)
-            }
-            .sheet(isPresented: $viewModel.showingInterestSearch) { // NEW: Sheet for Interest Search
-                InterestSearchView(viewModel: viewModel)
             }
             .sheet(isPresented: $showingBackgroundPhotoPicker) {
                 BackgroundPhotoPickerView(selectedItem: $selectedBackgroundPhotoItem, backgroundImage: $backgroundImage)
@@ -882,7 +969,81 @@ struct GridView: View {
                 Text(viewModel.userFacingAlert ?? "")
             }
         }
-        .navigationViewStyle(StackNavigationViewStyle()) // Force single column navigation on iPad
+        .navigationViewStyle(StackNavigationViewStyle())
+        .ignoresSafeArea()
+    }
+
+    private var mainPage: some View {
+        ZStack(alignment: .bottom) {
+                    Group {
+                        if showsMessages {
+                            ConversationsListView(
+                                viewModel: viewModel,
+                                bottomInset: gridScrollBottomInset,
+                                onSelect: openChat(with:)
+                            )
+                            .safeAreaPadding(.top)
+                        } else if showsMap {
+                            mapPane
+                        } else if GridUITestHarness.isActive {
+                            gridPane
+                        } else {
+                            gridWithTabs(isMapOverlay: false)
+                                .safeAreaPadding(.top)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    bottomChrome
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { pageHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { pageHeight = $0 }
+                }
+            }
+            .ignoresSafeArea()
+            .overlay(alignment: .top) {
+                if GridUITestHarness.isActive {
+                    uiTestHarnessBar
+                        .background(.bar)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("")
+            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $isProfileDrawerExpanded) {
+                GridInterestBrowseSection(
+                    viewModel: viewModel,
+                    isExpanded: $isProfileDrawerExpanded,
+                    showBioBubbles: showBioBubbles,
+                    showingInterestCapPopover: $showingInterestCapPopover,
+                    onSearchInterests: openInterestSearch,
+                    onDeleteInterest: { interest in
+                        viewModel.unregisterFromInterest(interest)
+                    },
+                    onChatTapped: { deviceID in
+                        isProfileDrawerExpanded = false
+                        openChat(with: deviceID)
+                    },
+                    expandedTrailing: AnyView(settingsMenu),
+                    showsOwnProfile: true
+                )
+            }
+            .onAppear {
+                viewModel.handleGridAppeared()
+                warmChatIfNeeded()
+            }
+            .onChange(of: viewModel.currentUserProfile?.deviceID) { _ in
+                warmChatIfNeeded()
+            }
+            .onDisappear {
+                singleTapTimer?.invalidate()
+                singleTapTimer = nil
+            }
     }
     
     @MainActor

@@ -1,6 +1,7 @@
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
+import MapKit
 
 /// Adds left/right swipe recognizers to the enclosing grid `UIScrollView`.
 /// They run at the same time as vertical scrolling, so a sideways swipe
@@ -140,6 +141,107 @@ struct GridScrollPageSwipe: UIViewRepresentable {
                 }
             }
             return nil
+        }
+    }
+}
+
+/// Drags the main page left to reveal search, and right to return.
+struct GridSearchPager: UIViewRepresentable {
+    var enabled: Bool
+    var searchOpen: Bool
+    var onHold: () -> Void
+    var onMove: (CGFloat) -> Void
+    var onEnd: (CGFloat, CGFloat) -> Void
+
+    func makeUIView(context: Context) -> GridSearchPagerView {
+        let view = GridSearchPagerView()
+        view.onHold = onHold
+        view.onMove = onMove
+        view.onEnd = onEnd
+        view.isEnabled = enabled
+        view.searchOpen = searchOpen
+        return view
+    }
+
+    func updateUIView(_ view: GridSearchPagerView, context: Context) {
+        view.onHold = onHold
+        view.onMove = onMove
+        view.onEnd = onEnd
+        view.isEnabled = enabled
+        view.searchOpen = searchOpen
+    }
+
+    static func dismantleUIView(_ view: GridSearchPagerView, coordinator: ()) {
+        view.removePan()
+    }
+}
+
+final class GridSearchPagerView: UIView, UIGestureRecognizerDelegate {
+    var onHold: (() -> Void)?
+    var onMove: ((CGFloat) -> Void)?
+    var onEnd: ((CGFloat, CGFloat) -> Void)?
+    var isEnabled = true
+    var searchOpen = false
+    private var pan: UIPanGestureRecognizer?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let window else {
+            removePan()
+            return
+        }
+        if pan == nil {
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+            pan.cancelsTouchesInView = false
+            pan.delegate = self
+            self.pan = pan
+            window.addGestureRecognizer(pan)
+        }
+    }
+
+    func removePan() {
+        if let pan {
+            pan.view?.removeGestureRecognizer(pan)
+        }
+        pan = nil
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard isEnabled, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+        let velocity = pan.velocity(in: window)
+        guard abs(velocity.x) > abs(velocity.y) else { return false }
+        return searchOpen ? velocity.x > 0 : velocity.x < 0
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard isEnabled else { return false }
+        if touch.location(in: window).y < 8 { return false }
+        var view = touch.view
+        while let current = view {
+            if current is MKMapView || current is UITextField || current is UIControl { return false }
+            view = current.superview
+        }
+        return true
+    }
+
+    @objc private func panned(_ pan: UIPanGestureRecognizer) {
+        let translation = pan.translation(in: window).x
+        switch pan.state {
+        case .changed:
+            onMove?(translation)
+        case .ended:
+            onEnd?(translation, pan.velocity(in: window).x)
+        case .cancelled, .failed:
+            onHold?()
+        default:
+            break
         }
     }
 }
