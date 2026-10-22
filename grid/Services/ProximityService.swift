@@ -13,84 +13,203 @@ class ProximityService: ObservableObject {
     private var activitySaveCompletions: [(Result<UserProfile, Error>) -> Void] = []
     private var isSavingActivity = false
     
+    private var isFetchingAllUsers = false
+    private var queuedFetchAllUsers = false
+    private var queuedFetchLocation: CLLocation?
+    private var queuedExtraRecordNames: [String] = []
+    private var fetchAllUsersCompletions: [() -> Void] = []
+    
     init() {
         // No automatic timer - only refresh on demand
     }
     
     // Fetch ALL users and sort by distance - simple and straightforward
-    func fetchAllUsers(currentUserLocation: CLLocation? = nil, completion: (() -> Void)? = nil) {
+    func fetchAllUsers(
+        currentUserLocation: CLLocation? = nil,
+        extraRecordNames: [String] = [],
+        completion: (() -> Void)? = nil
+    ) {
         print("ProximityService: fetchAllUsers called with location: \(currentUserLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0))")
         
-        // Store the location if provided
         if let location = currentUserLocation {
             lastKnownLocation = location
+            queuedFetchLocation = location
         }
-        
-        // Use the provided location or the last known location
-        let locationToUse = currentUserLocation ?? lastKnownLocation
-        
-        // Query for ALL users using a very old timestamp (effectively gets everyone)
-        // Use lastActiveTimestamp which is queryable, with a date from 30 days ago
-        let thirtyDaysAgo = Date().addingTimeInterval(-30 * 24 * 60 * 60) // 30 days ago
-        let predicate = NSPredicate(format: "lastActiveTimestamp > %@", thirtyDaysAgo as NSDate)
-        let query = CKQuery(recordType: "UserProfiles", predicate: predicate)
-        query.sortDescriptors = [NSSortDescriptor(key: "lastActiveTimestamp", ascending: false)]
-        
-        print("ProximityService: Executing CloudKit query for UserProfiles with predicate: \(predicate)")
-        
-        publicDB.perform(query, inZoneWith: nil) { [weak self] records, error in
-            guard let self = self else {
-                DispatchQueue.main.async { completion?() }
-                return
-            }
-            
-            print("ProximityService: CloudKit query completed. Records count: \(records?.count ?? -1), Error: \(error?.localizedDescription ?? "none")")
-            
+        queuedExtraRecordNames.append(contentsOf: extraRecordNames)
+        if let completion {
+            fetchAllUsersCompletions.append(completion)
+        }
+        guard isFetchingAllUsers == false else {
+            queuedFetchAllUsers = true
+            return
+        }
+        startFetchAllUsers()
+    }
+
+    private func startFetchAllUsers() {
+        isFetchingAllUsers = true
+        queuedFetchAllUsers = false
+        let locationToUse = queuedFetchLocation ?? lastKnownLocation
+        let extraRecordNames = UserProfileQueryLogic.missingRecordNames(
+            fetched: [],
+            known: queuedExtraRecordNames
+        )
+        queuedExtraRecordNames = []
+        let completions = fetchAllUsersCompletions
+        fetchAllUsersCompletions = []
+        let predicates = UserProfileQueryLogic.fetchPredicates()
+        var predicateIndex = 0
+        var gathered: [CKRecord] = []
+        var seenNames = Set<String>()
+        var stubIDs: [String] = []
+
+        func append(_ record: CKRecord) {
+            let name = record.recordID.recordName
+            guard seenNames.insert(name).inserted else { return }
+            gathered.append(record)
+        }
+
+        func publish() {
+            var fetched = gathered.compactMap { UserProfile(record: $0) }
+            let knownIDs = fetched.map(\.deviceID) + gathered.map(\.recordID.recordName)
+            let missing = UserProfileQueryLogic.missingRecordNames(fetched: knownIDs, known: stubIDs)
+            fetched.append(contentsOf: missing.map(UserProfileQueryLogic.stubProfile(deviceID:)))
+            fetched = UserProfileQueryLogic.uniqueProfiles(fetched)
+            let leftover = fetched.filter(GridPresenceLogic.isLeftoverDebugPeer)
+            let allProfiles = fetched.filter(GridPresenceLogic.shouldShowPeer)
+            print("ProximityService: Successfully parsed \(allProfiles.count) UserProfile objects from \(gathered.count) CloudKit records")
+            self.deleteLeftoverDebugPeers(leftover)
+            self.activeNearbyProfiles = NearbyProfileSortLogic.sorted(allProfiles, from: locationToUse)
+            print("ProximityService: Final activeNearbyProfiles count: \(self.activeNearbyProfiles.count)")
+        }
+
+        func finish(error: Error?) {
             DispatchQueue.main.async {
-                defer { completion?() }
-                if let error = error {
-                    // Handle the "record type not found" error gracefully
+                if let error, gathered.isEmpty {
                     if error.localizedDescription.contains("Did not find record type") {
                         print("CloudKit schema not initialized yet - UserProfiles record type doesn't exist. This is normal for new apps.")
                         self.activeNearbyProfiles = []
-                        return
+                    } else {
+                        print("ProximityService: Error fetching users: \(error.localizedDescription)")
                     }
-                    print("ProximityService: Error fetching users: \(error.localizedDescription)")
-                    return
-                }
-                
-                let fetched = records?.compactMap { UserProfile(record: $0) } ?? []
-                let leftover = fetched.filter(GridPresenceLogic.isLeftoverDebugPeer)
-                let allProfiles = fetched.filter(GridPresenceLogic.shouldShowPeer)
-                print("ProximityService: Successfully parsed \(allProfiles.count) UserProfile objects from \(records?.count ?? 0) CloudKit records")
-                self.deleteLeftoverDebugPeers(leftover)
-                
-                // Sort by distance if we have current location
-                if let currentLocation = locationToUse {
-                    print("ProximityService: Sorting users by distance from current location")
-                    let sortedProfiles = allProfiles.sorted { profile1, profile2 in
-                        guard let location1 = profile1.location,
-                              let location2 = profile2.location else {
-                            // Put profiles without location at the end
-                            return profile1.location != nil && profile2.location == nil
-                        }
-                        
-                        let dist1 = currentLocation.distance(from: location1)
-                        let dist2 = currentLocation.distance(from: location2)
-                        return dist1 < dist2
-                    }
-                    
-                    self.activeNearbyProfiles = sortedProfiles
-                    print("ProximityService: Sorted \(sortedProfiles.count) users by distance")
                 } else {
-                    // No location available, just show all users
-                    self.activeNearbyProfiles = allProfiles
-                    print("ProximityService: No location available, showing all \(allProfiles.count) users")
+                    if let error {
+                        print("ProximityService: Error fetching users: \(error.localizedDescription)")
+                    }
+                    publish()
                 }
-                
-                print("ProximityService: Final activeNearbyProfiles count: \(self.activeNearbyProfiles.count)")
+                completions.forEach { $0() }
+                self.isFetchingAllUsers = false
+                if self.queuedFetchAllUsers {
+                    self.startFetchAllUsers()
+                }
             }
         }
+
+        func fillGaps(named names: [String]) {
+            let knownIDs = Array(seenNames) + gathered.compactMap { $0["deviceID"] as? String }
+            let missing = UserProfileQueryLogic.missingRecordNames(fetched: knownIDs, known: names)
+            stubIDs = missing
+            guard missing.isEmpty == false else {
+                finish(error: nil)
+                return
+            }
+            print("ProximityService: fetching \(missing.count) UserProfiles by record ID")
+            let operation = CKFetchRecordsOperation(recordIDs: missing.map { CKRecord.ID(recordName: $0) })
+            operation.qualityOfService = .userInitiated
+            operation.fetchRecordsCompletionBlock = { recordsByID, error in
+                if let ckError = error as? CKError, ckError.code == .partialFailure {
+                    print("ProximityService: some UserProfiles were missing by record ID")
+                } else if let error {
+                    print("ProximityService: record ID fetch failed (\(error.localizedDescription))")
+                }
+                recordsByID?.values.forEach { append($0) }
+                finish(error: nil)
+            }
+            self.publicDB.add(operation)
+        }
+
+        func fetchEncryptionDeviceIDs(then continueWith: @escaping ([String]) -> Void) {
+            if extraRecordNames.isEmpty == false {
+                continueWith(extraRecordNames)
+                return
+            }
+            var ids: [String] = []
+            let query = CKQuery(
+                recordType: "EncryptionProfiles",
+                predicate: NSPredicate(format: "isEncryptionEnabled == 1")
+            )
+            let operation = CKQueryOperation(query: query)
+            operation.qualityOfService = .userInitiated
+            operation.resultsLimit = CKQueryOperation.maximumResults
+            operation.recordMatchedBlock = { _, result in
+                guard case .success(let record) = result else { return }
+                let name = record.recordID.recordName
+                if name.hasPrefix("encryption_") {
+                    ids.append(String(name.dropFirst("encryption_".count)))
+                } else if let deviceID = record["deviceID"] as? String {
+                    ids.append(deviceID)
+                }
+            }
+            operation.queryResultBlock = { result in
+                if case .failure(let error) = result {
+                    print("ProximityService: encryption profile query failed (\(error.localizedDescription))")
+                }
+                continueWith(ids)
+            }
+            self.publicDB.add(operation)
+        }
+
+        func run(cursor: CKQueryOperation.Cursor?) {
+            guard predicateIndex < predicates.count else {
+                fetchEncryptionDeviceIDs { names in
+                    fillGaps(named: names)
+                }
+                return
+            }
+            let operation: CKQueryOperation
+            if let cursor {
+                operation = CKQueryOperation(cursor: cursor)
+            } else {
+                let query = CKQuery(recordType: "UserProfiles", predicate: predicates[predicateIndex])
+                operation = CKQueryOperation(query: query)
+            }
+            operation.qualityOfService = .userInitiated
+            operation.resultsLimit = CKQueryOperation.maximumResults
+            operation.recordMatchedBlock = { _, result in
+                if case .success(let record) = result {
+                    append(record)
+                }
+            }
+            operation.queryResultBlock = { result in
+                switch result {
+                case .success(let nextCursor):
+                    if let nextCursor {
+                        run(cursor: nextCursor)
+                    } else if gathered.isEmpty, predicateIndex + 1 < predicates.count {
+                        predicateIndex += 1
+                        run(cursor: nil)
+                    } else {
+                        fetchEncryptionDeviceIDs { names in
+                            fillGaps(named: names)
+                        }
+                    }
+                case .failure(let error):
+                    if cursor == nil, predicateIndex + 1 < predicates.count {
+                        print("ProximityService: query predicate \(predicateIndex) failed (\(error.localizedDescription)); trying fallback")
+                        predicateIndex += 1
+                        run(cursor: nil)
+                    } else {
+                        fetchEncryptionDeviceIDs { names in
+                            fillGaps(named: names)
+                        }
+                    }
+                }
+            }
+            self.publicDB.add(operation)
+        }
+
+        run(cursor: nil)
     }
     
     // Keep for backward compatibility - now just calls fetchAllUsers

@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 /// Who may appear as a card on the people grid.
 enum GridPresenceLogic {
@@ -30,6 +31,38 @@ enum GridPresenceLogic {
     /// Hidden users do not appear as themselves on the grid or map.
     static func showsSelfAvatar(isDiscoverable: Bool, showsSelfOnGrid: Bool) -> Bool {
         isDiscoverable && showsSelfOnGrid
+    }
+}
+
+/// All is a 25-cell grid. Missing GPS used to sort last, so a brand-new account never appeared.
+enum NearbyProfileSortLogic {
+    static let recentActivity: TimeInterval = 24 * 60 * 60
+
+    static func sorted(
+        _ profiles: [UserProfile],
+        from location: CLLocation?,
+        now: Date = Date()
+    ) -> [UserProfile] {
+        profiles.sorted { lhs, rhs in
+            let left = rankDistance(lhs, from: location, now: now)
+            let right = rankDistance(rhs, from: location, now: now)
+            if left != right { return left < right }
+            return lhs.lastActiveTimestamp > rhs.lastActiveTimestamp
+        }
+    }
+
+    static func rankDistance(
+        _ profile: UserProfile,
+        from location: CLLocation?,
+        now: Date = Date()
+    ) -> CLLocationDistance {
+        if let location, let theirs = profile.location {
+            return location.distance(from: theirs)
+        }
+        if now.timeIntervalSince(profile.lastActiveTimestamp) < recentActivity {
+            return 0
+        }
+        return .greatestFiniteMagnitude
     }
 }
 
@@ -95,5 +128,51 @@ enum VisibilityOnboardingLogic {
 
     static func shouldAskOnLogin(isNewAccount: Bool) -> Bool {
         false
+    }
+}
+
+/// Production cannot query `recordName`, so `TRUEPREDICATE` fails.
+/// Merge every queryable field and fill gaps by record ID.
+enum UserProfileQueryLogic {
+    static func fetchPredicates(now: Date = Date()) -> [NSPredicate] {
+        _ = now
+        return [
+            NSPredicate(format: "userID != %@", ""),
+            NSPredicate(format: "deviceID != %@", ""),
+            NSPredicate(format: "lastActiveTimestamp > %@", Date.distantPast as NSDate)
+        ]
+    }
+
+    static func isUnqueryableField(_ error: Error) -> Bool {
+        let text = error.localizedDescription.lowercased()
+        return text.contains("not marked queryable") || text.contains("not queryable")
+    }
+
+    static func missingRecordNames(fetched: [String], known: [String]) -> [String] {
+        let have = Set(fetched.filter { $0.isEmpty == false })
+        var seen = Set<String>()
+        return known.filter { name in
+            name.isEmpty == false && have.contains(name) == false && seen.insert(name).inserted
+        }
+    }
+
+    static func stubDisplayName(from deviceID: String) -> String {
+        let trimmed = deviceID.replacingOccurrences(of: "-DEVICE", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return trimmed.isEmpty ? deviceID : trimmed
+    }
+
+    static func stubProfile(deviceID: String) -> UserProfile {
+        UserProfile(
+            userID: "missing.\(deviceID)",
+            deviceID: deviceID,
+            deviceName: stubDisplayName(from: deviceID),
+            isDiscoverable: false
+        )
+    }
+
+    static func uniqueProfiles(_ profiles: [UserProfile]) -> [UserProfile] {
+        var seen = Set<String>()
+        return profiles.filter { seen.insert($0.deviceID).inserted }
     }
 }

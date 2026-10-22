@@ -4,6 +4,11 @@ import Foundation
 enum GridPlacementLogic {
     static let defaultSize = 5
 
+    static func size(fitting count: Int, minimum: Int = defaultSize) -> Int {
+        guard count > minimum * minimum else { return minimum }
+        return Int(ceil(sqrt(Double(count))))
+    }
+
     static func makeEmptyGrid(size: Int = defaultSize) -> [[GridNode]] {
         (0..<size).map { row in
             (0..<size).map { col in

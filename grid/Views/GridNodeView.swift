@@ -22,9 +22,7 @@ struct GridNodeView: View {
         ZStack {
             // Main profile image
             Group {
-                if imageLoader.isLoading {
-                    ProgressView()
-                } else if let loadedImage = imageLoader.image {
+                if let loadedImage = imageLoader.image {
                     loadedImage
                         .resizable()
                         .scaledToFill()
@@ -97,7 +95,8 @@ struct GridNodeView: View {
                                 .foregroundColor(.yellow)
                                 .background(Circle().fill(Color.black.opacity(0.6)).frame(width: 18, height: 18))
                         }
-                        if profile.isDiscoverable == false, viewModel.seesHiddenPeople {
+                        if profile.isDiscoverable == false,
+                           viewModel.peopleTab.showsHiddenPeers(masterUnlocked: viewModel.seesHiddenPeople) {
                             HiddenUserBadge(size: 18)
                         }
                         

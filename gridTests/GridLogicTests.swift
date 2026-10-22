@@ -116,6 +116,45 @@ struct GridColumnZoomLogicTests {
         #expect(InitialsAvatarLogic.initials(from: "Josh B") == "JB")
     }
 
+    @Test func recentAccountsWithoutGPSStillRankOnTheGrid() {
+        let now = Date()
+        let here = CLLocation(latitude: 37.77, longitude: -122.41)
+        var fresh = UserProfile(userID: "n", deviceID: "new", deviceName: "New")
+        fresh.lastActiveTimestamp = now
+        var far = UserProfile(
+            userID: "f",
+            deviceID: "far",
+            deviceName: "Far",
+            latitude: 34.05,
+            longitude: -118.24,
+            isDiscoverable: true
+        )
+        far.lastActiveTimestamp = now.addingTimeInterval(-3600)
+        var stale = UserProfile(userID: "s", deviceID: "old", deviceName: "Old")
+        stale.lastActiveTimestamp = now.addingTimeInterval(-48 * 60 * 60)
+        let ranked = NearbyProfileSortLogic.sorted([far, stale, fresh], from: here, now: now)
+        #expect(ranked.map(\.deviceID) == ["new", "far", "old"])
+    }
+
+    @Test func userProfileQueryDoesNotUseAThirtyDayWindow() {
+        let predicates = UserProfileQueryLogic.fetchPredicates()
+        #expect(predicates.isEmpty == false)
+        #expect(predicates.contains { $0 == NSPredicate(value: true) } == false)
+        #expect(predicates.contains { $0.predicateFormat.contains("30") } == false)
+        #expect(predicates.contains { $0.predicateFormat.contains("userID") })
+        #expect(
+            UserProfileQueryLogic.missingRecordNames(
+                fetched: ["1943-DEVICE"],
+                known: ["1943-DEVICE", "new-DEVICE"]
+            ) == ["new-DEVICE"]
+        )
+        #expect(UserProfileQueryLogic.stubDisplayName(from: "new-DEVICE") == "new")
+        let stub = UserProfileQueryLogic.stubProfile(deviceID: "new-DEVICE")
+        #expect(stub.deviceID == "new-DEVICE")
+        #expect(stub.isDiscoverable == false)
+        #expect(GridPresenceLogic.hasPhoto(stub) == false)
+    }
+
     @Test func accountsAreHiddenWhenDiscoverableIsUnset() {
         #expect(VisibilityOnboardingLogic.discoverable(stored: nil) == false)
         #expect(VisibilityOnboardingLogic.discoverable(stored: true) == true)
@@ -150,6 +189,10 @@ struct GridColumnZoomLogicTests {
         let hidden = UserProfile(userID: "h", deviceID: "hid", deviceName: "Hid")
         #expect(GridMasterViewerLogic.shouldShowPeer(hidden, includeHidden: false) == false)
         #expect(GridMasterViewerLogic.shouldShowPeer(hidden, includeHidden: true))
+        #expect(GridPeopleTab.all.showsHiddenPeers(masterUnlocked: false) == false)
+        #expect(GridPeopleTab.all.showsHiddenPeers(masterUnlocked: true))
+        #expect(GridPeopleTab.interest("Music").showsHiddenPeers(masterUnlocked: false) == false)
+        #expect(GridPeopleTab.interest("Music").showsHiddenPeers(masterUnlocked: true))
         #expect(GridMasterViewerLogic.showsHiddenBadge(isDiscoverable: false, unlocked: true))
         #expect(GridMasterViewerLogic.showsHiddenBadge(isDiscoverable: false, unlocked: false) == false)
         let defaults = UserDefaults(suiteName: "grid.masterViewer.\(UUID().uuidString)")!
@@ -757,6 +800,25 @@ struct InterestFootstepLogicTests {
                 lastLocation: origin
             ) == false
         )
+        #expect(
+            InterestPlaceHeatmapLogic.shouldSearch(
+                interest: "Gay",
+                at: origin,
+                lastInterest: "Gay",
+                lastLocation: origin,
+                radiusMeters: 5_000,
+                lastRadiusMeters: 20_000
+            )
+        )
+        #expect(
+            InterestPlaceHeatmapLogic.cacheKey(interest: "Nightlife", radiusMeters: 5_000)
+                != InterestPlaceHeatmapLogic.cacheKey(interest: "Nightlife", radiusMeters: 20_000)
+        )
+        let prefetched = InterestPlaceHeatmapLogic.prefetchInterests(
+            from: [.coffee, .music, .hiking, .nightlife]
+        )
+        #expect(prefetched.map(\.rawValue) == ["Coffee", "Music", "Hiking"])
+        #expect(prefetched.count == InterestPageStore.maxPages)
     }
 
     @Test func eachPlaceKeepsItsOwnHeatDot() {
@@ -828,6 +890,25 @@ struct InterestFootstepLogicTests {
         let region = GridPeopleMapLogic.region(for: [], blobs: blobs)
         #expect(region != nil)
         #expect(abs((region?.center.latitude ?? 0) - 37.77) < 0.01)
+        let center = CLLocationCoordinate2D(latitude: 37.77, longitude: -122.41)
+        let aroundUser = GridPeopleMapLogic.region(around: center)
+        let withPlaces = GridPeopleMapLogic.region(
+            for: [],
+            blobs: [
+                InterestFootstepLogic.HeatBlob(
+                    id: "place.far",
+                    latitude: 37.95,
+                    longitude: -122.41,
+                    visitCount: 1,
+                    timestamp: Date.distantPast,
+                    radius: 80,
+                    opacity: 0.2
+                )
+            ],
+            center: center
+        )
+        #expect(aroundUser.span.latitudeDelta == 0.04)
+        #expect((withPlaces?.span.latitudeDelta ?? 0) > aroundUser.span.latitudeDelta)
     }
 
     @Test func nearbyPingsShareACellAndDistantPingsDoNot() {
@@ -943,23 +1024,23 @@ struct InterestFootstepLogicTests {
         )
         let second = InterestFootstepLogic.Sample(
             interest: "Coffee",
-            latitude: 37.771,
-            longitude: -122.411,
+            latitude: 37.79,
+            longitude: -122.43,
             visitCount: 1,
             timestamp: now.addingTimeInterval(-10),
             deviceID: "a",
             userID: "a",
-            cellKey: InterestFootstepLogic.cellKey(latitude: 37.771, longitude: -122.411)
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.79, longitude: -122.43)
         )
         let third = InterestFootstepLogic.Sample(
             interest: "Coffee",
-            latitude: 37.772,
-            longitude: -122.412,
+            latitude: 37.81,
+            longitude: -122.45,
             visitCount: 1,
             timestamp: now,
             deviceID: "a",
             userID: "a",
-            cellKey: InterestFootstepLogic.cellKey(latitude: 37.772, longitude: -122.412)
+            cellKey: InterestFootstepLogic.cellKey(latitude: 37.81, longitude: -122.45)
         )
         let trail = InterestFootstepLogic.merging([first, second, third], now: now)
         #expect(trail.count == 3)
@@ -1751,6 +1832,44 @@ struct GridPopulationServiceTests {
         )
         #expect(admin.map(\.deviceID) == ["me", "hid", "show"])
     }
+
+    @Test func allListsHiddenPeopleOnlyWithPasscode() {
+        let service = GridPopulationService()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Phone", isDiscoverable: true)
+        let hidden = UserProfile(userID: "h", deviceID: "hid", deviceName: "Hid")
+        let shown = UserProfile(userID: "s", deviceID: "show", deviceName: "Show", isDiscoverable: true)
+        let locked = service.profilesToDisplay(
+            nearby: [me, hidden, shown],
+            currentUser: me,
+            includeHidden: GridPeopleTab.all.showsHiddenPeers(masterUnlocked: false)
+        )
+        #expect(locked.map(\.deviceID) == ["me", "show"])
+        let unlocked = service.profilesToDisplay(
+            nearby: [me, hidden, shown],
+            currentUser: me,
+            includeHidden: GridPeopleTab.all.showsHiddenPeers(masterUnlocked: true)
+        )
+        #expect(unlocked.map(\.deviceID) == ["me", "hid", "show"])
+    }
+
+    @Test func placesPeopleWithoutPhotosOnAGrowingGrid() {
+        let service = GridPopulationService()
+        var grid = GridPlacementLogic.makeEmptyGrid()
+        let me = UserProfile(userID: "u", deviceID: "me", deviceName: "Me", isDiscoverable: true)
+        let peers = (1...26).map { index in
+            UserProfile(userID: "u\(index)", deviceID: "p\(index)", deviceName: "P\(index)", isDiscoverable: true)
+        }
+        service.layoutProfiles(
+            into: &grid,
+            profiles: [me] + peers,
+            currentUser: me,
+            display: GridDisplayState(blockedUserIDs: [], usersWhoBlockedMe: [], selectedInterestFilter: [])
+        )
+        let placed = grid.flatMap { $0 }.compactMap(\.userProfile)
+        #expect(placed.count == 26)
+        #expect(placed.contains { $0.deviceID == "p26" })
+        #expect(placed.allSatisfy { GridPresenceLogic.hasPhoto($0) == false })
+    }
 }
 
 struct GridPlacementLogicTests {
@@ -1768,6 +1887,12 @@ struct GridPlacementLogicTests {
         #expect(grid[0][1].id == PersonIdentity.id(forDeviceID: "d"))
         #expect(grid[0][0].id == PersonIdentity.emptySlotID(x: 0, y: 0))
         #expect(grid[0][0].userProfile == nil)
+    }
+
+    @Test func sizeGrowsPastFiveByFive() {
+        #expect(GridPlacementLogic.size(fitting: 0) == 5)
+        #expect(GridPlacementLogic.size(fitting: 25) == 5)
+        #expect(GridPlacementLogic.size(fitting: 26) == 6)
     }
 
     @Test func replaceProfileUpdatesMatchingCellsOnly() {

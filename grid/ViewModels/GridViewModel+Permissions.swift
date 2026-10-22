@@ -29,6 +29,16 @@ extension GridViewModel {
         }
     }
 
+    func requestCurrentLocation() {
+        if LocationOnboardingLogic.enableAction(for: locationService.authorizationStatus) != .none {
+            enableLocationFromOnboarding()
+        } else {
+            locationService.requestLocationOnce()
+        }
+        followsUserLocation = true
+        recenterMapToken += 1
+    }
+
     func considerNotificationPermission(for event: NotificationPermissionLogic.ChatEvent) {
         guard !GridUITestHarness.isActive, !locksGridToFixtures else { return }
         let already = UserDefaults.standard.bool(forKey: NotificationPermissionLogic.requestedDefaultsKey)

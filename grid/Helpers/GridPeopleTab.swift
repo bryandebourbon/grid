@@ -37,6 +37,11 @@ enum GridPeopleTab: Hashable {
             return "\(interest.emoji) \(interest.rawValue)"
         }
     }
+
+    /// Hidden profiles are only listed after the see-hidden passcode.
+    func showsHiddenPeers(masterUnlocked: Bool) -> Bool {
+        masterUnlocked
+    }
 }
 
 enum PeopleGroupStore {

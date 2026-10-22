@@ -130,7 +130,7 @@ extension GridViewModel {
             refreshGridAfterLocationAccessGranted()
             syncFootstepTracking()
         } else {
-            updateGridWithAllProfiles([])
+            proximityService.fetchAllUsers()
             locationService.stopWalkUpdates()
         }
     }

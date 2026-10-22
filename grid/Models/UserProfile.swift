@@ -110,14 +110,22 @@ struct UserProfile: Codable {
             print("UserProfile init from CKRecord failed: recordName (deviceID) is empty.")
             return nil
         }
-        self.deviceID = recordName
-        self.recordID = record.recordID
-        
-        // Extract other fields from the record
-        guard let userID = record["userID"] as? String else {
-            print("UserProfile init from CKRecord failed: userID is missing.")
-            return nil
+        let fieldID = record["deviceID"] as? String
+        let deviceID: String
+        if let fieldID, fieldID.isEmpty == false {
+            deviceID = fieldID
+        } else {
+            deviceID = recordName
         }
+        let userIDValue = record["userID"] as? String
+        let userID: String
+        if let userIDValue, userIDValue.isEmpty == false {
+            userID = userIDValue
+        } else {
+            userID = deviceID
+        }
+        self.deviceID = deviceID
+        self.recordID = record.recordID
         self.userID = userID
         self.deviceName = record["deviceName"] as? String ?? "Unknown Device"
         self.profileImage = record["profileImage"] as? CKAsset

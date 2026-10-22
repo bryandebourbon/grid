@@ -44,14 +44,36 @@ enum InterestPlaceHeatmapLogic {
         defaults.set(clamped(meters), forKey: defaultsKey)
     }
 
+    static func cacheKey(interest: String, radiusMeters: CLLocationDistance) -> String {
+        let slug = interest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "\(slug).\(Int(clamped(radiusMeters)))"
+    }
+
+    static func prefetchInterests(from pages: [Interest], extra: [Interest] = []) -> [Interest] {
+        var seen = Set<String>()
+        var interests: [Interest] = []
+        for interest in pages + extra {
+            let key = interest.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard key.isEmpty == false, seen.insert(key).inserted else { continue }
+            interests.append(interest)
+            if interests.count >= InterestPageStore.maxPages { break }
+        }
+        return interests
+    }
+
     static func shouldSearch(
         interest: String,
         at location: CLLocation,
         lastInterest: String?,
-        lastLocation: CLLocation?
+        lastLocation: CLLocation?,
+        radiusMeters: CLLocationDistance = defaultRadiusMeters,
+        lastRadiusMeters: CLLocationDistance? = nil
     ) -> Bool {
         guard searchQuery(for: interest) != nil else { return false }
         if lastInterest?.compare(interest, options: .caseInsensitive) != .orderedSame {
+            return true
+        }
+        if let lastRadiusMeters, clamped(lastRadiusMeters) != clamped(radiusMeters) {
             return true
         }
         guard let lastLocation else { return true }

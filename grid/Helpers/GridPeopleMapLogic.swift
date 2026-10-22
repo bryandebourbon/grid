@@ -77,23 +77,27 @@ enum GridPeopleMapLogic {
 
     static func region(
         for pins: [Pin],
-        blobs: [InterestFootstepLogic.HeatBlob] = []
+        blobs: [InterestFootstepLogic.HeatBlob] = [],
+        center: CLLocationCoordinate2D? = nil
     ) -> MKCoordinateRegion? {
         let latitudes = pins.map(\.latitude) + blobs.map(\.latitude)
         let longitudes = pins.map(\.longitude) + blobs.map(\.longitude)
-        guard latitudes.isEmpty == false, longitudes.isEmpty == false else { return nil }
+        guard latitudes.isEmpty == false, longitudes.isEmpty == false else {
+            guard let center else { return nil }
+            return region(around: center)
+        }
         let minLat = latitudes.min() ?? 0
         let maxLat = latitudes.max() ?? 0
         let minLon = longitudes.min() ?? 0
         let maxLon = longitudes.max() ?? 0
-        let center = CLLocationCoordinate2D(
+        let fittedCenter = CLLocationCoordinate2D(
             latitude: (minLat + maxLat) / 2,
             longitude: (minLon + maxLon) / 2
         )
         let latitudeDelta = max((maxLat - minLat) * 1.8, 0.012)
         let longitudeDelta = max((maxLon - minLon) * 1.8, 0.012)
         return MKCoordinateRegion(
-            center: center,
+            center: fittedCenter,
             span: MKCoordinateSpan(latitudeDelta: latitudeDelta, longitudeDelta: longitudeDelta)
         )
     }

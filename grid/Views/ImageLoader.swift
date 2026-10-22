@@ -17,10 +17,12 @@ final class ImageLoader: ObservableObject {
 
     func loadImage(from asset: CKAsset?, force: Bool = false) {
         guard let asset = asset else {
+            imageLoadingTask?.cancel()
             image = nil
             imageSize = nil
             currentAsset = nil
             currentFingerprint = nil
+            isLoading = false
             return
         }
         let fingerprint = ProfileImageRefreshLogic.loadKey(for: asset)

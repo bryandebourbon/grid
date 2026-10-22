@@ -22,23 +22,26 @@ extension GridViewModel {
                 self.encryptionProfiles[profile.id] = profile
             }
             print("GridViewModel: loaded \(profiles.count) encryption profiles")
-            self.refreshGridForEncryptionMode()
-            completion()
+            self.proximityService.fetchAllUsers(
+                currentUserLocation: self.locationService.currentLocation ?? self.currentUserProfile?.location,
+                extraRecordNames: Array(self.encryptionProfiles.keys)
+            ) {
+                self.refreshGridForEncryptionMode()
+                completion()
+            }
         }
     }
     
     func refreshGridForEncryptionMode() {
-        // All messaging is now encrypted by default - always filter to show encryption-enabled profiles
+        if seesHiddenPeople {
+            updateGridWithAllProfiles(proximityService.activeNearbyProfiles)
+            return
+        }
         let encryptedDeviceIDs = Set(encryptionProfiles.keys)
-        // Always include current user in encryption mode
         let currentDeviceID = currentUserProfile?.deviceID
         let filteredProfiles = proximityService.activeNearbyProfiles.filter { profile in
-            // Check encryption requirement
             let hasEncryption = profile.deviceID == currentDeviceID || encryptedDeviceIDs.contains(profile.deviceID)
-            
-            // Also check blocking status
             let isNotBlocked = profile.deviceID == currentDeviceID || (!blockedUsers.contains(profile.userID) && !usersWhoBlockedMe.contains(profile.userID))
-            
             return hasEncryption && isNotBlocked
         }
         updateGridWithAllProfiles(filteredProfiles)

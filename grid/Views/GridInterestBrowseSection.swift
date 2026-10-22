@@ -15,6 +15,7 @@ struct GridInterestBrowseSection: View {
     @Binding var isExpanded: Bool
     var showBioBubbles = false
     var onChatTapped: (String) -> Void = { _ in }
+    var expandedTrailing: AnyView = AnyView(EmptyView())
     @State private var dragOffset: CGFloat = 0
     @StateObject private var profileImageLoader = ImageLoader()
     @State private var profilePhotoItem: PhotosPickerItem?
@@ -178,13 +179,18 @@ struct GridInterestBrowseSection: View {
                     viewModel: viewModel,
                     userProfile: profile
                 )
-
-                Spacer(minLength: 0)
             } else {
                 Text("Loading profile…")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .frame(maxWidth: .infinity, alignment: .top)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack {
+                Spacer(minLength: 0)
+                    expandedTrailing
             }
         }
         .padding(.horizontal, 12)

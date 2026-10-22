@@ -35,12 +35,16 @@ final class GridPopulationService {
         currentUser: UserProfile?,
         display: GridDisplayState
     ) {
-        grid = GridPlacementLogic.makeEmptyGrid()
         guard let currentDeviceID = currentUser?.deviceID else {
+            let peers = profiles.filter { !LocalLLMIdentity.isLLM($0.deviceID) }
+            let extra = display.showsLocalLLM ? 1 : 0
+            grid = GridPlacementLogic.makeEmptyGrid(
+                size: GridPlacementLogic.size(fitting: peers.count + extra)
+            )
             if display.showsLocalLLM {
                 placeLocalLLM(into: &grid, currentUserPresent: false)
             }
-            for profile in profiles where !LocalLLMIdentity.isLLM(profile.deviceID) {
+            for profile in peers {
                 placeRemaining(profile, into: &grid)
             }
             return
@@ -58,6 +62,11 @@ final class GridPopulationService {
             starredUserIDs: display.starredUserIDs,
             favoritesOnly: display.favoritesOnly
         )
+        let peers = others.filter { !LocalLLMIdentity.isLLM($0.deviceID) }
+        var count = peers.count
+        if display.showsSelfOnGrid { count += 1 }
+        if display.showsLocalLLM && !display.favoritesOnly { count += 1 }
+        grid = GridPlacementLogic.makeEmptyGrid(size: GridPlacementLogic.size(fitting: count))
 
         if display.showsSelfOnGrid, let current = currentUser {
             GridPlacementLogic.place(profile: current, in: &grid, at: 0, col: 0)
@@ -65,7 +74,6 @@ final class GridPopulationService {
 
         guard display.showsNearbyPeople else { return }
 
-        let peers = others.filter { !LocalLLMIdentity.isLLM($0.deviceID) }
         if display.showsLocalLLM && !display.favoritesOnly {
             placeLocalLLM(into: &grid, currentUserPresent: display.showsSelfOnGrid)
         }

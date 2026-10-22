@@ -33,10 +33,6 @@ extension GridViewModel {
 
     private func refreshNearbyPeople() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            guard hasLocationAccess else {
-                continuation.resume()
-                return
-            }
             let location = locationService.currentLocation ?? currentUserProfile?.location
             proximityService.fetchAllUsers(currentUserLocation: location) {
                 continuation.resume()
@@ -370,7 +366,7 @@ extension GridViewModel {
         #if DEBUG
         print("GridViewModel: forceRefreshGrid blocked=\(blockedUsers.count) blockedMe=\(usersWhoBlockedMe.count)")
         #endif
-        guard hasLocationAccess else { return }
+        guard !locksGridToFixtures else { return }
 
         if let currentLocation = locationService.currentLocation {
             proximityService.fetchAllUsers(currentUserLocation: currentLocation)

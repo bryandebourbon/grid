@@ -209,19 +209,7 @@ struct GridView: View {
             .padding(.top, GridCellLayout.gutter)
             .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: zoom.gridColumns)
 
-            if viewModel.needsLocationOnboarding && !isProfileDrawerExpanded && !GridUITestHarness.isActive {
-                GridLocationWelcomeCard(
-                    buttonTitle: viewModel.locationEnableButtonTitle,
-                    onOpenProfile: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-                            isProfileDrawerExpanded = true
-                        }
-                    },
-                    onEnableLocation: {
-                        viewModel.enableLocationFromOnboarding()
-                    }
-                )
-            } else if showsFavoritesHint && !hasFavoritePeers(in: nodes) {
+            if showsFavoritesHint && !hasFavoritePeers(in: nodes) {
                 Text(emptyGroupHint)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -362,7 +350,9 @@ struct GridView: View {
                 .accessibilityLabel("Create Story")
             }
 
-            settingsMenu
+            visibilityButton
+            locationButton
+            refreshButton
         }
     }
 
@@ -519,14 +509,23 @@ struct GridView: View {
         .accessibilityIdentifier("grid.people")
     }
 
-    private var peopleMapButton: some View {
+    private var locationButton: some View {
         Button {
             homePane = .map
+            viewModel.requestCurrentLocation()
         } label: {
-            paneCircleLabel(systemImage: "map.fill", isActive: homePane == .map)
+            paneCircleLabel(
+                systemImage: "location.fill",
+                isActive: homePane == .map || viewModel.needsLocationOnboarding
+            )
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Map")
+        .accessibilityValue(
+            viewModel.needsLocationOnboarding
+                ? viewModel.locationEnableButtonTitle
+                : "Current location"
+        )
         .accessibilityAddTraits(homePane == .map ? [.isSelected] : [])
         .accessibilityIdentifier("grid.map")
     }
@@ -762,9 +761,6 @@ struct GridView: View {
                         HStack {
                             conversationsButton
                             peopleGridButton
-                            peopleMapButton
-                            visibilityButton
-                            refreshButton
                             Spacer()
                             if homePane == .people, showZoomControls {
                                 zoomControls
@@ -781,7 +777,8 @@ struct GridView: View {
                                 onChatTapped: { deviceID in
                                     isProfileDrawerExpanded = false
                                     openChat(with: deviceID)
-                                }
+                                },
+                                expandedTrailing: AnyView(settingsMenu)
                             )
                         }
                     }

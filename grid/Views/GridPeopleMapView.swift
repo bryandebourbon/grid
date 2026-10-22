@@ -5,14 +5,30 @@ import CloudKit
 struct GridPeopleMapView: View {
     @ObservedObject var viewModel: GridViewModel
     var onSelectPerson: (String) -> Void
-    @State private var position: MapCameraPosition = .region(GridPeopleMapLogic.defaultRegion)
+    @State private var position: MapCameraPosition
+    @State private var hasFittedCamera: Bool
+
+    init(viewModel: GridViewModel, onSelectPerson: @escaping (String) -> Void) {
+        self.viewModel = viewModel
+        self.onSelectPerson = onSelectPerson
+        let center = viewModel.locationService.currentLocation?.coordinate
+            ?? viewModel.currentUserProfile?.location?.coordinate
+        if let center {
+            _position = State(initialValue: .region(GridPeopleMapLogic.region(around: center)))
+            _hasFittedCamera = State(initialValue: true)
+        } else {
+            _position = State(initialValue: .region(GridPeopleMapLogic.defaultRegion))
+            _hasFittedCamera = State(initialValue: false)
+        }
+    }
 
     private var pins: [GridPeopleMapLogic.Pin] {
         let me = viewModel.currentUserProfile
         let tabProfiles = viewModel.nodes(for: viewModel.peopleTab).flatMap { $0 }.compactMap(\.userProfile)
+        let includeHidden = viewModel.peopleTab.showsHiddenPeers(masterUnlocked: viewModel.seesHiddenPeople)
         let nearby = viewModel.proximityService.activeNearbyProfiles.filter { profile in
             profile.deviceID == me?.deviceID
-                || GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: viewModel.seesHiddenPeople)
+                || GridMasterViewerLogic.shouldShowPeer(profile, includeHidden: includeHidden)
         }
         let others = (tabProfiles.isEmpty ? nearby : tabProfiles).filter { profile in
             profile.deviceID != me?.deviceID
@@ -21,7 +37,7 @@ struct GridPeopleMapView: View {
         return GridPeopleMapLogic.pins(
             fromProfiles: others + selfProfiles,
             currentDeviceID: me?.deviceID,
-            includeHidden: viewModel.seesHiddenPeople
+            includeHidden: includeHidden
         )
     }
 
@@ -72,7 +88,6 @@ struct GridPeopleMapView: View {
             .mapStyle(.standard)
             .mapControls {
                 MapCompass()
-                MapUserLocationButton()
             }
             .mapControlVisibility(.visible)
             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -86,27 +101,35 @@ struct GridPeopleMapView: View {
             }
             viewModel.recordInterestFootsteps(for: viewModel.currentUserProfile)
             viewModel.refreshInterestHeatmap()
-            fitPins()
+            if viewModel.followsUserLocation {
+                centerOnBlueDot()
+            } else {
+                fitCamera(force: true)
+            }
         }
         .refreshable {
             await viewModel.refreshPeopleAndMessages()
         }
         .onChange(of: pins.map(\.id)) { _ in
-            fitPins()
+            guard viewModel.followsUserLocation == false else { return }
+            fitCamera(force: false)
         }
         .onChange(of: viewModel.isDiscoverable) { _ in
-            fitPins()
+            guard viewModel.followsUserLocation == false else { return }
+            fitCamera(force: false)
         }
         .onChange(of: viewModel.locationService.currentLocation?.coordinate.latitude) { _ in
-            fitPins()
+            guard viewModel.followsUserLocation == false else { return }
+            fitCamera(force: false)
         }
-        .onChange(of: viewModel.interestHeatBlobs.map(\.id)) { _ in
-            fitPins()
+        .onChange(of: viewModel.recenterMapToken) { _ in
+            centerOnBlueDot()
         }
-    }
-
-    private var cameraBlobs: [InterestFootstepLogic.HeatBlob] {
-        viewModel.interestHeatBlobs.filter { $0.id.hasPrefix("place.") == false }
+        .onChange(of: viewModel.peopleTab) { _ in
+            guard viewModel.followsUserLocation == false else { return }
+            hasFittedCamera = false
+            fitCamera(force: true)
+        }
     }
 
     private func profile(for pin: GridPeopleMapLogic.Pin) -> UserProfile? {
@@ -120,13 +143,26 @@ struct GridPeopleMapView: View {
             ?? viewModel.proximityService.activeNearbyProfiles.first { $0.deviceID == pin.deviceID }
     }
 
-    private func fitPins() {
-        if let region = GridPeopleMapLogic.region(for: pins, blobs: cameraBlobs) {
-            position = .region(region)
-        } else if let fallbackCenter {
+    /// Keep the camera on you. Heatmap dots can cover a wide radius; they should not pull the zoom out.
+    private func fitCamera(force: Bool) {
+        guard force || hasFittedCamera == false else { return }
+        if let fallbackCenter {
             position = .region(GridPeopleMapLogic.region(around: fallbackCenter))
-        } else {
-            position = .region(GridPeopleMapLogic.defaultRegion)
+            hasFittedCamera = true
+        }
+    }
+
+    private func centerOnBlueDot() {
+        let fallback: MapCameraPosition = {
+            if let fallbackCenter {
+                return .region(GridPeopleMapLogic.region(around: fallbackCenter))
+            }
+            return .automatic
+        }()
+        position = fallback
+        hasFittedCamera = true
+        Task { @MainActor in
+            position = .userLocation(followsHeading: false, fallback: fallback)
         }
     }
 }
